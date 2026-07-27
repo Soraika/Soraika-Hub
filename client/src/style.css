@@ -1,0 +1,89 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Noto+Serif+JP:wght@400;600;700&display=swap');
+
+:root,
+.theme-light {
+  --bg-main: #faf6f0;
+  --bg-sidebar: #f5efe6;
+  --bg-card: #ffffff;
+  --bg-input: #f0ebe4;
+  --bg-hover: rgba(192, 57, 43, 0.08);
+  --bg-dropdown: #ffffff;
+  --accent: #b8352a;
+  --accent-hover: #d44a3d;
+  --accent-gold: #c4935a;
+  --text-primary: #2c1810;
+  --text-secondary: #8b7e74;
+  --text-on-card: #2c1810;
+  --border: #e0d5c5;
+  --border-card: #e8ddd0;
+  --font-ui: 'Noto Serif JP', 'Hiragino Mincho Pro', 'Yu Mincho', serif;
+  --font-body: 'Noto Sans JP', 'Hiragino Kaku Gothic Pro', 'Meiryo', sans-serif;
+  --radius: 12px;
+}
+
+.theme-dark {
+  --bg-main: #1a1a2e;
+  --bg-sidebar: #16213e;
+  --bg-card: #f5f0e8;
+  --bg-input: #1e1e3a;
+  --bg-hover: rgba(192, 57, 43, 0.12);
+  --bg-dropdown: #1e2a4a;
+  --accent: #c0392b;
+  --accent-hover: #e74c3c;
+  --accent-gold: #d4a574;
+  --text-primary: #f5f0e8;
+  --text-secondary: #8b8682;
+  --text-on-card: #2c1810;
+  --border: #2a2a4a;
+  --border-card: #d4c5b2;
+}
+
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-main);
+  color: var(--text-primary);
+  min-height: 100vh;
+  transition: background 0.3s, color 0.3s;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-main);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  font-family: var(--font-body);
+}
+
+input {
+  font-family: var(--font-body);
+}
+
+img {
+  max-width: 100%;
+}
