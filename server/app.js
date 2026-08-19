@@ -32,7 +32,9 @@ app.use('/api/qb', qbRoutes);             // qBittorrent 下载
 app.use('/api/discover', discoverRoutes); // 番剧推荐（发现页）
 
 // ── 生产环境：托管前端构建产物（client/dist） ──
-const DIST_DIR = path.join(__dirname, '..', 'client', 'dist');
+// Docker 镜像内 WORKDIR=/app，前端产物位于 /app/client/dist，故用 __dirname/client/dist
+// （本地开发 __dirname=server，server/client/dist 不存在则跳过，由 vite dev server 托管前端）
+const DIST_DIR = path.join(__dirname, 'client', 'dist');
 if (fs.existsSync(DIST_DIR)) {
   app.use(express.static(DIST_DIR));
   // SPA 回退：非 /api 的 GET 请求一律走 index.html（交给前端路由）
