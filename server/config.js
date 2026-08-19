@@ -12,8 +12,20 @@ function load() {
   try {
     return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
   } catch (e) {
-    console.warn('加载 config.json 失败:', e.message);
-    return {};
+    // 首次启动/无配置：静默返回空对象并尝试写一个初始空配置文件，
+    // 避免每次都打印 ENOENT 吓人，同时也提前占位方便后续保存
+    if (e.code !== 'ENOENT') {
+      console.warn('加载 config.json 失败:', e.message);
+    }
+    const empty = {};
+    try {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(empty, null, 2), 'utf-8');
+    } catch (w) {
+      // 写失败不致命（如容器卷只读），保持内存空配置，等设置页再写
+      console.warn('初始化 config.json 失败:', w.message);
+    }
+    return empty;
   }
 }
 

@@ -26,9 +26,12 @@ COPY server/ ./
 COPY --from=frontend /app/client/dist ./client/dist
 
 # 创建非 root 用户，提升容器安全性
+# /data 挂载卷首次创建后所有权通常为 root，给 app 用户读写权限：
+# chmod 1777 类似 /tmp 的 world-writable，保证命名卷即使 root 所有也能写入
 RUN addgroup -S app && adduser -S app -G app \
   && mkdir -p /data \
-  && chown -R app:app /app /data
+  && chown -R app:app /app \
+  && chmod 1777 /data
 
 USER app
 
