@@ -35,9 +35,10 @@ app.use('/api/discover', discoverRoutes); // 番剧推荐（发现页）
 const DIST_DIR = path.join(__dirname, '..', 'client', 'dist');
 if (fs.existsSync(DIST_DIR)) {
   app.use(express.static(DIST_DIR));
-  // SPA 回退：非 /api 请求一律走 index.html（交给前端路由）
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api')) return next();
+  // SPA 回退：非 /api 的 GET 请求一律走 index.html（交给前端路由）
+  // 用中间件而非 app.get('*')，兼容新版 path-to-regexp（express 5）
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api')) return next();
     res.sendFile(path.join(DIST_DIR, 'index.html'));
   });
 }
