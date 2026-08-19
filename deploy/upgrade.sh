@@ -7,7 +7,7 @@
 # ═══════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-IMAGE="<你的用户名>/soraikas-hub:latest"
+IMAGE="soraika/soraikas-hub:latest"
 STACK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE="docker compose"
 

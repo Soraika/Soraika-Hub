@@ -101,20 +101,23 @@
 ## 十、Docker 部署与在线升级
 
 ### 镜像 / 仓库约定
-- 镜像发布到 **Docker Hub 公开仓库**：`<你的用户名>/soraikas-hub`（构建前替换占位）。
-- 源码发布到 **GitHub 公开仓库**：`https://github.com/<你的GitHub用户名>/soraikas-hub`。
+- 镜像发布到 **Docker Hub 公开仓库**：`soraika/soraikas-hub`。
+- 源码发布到 **GitHub 公开仓库**：`https://github.com/Soraika/Soraija-Hub`。
 
-### 构建并推送镜像（发布者）
-```bash
-# 首次登录
-docker login
+### 构建并推送镜像（自动化：GitHub Actions）
+仓库已内置 `.github/workflows/docker.yml`：**打 tag 即自动构建并推送镜像到 Docker Hub**，无需本地安装 Docker。
 
-# 构建 + 打 tag + 推送（版本号自行递增）
-docker build -t <你的用户名>/soraikas-hub:1.0.0 .
-docker tag <你的用户名>/soraikas-hub:1.0.0 <你的用户名>/soraikas-hub:latest
-docker push <你的用户名>/soraikas-hub:1.0.0
-docker push <你的用户名>/soraikas-hub:latest
-```
+1. 首次配置：GitHub 仓库 → **Settings → Secrets and variables → Actions**，新增两个 secret：
+   - `DOCKERHUB_USERNAME` = `soraika`
+   - `DOCKERHUB_TOKEN` = Docker Hub 的 Access Token（hub.docker.com → Account Settings → Security → New Access Token，需 Read/Write 权限）
+2. 发布新版：
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+   Actions 自动构建并推送 `soraika/soraikas-hub:1.0.0` 与 `soraika/soraikas-hub:latest`。
+
+> 若想在本地手动构建推送（需装 Docker）：`docker build -t soraika/soraikas-hub:1.0.0 . && docker tag soraika/soraikas-hub:1.0.0 soraika/soraikas-hub:latest && docker push soraika/soraikas-hub:1.0.0 && docker push soraika/soraikas-hub:latest`
 
 ### 部署（服务器 / 用户）
 ```bash

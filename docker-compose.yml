@@ -1,7 +1,6 @@
 services:
   soraikas-hub:
-    # ⚠️ 发布到 Docker Hub 前，把 <你的用户名> 替换成你的 Docker Hub 账号
-    image: <你的用户名>/soraikas-hub:latest
+    image: soraika/soraikas-hub:latest
     container_name: soraikas-hub
     restart: unless-stopped
     ports:
