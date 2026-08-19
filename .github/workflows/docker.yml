@@ -36,6 +36,7 @@ jobs:
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       # 单仓库名即 release tag；latest 由 tag 推送后打上，保证稳定指向最新版本
+      # 仅构建 linux/amd64：better-sqlite3 是原生模块，arm64 在 QEMU 下编译会 Illegal instruction
       - name: Build & Push (vX.Y.Z)
         uses: docker/build-push-action@v6
         with:
@@ -44,4 +45,4 @@ jobs:
           tags: |
             soraika/soraikas-hub:${{ steps.meta.outputs.version }}
             soraika/soraikas-hub:latest
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64

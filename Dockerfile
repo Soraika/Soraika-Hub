@@ -1,5 +1,5 @@
 # ── 阶段 1：构建前端 ──
-FROM node:20-alpine AS frontend
+FROM node:22-alpine AS frontend
 
 WORKDIR /app/client
 COPY client/package.json client/package-lock.json ./
@@ -9,7 +9,7 @@ COPY client/ ./
 RUN npm run build
 
 # ── 阶段 2：运行时（仅包含产物，不含任何本机配置/数据） ──
-FROM node:20-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 ENV NODE_ENV=production
