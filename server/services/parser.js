@@ -192,10 +192,53 @@ function groupByAnime(items) {
   return Array.from(map.values());
 }
 
+// ── HTML 番剧搜索 ──
+
+async function searchBangumi(keyword, baseUrlOverride) {
+  const BASE = getBaseUrl(baseUrlOverride);
+  const url = `${BASE}/Home/Search?searchstr=${encodeURIComponent(keyword)}`;
+
+  const ac = new AbortController();
+  const to = setTimeout(() => ac.abort(), 10000);
+  const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: ac.signal });
+  clearTimeout(to);
+
+  if (!res.ok) throw new Error(`搜索请求失败: ${res.status}`);
+  const html = await res.text();
+  const $ = cheerio.load(html);
+
+  const items = [];
+  $('a[href*="/Home/Bangumi/"]').each((_, a) => {
+    const $a = $(a);
+    const href = $a.attr('href') || '';
+    const bgmid = href.replace('/Home/Bangumi/', '');
+    if (!bgmid) return;
+
+    // 从 .an-text 的 title 获取番剧名
+    const textEl = $a.find('.an-text');
+    const name = textEl.attr('title') || textEl.text().trim();
+    if (!name) return;
+
+    // 从 span.b-lazy 的 data-src 获取海报缩略图
+    const imgSpan = $a.find('span.b-lazy');
+    const src = imgSpan.attr('data-src') || imgSpan.data('src') || '';
+    let poster = '';
+    if (src) {
+      poster = src.startsWith('http') ? src : `${BASE}${src}`;
+      poster = poster.replace(/\?.*$/, ''); // 去查询参数
+    }
+
+    items.push({ bgmid: parseInt(bgmid) || bgmid, name, poster });
+  });
+
+  return items;
+}
+
 module.exports = {
   parseItem,
   fetchRSS,
   searchRSS,
+  searchBangumi,
   fetchSchedule,
   fetchBangumiDetail,
   fetchBangumiRSS,

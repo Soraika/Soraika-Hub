@@ -1,0 +1,125 @@
+/* ─── 共享卡片样式 ─── */
+
+.card {
+  background: var(--bg-card); border-radius: 12px; padding: 24px 28px;
+  border: 1px solid var(--border);
+}
+.card-title {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 1.1rem; font-weight: 600; color: var(--text-primary);
+  margin: 0 0 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+.sub-title {
+  font-size: 0.8rem; font-weight: 700; color: var(--accent);
+  text-transform: uppercase; letter-spacing: 1.5px; margin: 20px 0 14px;
+}
+
+/* ── Grid 布局 ── */
+.field {
+  display: grid; grid-template-columns: 100px 1fr 40px;
+  align-items: center; gap: 12px; margin-bottom: 14px;
+}
+.label {
+  font-size: 0.85rem; color: var(--text-secondary); font-weight: 500;
+  text-align: left; line-height: 1.4;
+}
+.field input, .input-wrap { min-width: 0; }
+.field input {
+  width: 100%; background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; font-size: 0.9rem;
+  color: var(--text-primary); transition: border-color 0.2s; box-sizing: border-box;
+}
+.field input:focus { outline: none; border-color: var(--accent); }
+.field input:disabled { opacity: 0.4; cursor: not-allowed; background: var(--bg-hover); }
+
+.input-wrap {
+  display: flex; align-items: center;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 8px; transition: border-color 0.2s; min-width: 0;
+}
+.input-wrap:focus-within { border-color: var(--accent); }
+.input-wrap input {
+  width: 100%; box-sizing: border-box; background: none; border: none;
+  padding: 10px 14px; font-size: 0.9rem; color: var(--text-primary);
+}
+.input-wrap input:focus { outline: none; }
+.input-wrap input:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.slot-placeholder { width: 40px; height: 42px; }
+
+/* ── 小按钮（test / eye 统一） ── */
+.icon-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 42px; flex-shrink: 0;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 8px; cursor: pointer;
+  transition: color 0.2s, background 0.2s, box-shadow 0.3s;
+  color: var(--text-tertiary);
+}
+.icon-btn:hover:not(:disabled) { color: var(--accent); background: var(--bg-hover); }
+.icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* test 状态 */
+.icon-btn.testing { color: #f59e0b; animation: testing-glow 1.2s ease-in-out infinite; }
+.icon-btn.success { color: #22c55e; animation: pop-in 0.3s ease; }
+.icon-btn.error   { color: #ef4444; animation: shake 0.4s ease, pop-in 0.3s ease; }
+
+/* eye 翻转 + 点按反馈 */
+.icon-btn.eye :deep(svg) { transition: transform 0.35s ease; }
+.icon-btn.eye.show :deep(svg) { transform: rotate(180deg); }
+.icon-btn.eye:active { transform: scale(0.85); color: var(--accent); }
+
+@keyframes testing-glow {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(245,158,11,0.15); }
+  50% { box-shadow: 0 0 0 4px rgba(245,158,11,0.3); }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); } 20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); } 60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+@keyframes pop-in {
+  0% { transform: scale(0.6); } 60% { transform: scale(1.15); } 100% { transform: scale(1); }
+}
+.mini-spinner {
+  width: 14px; height: 14px; border: 2px solid rgba(245,158,11,0.3);
+  border-top-color: #f59e0b; border-radius: 50%; animation: spin 0.6s linear infinite;
+  display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── 保存按钮 ── */
+.card-save {
+  display: flex; justify-content: flex-end; margin-top: 20px;
+  padding-top: 16px; border-top: 1px solid var(--border);
+}
+.save-btn {
+  background: var(--accent); color: #fff; border: none;
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 20px; border-radius: 8px; font-size: 0.9rem;
+  font-weight: 600; cursor: pointer;
+  transition: background 0.4s ease, transform 0.3s ease;
+  min-width: 130px; justify-content: center;
+}
+.save-btn:hover:not(:disabled) { filter: brightness(1.1); }
+.save-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.save-btn.saving { opacity: 0.7; }
+.save-btn.ok { background: #22c55e; animation: save-pop 0.5s ease; }
+.save-btn.ok .save-check-icon { animation: pop-in 0.4s ease; }
+@keyframes save-pop {
+  0% { transform: scale(1); } 50% { transform: scale(1.06); } 100% { transform: scale(1); }
+}
+
+/* ── 滑动开关 ── */
+.switch {
+  width: 44px; height: 26px; border-radius: 13px;
+  border: none; cursor: pointer; background: var(--border);
+  padding: 2px; transition: background 0.25s; display: flex; align-items: center;
+}
+.switch.on { background: var(--accent); }
+.switch-thumb {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.18);
+  transition: transform 0.25s ease;
+}
+.switch.on .switch-thumb { transform: translateX(18px); }

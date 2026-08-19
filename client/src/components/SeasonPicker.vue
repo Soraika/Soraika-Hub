@@ -13,8 +13,20 @@
           {{ year }}
         </button>
         <div v-if="expandedYear === year" class="seasons">
-          <button v-for="s in seasons" :key="s" class="season-btn" :class="{ active: year === store.currentYear && s === store.currentSeason }" @click="select(year, s)">
-            {{ seasonIcon(s) }} {{ s }}
+          <button
+            v-for="s in seasons"
+            :key="s"
+            class="season-btn"
+            :class="{
+              active: year === store.currentYear && s === store.currentSeason,
+              disabled: isFuture(year, s)
+            }"
+            :disabled="isFuture(year, s)"
+            :title="isFuture(year, s) ? '尚未到该季节' : ''"
+            @click="select(year, s)"
+          >
+            <component :is="seasonIcon(s)" :size="14" />
+            <span>{{ s }}</span>
           </button>
         </div>
       </div>
@@ -24,33 +36,47 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { IconCalendar, IconChevronDown, IconChevronRight } from '@tabler/icons-vue'
+import { IconCalendar, IconChevronDown, IconChevronRight, IconSnowflake, IconFlower, IconSun, IconLeaf } from '@tabler/icons-vue'
 import { useAppStore } from '@/stores/app'
 
 const store = useAppStore()
 const open = ref(false)
 const expandedYear = ref(new Date().getFullYear())
 const pickerRef = ref(null)
-const seasons = ['春', '夏', '秋', '冬']
+const seasons = ['冬', '春', '夏', '秋']
 
 const years = computed(() => {
   const currentYear = new Date().getFullYear()
   const list = []
-  for (let y = currentYear + 2; y >= currentYear - 3; y--) list.push(y)
+  for (let y = currentYear; y >= 2010; y--) list.push(y)
   return list
 })
+
+const now = new Date()
 
 function toggleYear(year) {
   expandedYear.value = expandedYear.value === year ? null : year
 }
 
 function select(year, season) {
+  if (isFuture(year, season)) return
   store.setSeason(year, season)
   open.value = false
 }
 
+function isFuture(year, season) {
+  const nowYear = now.getFullYear()
+  if (year > nowYear) return true
+  if (year < nowYear) return false
+  // 同年，日本新番季划分：冬=1月~3月, 春=4月~6月, 夏=7月~9月, 秋=10月~12月
+  const nowMonth = now.getMonth() + 1
+  const seasonStart = { '冬': 1, '春': 4, '夏': 7, '秋': 10 }[season]
+  return nowMonth < seasonStart
+}
+
 function seasonIcon(s) {
-  return { '春': '🌸', '夏': '🍉', '秋': '🍂', '冬': '⛄' }[s] || ''
+  const icons = { '春': IconFlower, '夏': IconSun, '秋': IconLeaf, '冬': IconSnowflake }
+  return icons[s] || IconSun
 }
 
 function handleClickOutside(e) {
@@ -79,7 +105,8 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
   position: absolute; top: calc(100% + 8px); left: 0;
   background: var(--bg-dropdown); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 8px;
-  min-width: 160px; z-index: 100; box-shadow: var(--shadow);
+  min-width: 160px; max-height: 360px; overflow-y: auto;
+  z-index: 100; box-shadow: var(--shadow);
 }
 .year-group { display: flex; flex-direction: column; }
 .year-btn {
@@ -93,10 +120,12 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 .arrow.rotated { transform: rotate(90deg); }
 .seasons { display: flex; flex-direction: column; padding-left: 28px; }
 .season-btn {
+  display: flex; align-items: center; gap: 6px;
   background: none; color: var(--text-secondary);
   padding: 6px 12px; border-radius: 6px;
   font-size: 0.85rem; text-align: left; width: 100%; transition: 0.2s;
 }
-.season-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.season-btn:hover:not(.disabled) { background: var(--bg-hover); color: var(--text-primary); }
 .season-btn.active { background: var(--accent); color: #fff; }
+.season-btn.disabled { opacity: 0.35; cursor: not-allowed; }
 </style>

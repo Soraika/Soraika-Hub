@@ -42,6 +42,10 @@ export function getBgmSubject(id) {
   return api.get(`/bgm/subject/${id}`)
 }
 
+export function searchBgm(keyword) {
+  return api.get('/bgm/search', { params: { q: keyword, limit: 1 } })
+}
+
 // ── AI ──
 
 export function classifyTitles(titles, apiKey) {
@@ -50,14 +54,26 @@ export function classifyTitles(titles, apiKey) {
   return api.post('/classify', body)
 }
 
+export function classifyTags(fileNames, apiKey) {
+  const body = { fileNames: fileNames || [] }
+  if (apiKey) body.apiKey = apiKey
+  return api.post('/classify/tags', body, { timeout: 120000 })
+}
+
+export function classifyDownload(cardTitle, fileNames, apiKey) {
+  const body = { cardTitle, fileNames }
+  if (apiKey) body.apiKey = apiKey
+  return api.post('/classify/download', body, { timeout: 120000 })
+}
+
 // ── QB ──
 
 export function getQBStatus() {
   return api.get('/qb/status')
 }
 
-export function getQBTorrents() {
-  return api.get('/qb/torrents')
+export function getQBTorrents(category) {
+  return api.get('/qb/torrents', { params: category ? { category } : {} })
 }
 
 export function qbAdd(item) {
@@ -68,8 +84,30 @@ export function qbAnime(torrents) {
   return api.post('/qb/anime', { torrents })
 }
 
+export function qbDelete(hash) {
+  return api.delete(`/qb/torrents/${hash}`)
+}
+
 export function qbRename(hash, name) {
   return api.post('/qb/rename', { hash, name })
+}
+
+export function getAnimeTorrents() {
+  return api.get('/qb/anime-torrents')
+}
+
+export function getDownloadHashes() {
+  return api.get('/qb/download-hashes')
+}
+
+// ── 发现页（番剧推荐） ──
+
+export function getDiscoverModules() {
+  return api.get('/discover/modules')
+}
+
+export function getDiscoverModule(module, refresh) {
+  return api.get('/discover', { params: { module, refresh } })
 }
 
 export default api

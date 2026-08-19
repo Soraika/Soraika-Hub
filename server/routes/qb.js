@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getTransferInfo, getTorrents, addTorrent, addTorrents, renameFile } = require('../services/qb');
+const { getTransferInfo, getTorrents, addTorrent, addTorrents, deleteTorrents, renameFile } = require('../services/qb');
 
 // QB 连接状态
 router.get('/status', async (req, res) => {
@@ -18,11 +18,22 @@ router.get('/status', async (req, res) => {
   }
 });
 
-// 任务列表
+// 任务列表（支持 ?category= 过滤本平台任务）
 router.get('/torrents', async (req, res) => {
   try {
-    const list = await getTorrents();
+    const { category } = req.query;
+    const list = await getTorrents(category);
     res.json({ ok: true, torrents: list });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// 删除/取消任务
+router.delete('/torrents/:hash', async (req, res) => {
+  try {
+    const ok = await deleteTorrents(req.params.hash);
+    res.json({ ok });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -31,11 +42,11 @@ router.get('/torrents', async (req, res) => {
 // 普通下载（单条，含自动重命名）
 router.post('/add', async (req, res) => {
   try {
-    const { magnet, torrent, savePath, rename } = req.body;
+    const { magnet, torrent, savePath, rename, taskName } = req.body;
     if (!magnet && !torrent) {
       return res.status(400).json({ ok: false, error: '缺少 magnet 或 torrent 参数' });
     }
-    const result = await addTorrent({ magnet, torrent, savePath, rename });
+    const result = await addTorrent({ magnet, torrent, savePath, rename, taskName });
     res.json(result);
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -67,6 +78,76 @@ router.post('/rename', async (req, res) => {
     const ok = await renameFile(hash, name);
     res.json({ ok, error: ok ? undefined : '重命名失败' });
   } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// 已下载的 hash 列表（直接查 QB soraika-hub 分类，不依赖数据库）
+router.get('/download-hashes', async (req, res) => {
+  try {
+    const { getQBConfig } = require('../services/qb');
+    const { url, token } = getQBConfig();
+    const qbRes = await fetch(`${url}/api/v2/torrents/info?category=soraika-hub`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!qbRes.ok) throw new Error(`QB 请求失败 (${qbRes.status})`);
+    const torrents = await qbRes.json();
+    const hashes = torrents.map(t => t.hash);
+    res.json({ ok: true, hashes });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// 番剧下载列表（从 QB 任务名解析 bgmid/番名/季/集，用于下载页面）
+router.get('/anime-torrents', async (req, res) => {
+  try {
+    const { getQBConfig } = require('../services/qb');
+    const { url, token } = getQBConfig();
+    const qbRes = await fetch(`${url}/api/v2/torrents/info?category=soraika-hub`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!qbRes.ok) throw new Error(`QB 请求失败 (${qbRes.status})`);
+
+    const torrents = await qbRes.json();
+
+    // 并发查询文件信息
+    const fileResults = await Promise.all(
+      torrents.map(t =>
+        fetch(`${url}/api/v2/torrents/files?hash=${t.hash}`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        }).then(r => r.ok ? r.json() : []).catch(() => [])
+      )
+    );
+
+    const results = torrents.map((t, i) => {
+      const m = t.name.match(/^\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]/);
+      const files = fileResults[i] || [];
+      const fileNames = files.map(f => {
+        const p = f.name.split('/').pop();
+        return p;
+      });
+      return {
+        hash: t.hash,
+        name: t.name,
+        savePath: t.save_path,
+        state: t.state,
+        progress: t.progress,
+        size: t.size,
+        bgmid: m ? (m[1] === 'null' ? null : m[1]) : null,
+        animeName: m ? (m[2] === 'null' ? null : m[2]) : null,
+        season: m && m[3] !== 'null' ? parseInt(m[3]) : 1,
+        episode: m ? (m[4] === 'null' ? null : m[4]) : null,
+        subgroupId: m ? (m[5] === 'null' ? null : m[5]) : null,
+        subgroupName: m ? (m[6] === 'null' ? null : m[6]) : null,
+        fileCount: files.length,
+        files: fileNames,
+      };
+    });
+
+    res.json({ ok: true, torrents: results });
+  } catch (e) {
+    console.error('[qb] /anime-torrents 失败:', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });

@@ -2,7 +2,6 @@ const config = require('../config');
 
 const UA = 'MikanAPI/1.0 (NAS bot)';
 
-/** 获取 BGM 配置 */
 function getBgmConfig() {
   return {
     baseUrl: config.get('bgm.baseUrl') || 'https://api.bgm.tv',
@@ -12,11 +11,6 @@ function getBgmConfig() {
 
 // ── 条目详情 ──
 
-/**
- * 获取 BGM 条目详情（评分、简介、标签等）
- * @param {number} subjectId - BGM 条目 ID
- * @returns {Promise<object>}
- */
 async function fetchSubjectDetail(subjectId) {
   const { baseUrl, token } = getBgmConfig();
   const url = `${baseUrl}/v0/subjects/${subjectId}`;
@@ -31,7 +25,7 @@ async function fetchSubjectDetail(subjectId) {
     id: raw.id,
     name: raw.name,
     nameCn: raw.name_cn || null,
-    type: raw.type,               // 1=书籍 2=动画 3=音乐 4=游戏 6=三次元
+    type: raw.type,
     summary: raw.summary || '',
     image: raw.images?.large || raw.images?.common || null,
     rating: raw.rating ? {
@@ -40,10 +34,10 @@ async function fetchSubjectDetail(subjectId) {
     } : null,
     rank: raw.rank || null,
     tags: (raw.tags || []).map(t => ({ name: t.name, count: t.count })),
-    date: raw.date || null,         // 发售/开播日期
-    eps: raw.eps || null,           // 总集数
+    date: raw.date || null,
+    eps: raw.eps || null,
     totalEpisodes: raw.total_episodes || null,
-    platform: raw.platform || null, // TV/剧场版/OVA等
+    platform: raw.platform || null,
     infobox: (raw.infobox || []).map(i => ({ key: i.key, value: i.value })),
     collection: raw.collection ? {
       wish: raw.collection.wish || 0,
@@ -57,36 +51,116 @@ async function fetchSubjectDetail(subjectId) {
 
 // ── 搜索 ──
 
-/**
- * 搜索 BGM 条目
- * @param {string} keyword - 关键词
- * @param {object} [opts]
- * @param {string} [opts.type] - 条目类型 1/2/3/4/6
- * @param {number} [opts.limit=10]
- */
 async function searchSubjects(keyword, opts = {}) {
-  const { baseUrl, token } = getBgmConfig();
-  const params = new URLSearchParams({ keyword, limit: opts.limit || 10 });
-  if (opts.type) params.set('type', opts.type);
-
-  const url = `${baseUrl}/v0/search/subjects?${params}`;
+  const { baseUrl } = getBgmConfig();
+  // BGM 镜像使用旧版 API: /search/subject/:keyword
+  const url = `${baseUrl}/search/subject/${encodeURIComponent(keyword)}`;
   const headers = { 'User-Agent': UA };
-  if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`BGM 搜索失败: ${res.status}`);
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) return []
+    const data = await res.json();
+    const list = data.list || data || []
+    return (Array.isArray(list) ? list : []).map(item => ({
+      id: item.id,
+      name: item.name,
+      nameCn: item.name_cn || null,
+      type: item.type,
+      image: item.images?.large || item.images?.common || null,
+      rating: item.rating?.score || null,
+      summary: item.summary || '',
+      date: item.date || null,
+    }));
+  } catch {
+    return []
+  }
+}
+
+// ── 条目列表（镜像 /v0/search/subjects，支持 sort/filter/分页） ──
+
+/**
+ * 批量搜索/榜单条目
+ * @param {Object} opts { offset, limit, sort, filter }
+ *  - sort: 'heat' | 'rank' | 'score' | 'match'
+ *  - filter: { type: [2], air_date: ['>=2000-01-01'], tags: [] }
+ * @returns {Array} 精简条目数组
+ */
+async function fetchSubjectList(opts = {}) {
+  const { baseUrl } = getBgmConfig();
+  const { offset = 0, limit = 50, sort = 'heat', filter = {} } = opts;
+
+  const url = `${baseUrl}/v0/search/subjects?limit=${limit}&offset=${offset}`;
+  const headers = { 'User-Agent': UA, 'Content-Type': 'application/json' };
+  const body = {};
+  if (sort) body.sort = sort;
+  if (filter && Object.keys(filter).length) body.filter = filter;
+
+  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(`BGM search/subjects 请求失败: ${res.status}`);
   const data = await res.json();
 
   return (data.data || []).map(item => ({
     id: item.id,
     name: item.name,
     nameCn: item.name_cn || null,
-    type: item.type,
-    image: item.images?.large || item.images?.common || null,
-    rating: item.rating?.score || null,
-    summary: item.summary || '',
+    image: item.images?.medium || item.images?.large || item.images?.common || null,
     date: item.date || null,
+    nsfw: item.nsfw || false,
+    platform: item.platform || null,
+    sumTotal: data.total ?? null,
+    eps: item.eps || null,
+    totalEpisodes: item.total_episodes || null,
+    rating: item.rating ? {
+      score: item.rating.score || null,
+      total: item.rating.total || 0,
+      rank: item.rating.rank || null,
+      count: item.rating.count || null,
+    } : null,
+    collection: item.collection ? {
+      wish: item.collection.wish || 0,
+      collect: item.collection.collect || 0,
+      doing: item.collection.doing || 0,
+      onHold: item.collection.on_hold || 0,
+      dropped: item.collection.dropped || 0,
+    } : null,
+    tags: (item.tags || []).map(t => t.name).slice(0, 8),
   }));
 }
 
-module.exports = { fetchSubjectDetail, searchSubjects };
+// ── 放送日历（本周每日放送番剧） ──
+
+async function fetchCalendar() {
+  const { baseUrl } = getBgmConfig();
+  const headers = { 'User-Agent': UA };
+  const res = await fetch(`${baseUrl}/calendar`, { headers });
+  if (!res.ok) throw new Error(`BGM calendar 请求失败: ${res.status}`);
+  const raw = await res.json();
+  const DAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+  const days = (Array.isArray(raw) ? raw : []).map(day => {
+    const weekdayId = day.weekday?.id ?? null;
+    const weekdayCn = day.weekday?.cn || DAYS[weekdayId - 1] || `周${weekdayId}`;
+    const items = (day.items || []).map(item => ({
+      id: item.id,
+      name: item.name,
+      nameCn: item.name_cn || null,
+      image: item.images?.medium || item.images?.large || item.images?.common || item.image || null,
+      date: item.date || null,
+      eps: item.eps || null,
+      totalEpisodes: item.total_episodes || null,
+      rating: item.rating ? { score: item.rating.score || null, total: item.rating.total || 0 } : null,
+      collection: item.collection ? {
+        wish: item.collection.wish || 0,
+        collect: item.collection.collect || 0,
+        doing: item.collection.doing || 0,
+      } : null,
+      tags: (item.tags || []).map(t => t.name).slice(0, 5),
+    }));
+    return { weekdayId, weekdayCn, items };
+  });
+
+  return days;
+}
+
+module.exports = { fetchSubjectDetail, searchSubjects, fetchSubjectList, fetchCalendar };

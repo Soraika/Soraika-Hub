@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
-    "dev:client": "cd client && npm run dev",
+    "dev": "cd client && npm run dev",
     "dev:server": "cd server && node app.js",
+    "dev:all": "concurrently \"npm run dev\" \"npm run dev:server\"",
     "install:all": "npm install && cd client && npm install && cd ../server && npm install"
   },
   "devDependencies": {

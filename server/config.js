@@ -1,7 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const CONFIG_PATH = path.join(__dirname, 'config.json');
+// 配置目录：优先取环境变量 DATA_DIR（Docker 卷挂载点），默认回退到本目录
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 /** 启动时加载到内存 */
 let config = load();
@@ -55,23 +57,9 @@ function deepMerge(target, source) {
   }
 }
 
-/** 获取全量配置（用于 API 返回，敏感字段脱敏） */
+/** 获取全量配置（直接返回，不脱敏 — 前端用 password 输入框保护） */
 function getAll() {
-  const safe = JSON.parse(JSON.stringify(config));
-  // 脱敏：Token/Key/Password 类替换为 ***
-  if (safe.qbittorrent?.token && safe.qbittorrent.token.length > 0) {
-    safe.qbittorrent.token = '***';
-  }
-  if (safe.nas?.apiKey && safe.nas.apiKey.length > 0) {
-    safe.nas.apiKey = '***';
-  }
-  if (safe.bgm?.token && safe.bgm.token.length > 0) {
-    safe.bgm.token = '***';
-  }
-  if (safe.deepseek?.apiKey && safe.deepseek.apiKey.length > 0) {
-    safe.deepseek.apiKey = '***';
-  }
-  return safe;
+  return JSON.parse(JSON.stringify(config));
 }
 
 /** 合并更新全量配置 */

@@ -6,3 +6,5 @@ dist/
 .DS_Store
 Thumbs.db
 server/config.json
+server/data/
+deploy/backups/

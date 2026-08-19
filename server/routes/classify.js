@@ -1,23 +1,47 @@
 const express = require('express');
 const router = express.Router();
-const { classifyBatch } = require('../services/ai-classifier');
+const { classifyTags, classifyDownload } = require('../services/classifier');
 
 /**
- * 批量 AI 分类标题
- * Body: { titles: string[], apiKey?: string, model?, baseUrl? }
- * apiKey 可选，不传则从 config 读取 deepseek.apiKey
+ * POST /api/classify/tags
+ * Body: { tags: string[], fileNames: string[], apiKey?, model?, baseUrl? }
  */
-router.post('/', async (req, res) => {
+router.post('/tags', async (req, res) => {
   try {
-    const { titles, apiKey, model, baseUrl } = req.body;
+    const { fileNames, apiKey, model, baseUrl } = req.body;
 
-    if (!titles || !Array.isArray(titles) || titles.length === 0) {
-      return res.status(400).json({ ok: false, error: '请提供待分类的标题数组' });
+    if (!fileNames || !Array.isArray(fileNames) || fileNames.length === 0) {
+      return res.json({ ok: true, results: {} });
     }
 
-    const results = await classifyBatch(titles, apiKey, { model, baseUrl });
-    res.json({ ok: true, count: results.length, results });
+    const results = await classifyTags(fileNames, apiKey, { model, baseUrl });
+    res.json({ ok: true, results });
   } catch (e) {
+    console.error('classify/tags 路由错误:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * POST /api/classify/download
+ * Body: { cardTitle: string, fileNames: string[], apiKey?, model?, baseUrl? }
+ */
+router.post('/download', async (req, res) => {
+  try {
+    const { cardTitle, fileNames, apiKey, model, baseUrl } = req.body;
+
+    if (!cardTitle || !fileNames || !Array.isArray(fileNames) || fileNames.length === 0) {
+      return res.status(400).json({ ok: false, error: '请提供 cardTitle 和 fileNames' });
+    }
+
+    // 流式 NDJSON：每批 AI 结果立即写入一行 JSON
+    const results = await Promise.race([
+      classifyDownload(cardTitle, fileNames, apiKey, { model, baseUrl }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('classify/download 超时（120s）')), 120000)),
+    ]);
+    res.json({ ok: true, ...results });
+  } catch (e) {
+    console.error('classify/download 路由错误:', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });

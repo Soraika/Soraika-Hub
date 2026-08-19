@@ -1,10 +1,14 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
 const configRoutes = require('./routes/config');
 const mikanRoutes = require('./routes/mikan');
 const classifyRoutes = require('./routes/classify');
 const bgmRoutes = require('./routes/bgm');
 const qbRoutes = require('./routes/qb');
+const discoverRoutes = require('./routes/discover');
+const recommend = require('./services/recommend');
 const config = require('./config');
 
 const app = express();
@@ -25,9 +29,24 @@ app.use('/api/mikan', mikanRoutes);       // Mikan 解析
 app.use('/api/classify', classifyRoutes); // AI 标题分类
 app.use('/api/bgm', bgmRoutes);           // Bangumi 条目
 app.use('/api/qb', qbRoutes);             // qBittorrent 下载
+app.use('/api/discover', discoverRoutes); // 番剧推荐（发现页）
+
+// ── 生产环境：托管前端构建产物（client/dist） ──
+const DIST_DIR = path.join(__dirname, '..', 'client', 'dist');
+if (fs.existsSync(DIST_DIR)) {
+  app.use(express.static(DIST_DIR));
+  // SPA 回退：非 /api 请求一律走 index.html（交给前端路由）
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
+  });
+}
+
+// 启动推荐引擎（后台采集候选池 + 每日刷新）
+recommend.init();
 
 app.listen(PORT, () => {
-  console.log(`🚀 Soraika's Hub 启动成功 → http://localhost:${PORT}`);
+  console.log(`Soraika's Hub 启动成功 → http://localhost:${PORT}`);
   console.log(`   配置: mikan=${config.get('mikan.baseUrl')}  bgm=${config.get('bgm.baseUrl')}  qb=${config.get('qbittorrent.url') || '未配置'}`);
   console.log(`   GET  /api/health               — 健康检查`);
   console.log(`   GET  /api/config               — 读取配置`);

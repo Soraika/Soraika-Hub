@@ -1,0 +1,22 @@
+# ── 敏感文件（绝不进入镜像层，防止推送到 Docker Hub 时泄露密钥） ──
+server/config.json
+server/data/
+
+# ── 依赖与构建产物（由 Dockerfile 内重新构建） ──
+node_modules/
+client/node_modules/
+server/node_modules/
+client/dist/
+server/dist/
+
+# ── 版本控制 / 环境 / 日志 ──
+.git
+.gitignore
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+docker-compose.yml
+deploy/
+README.md

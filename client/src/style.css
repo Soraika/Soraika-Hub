@@ -1,41 +1,73 @@
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Noto+Serif+JP:wght@400;600;700&display=swap');
+@import url('https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css');
 
 :root,
 .theme-light {
-  --bg-main: #faf6f0;
-  --bg-sidebar: #f5efe6;
+  --bg-main: #fbf7f2;
+  --bg-sidebar: #f7f1ea;
   --bg-card: #ffffff;
-  --bg-input: #f0ebe4;
-  --bg-hover: rgba(192, 57, 43, 0.08);
+  --bg-input: #f5efe9;
+  --bg-hover: rgba(224, 135, 122, 0.10);
   --bg-dropdown: #ffffff;
-  --accent: #b8352a;
-  --accent-hover: #d44a3d;
-  --accent-gold: #c4935a;
-  --text-primary: #2c1810;
-  --text-secondary: #8b7e74;
-  --text-on-card: #2c1810;
-  --border: #e0d5c5;
-  --border-card: #e8ddd0;
-  --font-ui: 'Noto Serif JP', 'Hiragino Mincho Pro', 'Yu Mincho', serif;
-  --font-body: 'Noto Sans JP', 'Hiragino Kaku Gothic Pro', 'Meiryo', sans-serif;
-  --radius: 12px;
+  --accent: #e0877a;
+  --accent-hover: #eb9a8e;
+  --accent-strong: #b55a4e;
+  --accent-soft: #f2d7d0;
+  --accent-mist: #fbf1ed;
+  --accent-gold: #d9a97c;
+  --mod-praise: #ddb25e;
+  --mod-praise-strong: #b78a32;
+  --mod-hot: #e0913f;
+  --mod-hot-strong: #bd6f1f;
+  --mod-try: #e0733f;
+  --mod-try-strong: #c15428;
+  --mod-popular: #d95f4a;
+  --mod-popular-strong: #b94736;
+  --metro-grad: linear-gradient(90deg, #ddb25e, #d95f4a);
+  --text-primary: #3d3733;
+  --text-secondary: #9a8f87;
+  --text-on-card: #3d3733;
+  --border: #eee6dc;
+  --border-card: #f0e8df;
+  /* 侧边栏未选中态：从浅灰加深为清晰暖灰 */
+  --nav-muted: #7a6f66;
+  --nav-muted-hover: #4a4038;
+  --nav-muted-bg: rgba(61, 55, 51, 0.06);
+  --font-ui: "LXGW WenKai", "霞鹜文楷", "KaiTi", "STKaiti", serif;
+  --font-body: -apple-system, "PingFang SC", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans SC", "Segoe UI", sans-serif;
+  --radius: 14px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .theme-dark {
-  --bg-main: #1a1a2e;
-  --bg-sidebar: #16213e;
-  --bg-card: #f5f0e8;
-  --bg-input: #1e1e3a;
-  --bg-hover: rgba(192, 57, 43, 0.12);
-  --bg-dropdown: #1e2a4a;
-  --accent: #c0392b;
-  --accent-hover: #e74c3c;
-  --accent-gold: #d4a574;
+  --bg-main: #29252b;
+  --bg-sidebar: #302b31;
+  --bg-card: #f7f1ea;
+  --bg-input: #38333a;
+  --bg-hover: rgba(224, 135, 122, 0.15);
+  --bg-dropdown: #3a353c;
+  --accent: #e0877a;
+  --accent-hover: #eb9a8e;
+  --accent-strong: #eba49a;
+  --accent-soft: rgba(224, 135, 122, 0.18);
+  --accent-mist: rgba(224, 135, 122, 0.10);
+  --accent-gold: #d9a97c;
+  --mod-praise: #ddb25e;
+  --mod-praise-strong: #e7c67f;
+  --mod-hot: #e0913f;
+  --mod-hot-strong: #eaa96b;
+  --mod-try: #e0733f;
+  --mod-try-strong: #e88f65;
+  --mod-popular: #d95f4a;
+  --mod-popular-strong: #e47a65;
+  --metro-grad: linear-gradient(90deg, #ddb25e, #d95f4a);
   --text-primary: #f5f0e8;
-  --text-secondary: #8b8682;
-  --text-on-card: #2c1810;
-  --border: #2a2a4a;
+  --text-secondary: #b3aaa3;
+  --text-on-card: #3d3733;
+  --border: #4a444b;
   --border-card: #d4c5b2;
+  --nav-muted: #c8beb4;
+  --nav-muted-hover: #ece4d9;
+  --nav-muted-bg: rgba(245, 240, 232, 0.07);
 }
 
 *,
@@ -80,10 +112,32 @@ button {
   font-family: var(--font-body);
 }
 
+input:focus, button:focus, textarea:focus, select:focus {
+  outline: none;
+}
+
 input {
   font-family: var(--font-body);
 }
 
 img {
   max-width: 100%;
+}
+
+/* 可访问性：键盘聚焦可见 */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 减少动态偏好：关闭非必要过渡/动画 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

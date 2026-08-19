@@ -1,0 +1,24 @@
+services:
+  soraikas-hub:
+    # ⚠️ 发布到 Docker Hub 前，把 <你的用户名> 替换成你的 Docker Hub 账号
+    image: <你的用户名>/soraikas-hub:latest
+    container_name: soraikas-hub
+    restart: unless-stopped
+    ports:
+      # 对外端口可改，如 "8080:3001"
+      - "3001:3001"
+    environment:
+      - DATA_DIR=/data
+      - NODE_ENV=production
+    volumes:
+      # 持久化卷：config.json 与数据库都落在 /data，升级镜像时卷不动、数据不丢
+      - soraika-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  soraika-data:
