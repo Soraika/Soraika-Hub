@@ -1,5 +1,6 @@
 const { LRUCache } = require('lru-cache');
 const config = require('../config');
+const log = require('../utils/logger').child('classifier');
 
 const tagCache = new LRUCache({ max: 5000, ttl: 1000 * 60 * 30 });
 const downloadCache = new LRUCache({ max: 2000, ttl: 1000 * 60 * 60 * 24 });
@@ -66,8 +67,8 @@ function parseJsonResponse(content, fallback) {
       const suffix = jsonStr[lastBrace + 1] === ']' ? '' : ']';
       try { return JSON.parse(jsonStr.slice(0, lastBrace + 1) + suffix); } catch {}
     }
-    console.warn('AI 返回非 JSON，原始内容:');
-    console.warn(content);
+    // 降到 debug 并截断，避免 AI 原始输出刷屏
+    log.debug('AI 返回非 JSON，原始内容（前 %d 字符）: %s', 500, content.slice(0, 500));
     return fallback;
   }
 }

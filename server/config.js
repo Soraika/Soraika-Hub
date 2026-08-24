@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const log = require('./utils/logger').child('config');
 
 // 配置目录：优先取环境变量 DATA_DIR（Docker 卷挂载点），默认回退到本目录
 const DATA_DIR = process.env.DATA_DIR || __dirname;
@@ -15,7 +16,7 @@ function load() {
     // 首次启动/无配置：静默返回空对象并尝试写一个初始空配置文件，
     // 避免每次都打印 ENOENT 吓人，同时也提前占位方便后续保存
     if (e.code !== 'ENOENT') {
-      console.warn('加载 config.json 失败:', e.message);
+      log.warn('加载 config.json 失败:', e.message);
     }
     const empty = {};
     try {
@@ -23,7 +24,7 @@ function load() {
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(empty, null, 2), 'utf-8');
     } catch (w) {
       // 写失败不致命（如容器卷只读），保持内存空配置，等设置页再写
-      console.warn('初始化 config.json 失败:', w.message);
+      log.warn('初始化 config.json 失败:', w.message);
     }
     return empty;
   }
@@ -85,7 +86,7 @@ function save() {
   try {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
   } catch (e) {
-    console.error('保存 config.json 失败:', e.message);
+    log.error('保存 config.json 失败:', e.message);
   }
 }
 

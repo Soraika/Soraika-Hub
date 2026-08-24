@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getTransferInfo, getTorrents, addTorrent, addTorrents, deleteTorrents, renameFile } = require('../services/qb');
+const log = require('../utils/logger').child('qb');
 
 // QB 连接状态
 router.get('/status', async (req, res) => {
@@ -14,6 +15,7 @@ router.get('/status', async (req, res) => {
       res.json({ ok: false, error: st.error });
     }
   } catch (e) {
+    log.error({ err: e }, 'GET /qb/status 失败');
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -25,6 +27,7 @@ router.get('/torrents', async (req, res) => {
     const list = await getTorrents(category);
     res.json({ ok: true, torrents: list });
   } catch (e) {
+    log.error({ err: e }, 'GET /qb/torrents 失败');
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -35,6 +38,7 @@ router.delete('/torrents/:hash', async (req, res) => {
     const ok = await deleteTorrents(req.params.hash);
     res.json({ ok });
   } catch (e) {
+    log.error({ err: e }, 'DELETE /qb/torrents/:hash 失败');
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -49,6 +53,7 @@ router.post('/add', async (req, res) => {
     const result = await addTorrent({ magnet, torrent, savePath, rename, taskName });
     res.json(result);
   } catch (e) {
+    log.error({ err: e }, 'POST /qb/add 失败');
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -64,6 +69,7 @@ router.post('/anime', async (req, res) => {
     const success = results.filter(r => r.ok).length;
     res.json({ ok: true, total: results.length, success, results });
   } catch (e) {
+    log.error({ err: e }, 'POST /qb/anime 失败');
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -78,6 +84,7 @@ router.post('/rename', async (req, res) => {
     const ok = await renameFile(hash, name);
     res.json({ ok, error: ok ? undefined : '重命名失败' });
   } catch (e) {
+    log.error({ err: e }, 'POST /qb/rename 失败');
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -95,6 +102,7 @@ router.get('/download-hashes', async (req, res) => {
     const hashes = torrents.map(t => t.hash);
     res.json({ ok: true, hashes });
   } catch (e) {
+    log.error({ err: e }, 'GET /qb/download-hashes 失败');
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -147,7 +155,7 @@ router.get('/anime-torrents', async (req, res) => {
 
     res.json({ ok: true, torrents: results });
   } catch (e) {
-    console.error('[qb] /anime-torrents 失败:', e);
+    log.error({ err: e }, 'GET /qb/anime-torrents 失败');
     res.status(500).json({ ok: false, error: e.message });
   }
 });

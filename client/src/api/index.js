@@ -36,6 +36,14 @@ export function searchMikan(keyword) {
   return api.get('/mikan/search', { params: { q: keyword } })
 }
 
+export function getMikanMapping() {
+  return api.get('/mikan/mapping')
+}
+
+export function syncMikanMapping() {
+  return api.post('/mikan/mapping/sync')
+}
+
 // ── BGM ──
 
 export function getBgmSubject(id) {

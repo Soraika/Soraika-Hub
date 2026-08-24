@@ -66,6 +66,9 @@ import { IconSearch, IconArrowRight, IconArrowLeft, IconAlertCircle, IconMoodEmp
 import { searchMikan } from '@/api'
 import AnimeCard from '@/components/AnimeCard.vue'
 import BackToTop from '@/components/BackToTop.vue'
+import { createLogger } from '@/utils/logger'
+
+const log = createLogger('SearchPage')
 
 const route = useRoute()
 const router = useRouter()
@@ -94,7 +97,7 @@ async function fetchResults(q) {
 }
 
 function goToAnime(bgmid) {
-  console.log('选中番剧:', bgmid)
+  log.info('选中番剧:', bgmid)
   // 后续做详情页再跳转
 }
 

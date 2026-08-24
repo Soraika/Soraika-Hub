@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const pinoHttp = require('pino-http');
+const logger = require('./utils/logger');
 const configRoutes = require('./routes/config');
 const mikanRoutes = require('./routes/mikan');
 const classifyRoutes = require('./routes/classify');
@@ -9,14 +11,40 @@ const bgmRoutes = require('./routes/bgm');
 const qbRoutes = require('./routes/qb');
 const discoverRoutes = require('./routes/discover');
 const recommend = require('./services/recommend');
+const mikanMapping = require('./services/mikanMapping');
 const config = require('./config');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// ── 全局兜底：未捕获异常 / 未处理 rejection ──
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, '未捕获异常，进程即将退出');
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  logger.error({ err: reason }, '未处理的 Promise rejection');
+});
+
 // 全局中间件
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+// HTTP 访问日志（健康检查不刷屏；>=500 记 error、>=400 记 warn）
+app.use(pinoHttp({
+  logger,
+  customSerializers: {
+    req: (req) => ({ id: req.id, method: req.method, url: req.url }),
+    res: (res) => ({ statusCode: res.statusCode }),
+  },
+  autoLogging: {
+    ignore: (req) => req.url === '/api/health',
+  },
+  customLogLevel: (req, res, err) => {
+    if (err || res.statusCode >= 500) return 'error';
+    if (res.statusCode >= 400) return 'warn';
+    return 'info';
+  },
+}));
 
 // 健康检查
 app.get('/api/health', (req, res) => {
@@ -47,23 +75,12 @@ if (fs.existsSync(DIST_DIR)) {
 
 // 启动推荐引擎（后台采集候选池 + 每日刷新）
 recommend.init();
+// 启动 Mikan → Bangumi ID 转换表（每日自动更新 + 本地 json 缓存）
+mikanMapping.init();
 
 app.listen(PORT, () => {
-  console.log(`Soraika's Hub 启动成功 → http://localhost:${PORT}`);
-  console.log(`   配置: mikan=${config.get('mikan.baseUrl')}  bgm=${config.get('bgm.baseUrl')}  qb=${config.get('qbittorrent.url') || '未配置'}`);
-  console.log(`   GET  /api/health               — 健康检查`);
-  console.log(`   GET  /api/config               — 读取配置`);
-  console.log(`   PUT  /api/config               — 更新配置`);
-  console.log(`   GET  /api/mikan/list            — 最新 RSS`);
-  console.log(`   GET  /api/mikan/schedule        — 排期列表`);
-  console.log(`   GET  /api/mikan/subdetail/:bgmid — 番剧字幕组`);
-  console.log(`   GET  /api/mikan/rss/:id/:sub    — 字幕组种子`);
-  console.log(`   GET  /api/mikan/search?q=       — 搜索番剧`);
-  console.log(`   POST /api/classify              — AI 分类`);
-  console.log(`   GET  /api/bgm/subject/:id       — BGM 条目详情`);
-  console.log(`   GET  /api/bgm/search?q=         — BGM 搜索`);
-  console.log(`   GET  /api/qb/status             — QB 状态`);
-  console.log(`   GET  /api/qb/torrents           — 任务列表`);
-  console.log(`   POST /api/qb/add                — 普通下载`);
-  console.log(`   POST /api/qb/anime              — 番剧批量下载`);
+  logger.info(`Soraika's Hub 启动成功 → http://localhost:${PORT}`);
+  logger.info('   数据源: mikan=%s | bgm=%s | qb=%s', config.get('mikan.baseUrl'), config.get('bgm.baseUrl'), config.get('qbittorrent.url') || '未配置');
+  logger.info('   转换表: %s', config.get('mikan.mappingUrl') || mikanMapping.DEFAULT_SOURCE);
+  logger.info('   API: GET/PUT /config · GET /mikan/list|schedule|subdetail/:id|rss/:id/:sub|search|mapping · POST /mikan/mapping/sync · POST /classify/tags|download · GET /bgm/subject/:id|search · GET/POST/DELETE /qb/* · GET /discover/*');
 });

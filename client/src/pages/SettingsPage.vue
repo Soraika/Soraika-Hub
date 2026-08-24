@@ -39,8 +39,11 @@
         :saving="saving"
         :saveKey="saveKey"
         :saveOk="saveOk"
+        :mappingStatus="mappingStatus"
+        :syncingMapping="syncingMapping"
         @test="testUrl"
         @toggleBgmNoToken="bgmNoToken = !bgmNoToken"
+        @syncMapping="syncMapping"
         @save="save"
       />
     </div>
@@ -50,7 +53,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { IconAlertCircle } from '@tabler/icons-vue'
-import { getConfig, updateConfig } from '@/api'
+import { getConfig, updateConfig, getMikanMapping, syncMikanMapping } from '@/api'
 import SettingsDownloadCard from '@/components/SettingsDownloadCard.vue'
 import SettingsAiCard from '@/components/SettingsAiCard.vue'
 import SettingsSourceCard from '@/components/SettingsSourceCard.vue'
@@ -61,16 +64,18 @@ const saving = ref(false)
 const saveOk = ref(false)
 const saveKey = ref('')
 const bgmNoToken = ref(false)
+const mappingStatus = ref(null)
+const syncingMapping = ref(false)
 
 const testStates = reactive({
-  qb: 'idle', xunlei: 'idle', deepseek: 'idle', mikan: 'idle', bgm: 'idle',
+  qb: 'idle', xunlei: 'idle', deepseek: 'idle', mikan: 'idle', bgm: 'idle', mapping: 'idle',
 })
 
 const form = reactive({
   qbittorrent: { url: '', token: '', basePath: '' },
   xunlei: { url: '' },
   deepseek: { baseUrl: '', apiKey: '', model: '' },
-  mikan: { baseUrl: '' },
+  mikan: { baseUrl: '', mappingUrl: '' },
   bgm: { baseUrl: '', token: '' },
 })
 
@@ -105,13 +110,39 @@ async function loadConfig() {
       apiKey: c.deepseek?.apiKey || '',
       model: c.deepseek?.model || '',
     }
-    form.mikan = { baseUrl: c.mikan?.baseUrl || '' }
+    form.mikan = {
+      baseUrl: c.mikan?.baseUrl || '',
+      mappingUrl: c.mikan?.mappingUrl || 'https://raw.githubusercontent.com/xiaoyvyv/bangumi-data/main/data/mikan/bangumi-mikan.json',
+    }
     form.bgm = { baseUrl: c.bgm?.baseUrl || '', token: c.bgm?.token || '' }
     bgmNoToken.value = !c.bgm?.token
   } catch {
     error.value = true
   } finally {
     loading.value = false
+  }
+}
+
+async function loadMappingStatus() {
+  try {
+    const { data } = await getMikanMapping()
+    mappingStatus.value = data && data.ok ? data : null
+  } catch {
+    mappingStatus.value = null
+  }
+}
+
+async function syncMapping() {
+  if (syncingMapping.value) return
+  syncingMapping.value = true
+  try {
+    const { data } = await syncMikanMapping()
+    mappingStatus.value = data || null
+    testStates.mapping = data?.ok ? 'success' : 'error'
+  } catch {
+    testStates.mapping = 'error'
+  } finally {
+    syncingMapping.value = false
   }
 }
 
@@ -139,7 +170,10 @@ async function save(key) {
   }
 }
 
-onMounted(loadConfig)
+onMounted(() => {
+  loadConfig()
+  loadMappingStatus()
+})
 </script>
 
 <style scoped>

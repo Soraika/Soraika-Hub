@@ -9,6 +9,9 @@ services:
     environment:
       - DATA_DIR=/data
       - NODE_ENV=production
+      # 日志：LOG_OUTPUT=both（stdout + /data/logs 按日轮转文件，保留 7 天）；LOG_LEVEL=info
+      - LOG_LEVEL=info
+      - LOG_OUTPUT=both
     volumes:
       # 持久化卷：config.json 与数据库都落在 /data，升级镜像时卷不动、数据不丢
       - soraika-data:/data

@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "cd client && npm run dev",
     "dev:server": "cd server && node app.js",
-    "dev:all": "concurrently \"npm run dev\" \"npm run dev:server\"",
+    "dev:server:pretty": "cd server && node app.js | pino-pretty",
+    "dev:all": "concurrently \"npm run dev\" \"npm run dev:server:pretty\"",
     "install:all": "npm install && cd client && npm install && cd ../server && npm install"
   },
   "devDependencies": {

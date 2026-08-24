@@ -1,10 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const config = require('../config');
+const log = require('../utils/logger').child('config');
 
 // 获取全量配置（敏感字段脱敏）
 router.get('/', (req, res) => {
-  res.json({ ok: true, config: config.getAll() });
+  try {
+    res.json({ ok: true, config: config.getAll() });
+  } catch (e) {
+    log.error({ err: e }, 'GET /api/config 失败');
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // 合并更新配置
@@ -14,6 +20,7 @@ router.put('/', (req, res) => {
     const updated = config.update(req.body);
     res.json({ ok: true, config: updated });
   } catch (e) {
+    log.error({ err: e }, 'PUT /api/config 更新失败');
     res.status(500).json({ ok: false, error: e.message });
   }
 });

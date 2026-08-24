@@ -1,4 +1,5 @@
 const { fetchSubjectList, fetchCalendar } = require('./bgm');
+const log = require('../utils/logger').child('recommend');
 
 // ── 常量 ──
 
@@ -126,7 +127,7 @@ async function collectCandidates() {
             if (!pool.has(it.id)) pool.set(it.id, it);
           }
         } catch (e) {
-          console.warn(`[recommend] 采集 ${seg.label}@${offset} 失败:`, e.message);
+          log.warn({ seg: seg.label, offset }, '采集失败: %s', e.message);
         }
       });
     }
@@ -150,7 +151,7 @@ async function refreshCalendar() {
     const days = await fetchCalendar();
     calendarCache = days;
   } catch (e) {
-    console.warn('[recommend] calendar 刷新失败:', e.message);
+    log.warn('calendar 刷新失败: %s', e.message);
   }
 }
 
@@ -174,10 +175,10 @@ async function syncAll(force = false) {
     try {
       const pool = await collectCandidates();
       candidateMap = pool;
-      console.log(`[recommend] 候选池刷新完成：${candidateMap.size} 部动画`);
+      log.info('候选池刷新完成：%d 部动画', candidateMap.size);
     } catch (e) {
       syncError = '候选池采集失败: ' + e.message;
-      console.error('[recommend] 候选池采集失败:', e.message);
+      log.error({ err: e }, '候选池采集失败');
     }
 
     await refreshCalendar();

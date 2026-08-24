@@ -111,14 +111,16 @@
 <script setup>
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { IconX, IconPhotoOff, IconAlertCircle, IconDownload, IconTags, IconMovie } from '@tabler/icons-vue'
-import { getSubDetail, getBangumiRSS, qbAdd, searchBgm, getBgmSubject, classifyTags, classifyDownload, getDownloadHashes, searchMikan } from '@/api'
+import { getSubDetail, getBangumiRSS, qbAdd, searchBgm, getBgmSubject, classifyTags, classifyDownload, getDownloadHashes } from '@/api'
 import SubgroupPicker from './SubgroupPicker.vue'
 import TagFilterBar from './TagFilterBar.vue'
 import TorrentList from './TorrentList.vue'
+import { createLogger } from '@/utils/logger'
+
+const log = createLogger('AnimeDetailPanel')
 
 const props = defineProps({
   bgmid: { type: [Number, String], default: null },
-  keyword: { type: String, default: null },
 })
 const emit = defineEmits(['close'])
 
@@ -231,46 +233,28 @@ function sanitizeSummary(html) {
   return html.replace(/\n/g, '<br>').replace(/<script[\s\S]*?<\/script>/gi, '')
 }
 
-watch(() => [props.bgmid, props.keyword], async ([id, kw]) => {
-  if (!id && !kw) { visible.value = false; return }
+watch(() => props.bgmid, async (id) => {
+  if (!id) { visible.value = false; return }
   visible.value = true; loading.value = true; error.value = false; errorText.value = '加载失败'
   detail.value = null; activeSg.value = null; torrents.value = []
   allTags.value = []; selectedTags.value = new Set(); checkedItems.value = new Set()
   batchFilter.value = 'all'; phase.value = 'content'; bgmInfo.value = null
 
-  let resolvedId = id
-  if (!resolvedId && kw) {
-    try {
-      const { data } = await searchMikan(kw)
-      const hit = (data.items || []).find(it => {
-        const n = (it.name || '').toLowerCase()
-        const kwl = kw.toLowerCase()
-        return n === kwl || n.includes(kwl) || kwl.includes(n)
-      })
-      resolvedId = hit?.bgmid || null
-    } catch (e) { console.error('[AnimeDetailPanel] searchMikan 失败:', e) }
-    if (!resolvedId) {
-      error.value = true; errorText.value = '未找到对应的番剧资源'
-      loading.value = false
-      return
-    }
-  }
-
-  currentBgmid.value = resolvedId
-
   try {
-    const { data } = await getSubDetail(resolvedId)
+    const { data } = await getSubDetail(id)
     detail.value = data.detail || null
+    // 服务端已把 BGM 条目 ID 经转换表反查为 Mikan 番剧 ID（detail.bgmid），后续字幕组 RSS 需用它
+    currentBgmid.value = data.detail?.bgmid || id
     if (detail.value?.title) {
       const bgmPromise = searchBgm(detail.value.title).then(({ data: d }) => {
         const subjectId = d.items?.[0]?.id
         if (subjectId) return getBgmSubject(subjectId)
       }).then((res) => {
         if (res?.data?.detail) bgmInfo.value = res.data.detail
-      }).catch(e => { console.error('[AnimeDetailPanel] BGM 搜索失败:', e) })
+      }).catch(e => { log.error('BGM 搜索失败:', e) })
       await Promise.race([bgmPromise, new Promise(r => setTimeout(r, 3000))])
     }
-  } catch (e) { console.error('[AnimeDetailPanel] watch bgmid 失败:', e); error.value = true }
+  } catch (e) { log.error('watch bgmid 失败:', e); error.value = true }
   finally { loading.value = false }
 })
 
@@ -281,7 +265,7 @@ async function selectSubgroup(sg) {
 
   const requestPromise = getBangumiRSS(currentBgmid.value, sg.id)
     .then(resp => resp.data?.items || [])
-    .catch(e => { console.error('[AnimeDetailPanel] getBangumiRSS 失败:', e); return [] })
+    .catch(e => { log.error('getBangumiRSS 失败:', e); return [] })
 
   let timedOut = false
   loadTimer = setTimeout(() => {
@@ -323,7 +307,7 @@ async function selectSubgroup(sg) {
         allTags.value = tagList
       }
       tagsLoading.value = false
-    }).catch(e => { console.error('[AnimeDetailPanel] classifyTags 失败:', e); tagsLoading.value = false })
+    }).catch(e => { log.error('classifyTags 失败:', e); tagsLoading.value = false })
 
     downloadMeta.value = { rawName: null, season: 1 }
     titleMetaMap.value = {}
@@ -340,14 +324,14 @@ async function selectSubgroup(sg) {
         }
       }
       aiReady.value = true
-    }).catch(e => { console.error('[AnimeDetailPanel] classifyDownload 失败:', e); aiReady.value = true })
+    }).catch(e => { log.error('classifyDownload 失败:', e); aiReady.value = true })
   }
 
   getDownloadHashes().then(({ data }) => {
     if (data?.ok && data.hashes) {
       addedHashes.value = new Set(data.hashes.map(h => h.toLowerCase()))
     }
-  }).catch(e => { console.error('[AnimeDetailPanel] getDownloadHashes 失败:', e) })
+  }).catch(e => { log.error('getDownloadHashes 失败:', e) })
 
   selectedTags.value = new Set()
   checkedItems.value = new Set()
@@ -422,12 +406,12 @@ async function downloadOne(item) {
           if (r.rawName) downloadMeta.value.rawName = r.rawName
           if (r.season) downloadMeta.value.season = r.season
         }
-      } catch (e) { console.error('[AnimeDetailPanel] 单条AI解析失败:', e) }
+      } catch (e) { log.error('单条AI解析失败:', e) }
     }
     const meta = buildDownloadMeta(item)
     await qbAdd({ magnet: item.magnet, ...meta })
     addedHashes.value = new Set([...addedHashes.value, item.magnetHash])
-  } catch (e) { console.error('[AnimeDetailPanel] downloadOne 失败:', e) } finally { downloading.value = false }
+  } catch (e) { log.error('downloadOne 失败:', e) } finally { downloading.value = false }
 }
 
 async function downloadAll() {
@@ -437,7 +421,7 @@ async function downloadAll() {
     const items = rankedTorrents.value
     for (const t of items) {
       const meta = buildDownloadMeta(t)
-      try { await qbAdd({ magnet: t.magnet, ...meta }) } catch (e) { console.error('[AnimeDetailPanel] downloadAll 单条失败:', e) }
+      try { await qbAdd({ magnet: t.magnet, ...meta }) } catch (e) { log.error('downloadAll 单条失败:', e) }
     }
     const allHashes = new Set(items.map(t => t.magnetHash).filter(Boolean))
     addedHashes.value = new Set([...addedHashes.value, ...allHashes])
@@ -451,11 +435,11 @@ async function downloadChecked() {
     const selected = rankedTorrents.value.filter(t => checkedItems.value.has(t.magnetHash))
     for (const t of selected) {
       const meta = buildDownloadMeta(t)
-      try { await qbAdd({ magnet: t.magnet, ...meta }) } catch (e) { console.error('[AnimeDetailPanel] downloadChecked 单条失败:', e) }
+      try { await qbAdd({ magnet: t.magnet, ...meta }) } catch (e) { log.error('downloadChecked 单条失败:', e) }
     }
     const allHashes = new Set(selected.map(t => t.magnetHash).filter(Boolean))
     addedHashes.value = new Set([...addedHashes.value, ...allHashes])
-  } catch (e) { console.error('[AnimeDetailPanel] downloadAll 失败:', e) } finally { downloading.value = false }
+  } catch (e) { log.error('downloadAll 失败:', e) } finally { downloading.value = false }
 }
 
 function close() { emit('close') }

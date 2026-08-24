@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { classifyTags, classifyDownload } = require('../services/classifier');
+const log = require('../utils/logger').child('classify');
 
 /**
  * POST /api/classify/tags
@@ -17,7 +18,7 @@ router.post('/tags', async (req, res) => {
     const results = await classifyTags(fileNames, apiKey, { model, baseUrl });
     res.json({ ok: true, results });
   } catch (e) {
-    console.error('classify/tags 路由错误:', e.message);
+    log.error({ err: e }, 'classify/tags 路由错误');
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -41,7 +42,7 @@ router.post('/download', async (req, res) => {
     ]);
     res.json({ ok: true, ...results });
   } catch (e) {
-    console.error('classify/download 路由错误:', e.message);
+    log.error({ err: e }, 'classify/download 路由错误');
     res.status(500).json({ ok: false, error: e.message });
   }
 });

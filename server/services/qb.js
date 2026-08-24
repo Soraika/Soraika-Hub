@@ -1,4 +1,5 @@
 const config = require('../config');
+const log = require('../utils/logger').child('qb');
 
 function getQBConfig() {
   return {
@@ -79,7 +80,7 @@ async function addTorrent(item) {
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (attempt > 0) {
-      console.warn(`[QB] add 重试 ${attempt}/${maxAttempts - 1} → ${url.slice(0, 60)}...`);
+      log.warn('add 重试 %d/%d → %s', attempt, maxAttempts - 1, url.slice(0, 60));
       await new Promise(r => setTimeout(r, 2000));
     }
 

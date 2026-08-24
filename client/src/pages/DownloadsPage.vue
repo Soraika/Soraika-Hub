@@ -98,6 +98,9 @@
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { IconRefresh, IconMoodEmpty, IconMovie } from '@tabler/icons-vue'
 import { getQBStatus, getAnimeTorrents, qbDelete, qbRename, getSubDetail } from '@/api'
+import { createLogger } from '@/utils/logger'
+
+const log = createLogger('DownloadsPage')
 
 const loading = ref(true)
 const isSpinning = ref(false)
@@ -196,12 +199,12 @@ function stateClass(s) {
 function formatSize(b) { return b > 1073741824 ? (b/1073741824).toFixed(1)+' GB' : b > 1048576 ? (b/1048576).toFixed(1)+' MB' : b > 1024 ? (b/1024).toFixed(0)+' KB' : b+' B' }
 
 async function cancelTorrent(hash) {
-  try { await qbDelete(hash); await fetchAll() } catch (e) { console.error('[DownloadsPage] cancelTorrent 失败:', e) }
+  try { await qbDelete(hash); await fetchAll() } catch (e) { log.error('cancelTorrent 失败:', e) }
 }
 function openRename(ep) { renameTarget.value = ep; renameValue.value = ep.name || '' }
 async function doRename() {
   if (!renameTarget.value || !renameValue.value) return
-  try { await qbRename(renameTarget.value.hash, renameValue.value); renameTarget.value.name = renameValue.value } catch (e) { console.error('[DownloadsPage] doRename 失败:', e) }
+  try { await qbRename(renameTarget.value.hash, renameValue.value); renameTarget.value.name = renameValue.value } catch (e) { log.error('doRename 失败:', e) }
   renameTarget.value = null
 }
 

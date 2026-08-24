@@ -49,6 +49,29 @@
       <span v-else class="slot-placeholder"></span>
     </div>
 
+    <div class="sub-title">Mikan TO BANGUMIID 转换表</div>
+    <div class="field">
+      <span class="label">镜像地址</span>
+      <input v-model="form.mikan.mappingUrl" placeholder="https://raw.githubusercontent.com/xiaoyvyv/bangumi-data/main/data/mikan/bangumi-mikan.json" />
+      <button class="icon-btn" :class="testStates.mapping" :title="testLabel(testStates.mapping)" :disabled="testStates.mapping === 'testing'" @click="$emit('test', 'mapping', form.mikan.mappingUrl)">
+        <IconPlugConnected v-if="testStates.mapping === 'idle'" :size="16" />
+        <span v-else-if="testStates.mapping === 'testing'" class="mini-spinner" />
+        <IconCircleCheck v-else-if="testStates.mapping === 'success'" :size="16" />
+        <IconCircleX v-else :size="16" />
+      </button>
+    </div>
+    <div class="field">
+      <span class="label">状态</span>
+      <div class="input-wrap">
+        <span class="mapping-status-text">
+          {{ mappingStatus?.count != null ? `共 ${mappingStatus.count} 条 · ${fmtTime(mappingStatus.lastSyncAt)}` : '未同步 / 未知' }}
+        </span>
+      </div>
+      <button class="icon-btn" :title="syncingMapping ? '更新中...' : '立即更新'" :disabled="syncingMapping" @click="$emit('syncMapping')">
+        <span v-if="syncingMapping" class="mini-spinner" />
+        <IconRefresh v-else :size="16" />
+      </button>
+    </div>
     <div class="card-save">
       <button class="save-btn" :class="{ saving: saving && saveKey === 'source', ok: saveOk && saveKey === 'source' }" :disabled="saving && saveKey === 'source'" @click="$emit('save', 'source')">
         <IconCircleCheck v-if="saveOk && saveKey === 'source'" :size="16" class="save-check-icon" />
@@ -61,7 +84,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { IconWorld, IconPlugConnected, IconCircleCheck, IconCircleX, IconEye, IconEyeOff, IconDeviceFloppy } from '@tabler/icons-vue'
+import { IconWorld, IconPlugConnected, IconCircleCheck, IconCircleX, IconEye, IconEyeOff, IconDeviceFloppy, IconRefresh } from '@tabler/icons-vue'
 
 const props = defineProps({
   form: Object,
@@ -70,15 +93,24 @@ const props = defineProps({
   saving: Boolean,
   saveKey: String,
   saveOk: Boolean,
+  mappingStatus: Object,
+  syncingMapping: Boolean,
 })
 
-defineEmits(['test', 'toggleBgmNoToken', 'save'])
+defineEmits(['test', 'toggleBgmNoToken', 'save', 'syncMapping'])
 
 const showToken = ref(false)
 
 function testLabel(state) {
   const map = { idle: '测试连接', testing: '测试中...', success: '测试成功 ✓', error: '测试失败 ✕' }
   return map[state] || '测试连接'
+}
+
+function fmtTime(ts) {
+  if (!ts) return '未同步'
+  const d = new Date(ts)
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function saveBtnText(key) {
@@ -90,4 +122,14 @@ function saveBtnText(key) {
 
 <style scoped>
 @import './SettingsCard.css';
+
+.mapping-status-text {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  padding: 0 14px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 </style>

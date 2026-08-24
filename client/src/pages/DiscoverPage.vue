@@ -89,7 +89,7 @@
       <BackToTop target=".discover-main" />
     </div>
 
-    <AnimeDetailPanel :keyword="selectedKeyword" @close="selectedKeyword = null" />
+    <AnimeDetailPanel :bgmid="selectedBgmid" @close="selectedBgmid = null" />
   </div>
 </template>
 
@@ -107,6 +107,9 @@ import { getDiscoverModules, getDiscoverModule } from '@/api'
 import AnimeCard from '@/components/AnimeCard.vue'
 import AnimeDetailPanel from '@/components/AnimeDetailPanel.vue'
 import BackToTop from '@/components/BackToTop.vue'
+import { createLogger } from '@/utils/logger'
+
+const log = createLogger('DiscoverPage')
 
 const moduleOrder = [
   { id: 'praise', icon: IconTrophy, label: '口碑神作榜' },
@@ -129,7 +132,7 @@ const moduleLoading = ref(null)
 const error = ref(false)
 const ready = ref(false)
 const updatedAt = ref(null)
-const selectedKeyword = ref(null)
+const selectedBgmid = ref(null)
 const scrollRoot = ref(null)
 
 const activeIndex = ref(0)
@@ -161,7 +164,7 @@ async function fetchAll() {
     await nextTick()
     setupObserver()
   } catch (e) {
-    console.error('[DiscoverPage] modules 加载失败:', e)
+    log.error('modules 加载失败:', e)
     error.value = true
   } finally {
     loading.value = false
@@ -179,14 +182,15 @@ async function refreshModule(modId) {
       if (data.updatedAt) updatedAt.value = data.updatedAt
     }
   } catch (e) {
-    console.error(`[DiscoverPage] ${modId} 换一批失败:`, e)
+    log.error(`${modId} 换一批失败:`, e)
   } finally {
     moduleLoading.value = null
   }
 }
 
 async function goToAnime(item) {
-  selectedKeyword.value = item.nameCn || item.name
+  // 发现页卡片携带的是 BGM 条目 ID（推荐引擎来自 Bangumi API），详情面板经服务端转换表反查为 Mikan ID
+  selectedBgmid.value = item.bgmId
 }
 
 function scrollToModule(id) {
