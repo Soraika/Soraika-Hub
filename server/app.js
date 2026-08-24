@@ -39,6 +39,8 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // 全局中间件
+// 禁用 ETag：API 返回动态数据，避免浏览器 If-None-Match 命中返回 304（axios 拿不到 body，导致发现页/排期加载不出）
+app.disable('etag');
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 // HTTP 访问日志（健康检查不刷屏；>=500 记 error、>=400 记 warn）
@@ -76,7 +78,8 @@ app.use('/api/discover', discoverRoutes); // 番剧推荐（发现页）
 // （本地开发 __dirname=server，server/client/dist 不存在则跳过，由 vite dev server 托管前端）
 const DIST_DIR = path.join(__dirname, 'client', 'dist');
 if (fs.existsSync(DIST_DIR)) {
-  app.use(express.static(DIST_DIR));
+  // 静态资源显式保留 ETag + 短缓存（全局已禁用 ETag，这里对构建产物单独开启）
+  app.use(express.static(DIST_DIR, { etag: true, maxAge: '1d' }));
   // SPA 回退：非 /api 的 GET 请求一律走 index.html（交给前端路由）
   // 用中间件而非 app.get('*')，兼容新版 path-to-regexp（express 5）
   app.use((req, res, next) => {

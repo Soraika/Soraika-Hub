@@ -146,7 +146,7 @@ const metaText = computed(() => {
 }
 .anime-card:hover {
   transform: translateY(-5px);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--card-shadow);
 }
 .anime-card:hover .poster {
   transform: scale(1.06);
@@ -228,7 +228,7 @@ const metaText = computed(() => {
   width: 100%;
   aspect-ratio: 3 / 4;
   overflow: hidden;
-  background: #e8e0d5;
+  background: var(--bg-input);
 }
 .poster {
   width: 100%;

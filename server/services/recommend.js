@@ -1,5 +1,11 @@
 const { fetchSubjectList, fetchCalendar } = require('./bgm');
 const log = require('../utils/logger').child('recommend');
+const fs = require('fs');
+const path = require('path');
+
+// 候选池持久化缓存（与 db/日志同目录，server/data 已被 gitignore）
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+const CACHE_PATH = path.join(DATA_DIR, 'candidates.json');
 
 // ── 常量 ──
 
@@ -166,6 +172,35 @@ function getWeeklyItems() {
   return items;
 }
 
+// ── 候选池持久化（json 缓存：启动秒恢复，避免每次全量采集） ──
+
+/** 写盘候选池 */
+function saveLocalCandidates() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(CACHE_PATH, JSON.stringify(Array.from(candidateMap.values())), 'utf-8');
+  } catch (e) {
+    log.warn({ err: e }, '候选池缓存写盘失败');
+  }
+}
+
+/** 启动时读取本地候选池缓存；返回是否命中 */
+function loadLocalCandidates() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf-8'));
+    if (Array.isArray(arr)) {
+      candidateMap = new Map(arr.filter(it => it && it.id).map(it => [it.id, it]));
+      log.info('已从本地缓存恢复候选池：%d 部', candidateMap.size);
+      return candidateMap.size > 0;
+    }
+  } catch (e) {
+    if (e.code !== 'ENOENT') {
+      log.warn({ err: e }, '候选池缓存读取失败');
+    }
+  }
+  return false;
+}
+
 // ── 主刷新流程 ──
 
 async function syncAll(force = false) {
@@ -175,6 +210,7 @@ async function syncAll(force = false) {
     try {
       const pool = await collectCandidates();
       candidateMap = pool;
+      saveLocalCandidates();
       log.info('候选池刷新完成：%d 部动画', candidateMap.size);
     } catch (e) {
       syncError = '候选池采集失败: ' + e.message;
@@ -352,8 +388,14 @@ function status() {
   };
 }
 
-/** 初始化：立即后台拉取 + 定时刷新 */
+/** 初始化：先读本地缓存秒级就绪，再后台采集刷新 + 每日定时 */
 function init() {
+  // 命中本地候选池缓存 → 推荐引擎立即可用（发现页秒出；BGM API 不可用时也有兜底）
+  loadLocalCandidates();
+  if (candidateMap.size > 0) {
+    ready = true;
+    lastSyncAt = Date.now();
+  }
   syncAll().then(() => {
     scheduleNext();
   });
