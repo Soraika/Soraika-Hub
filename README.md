@@ -1,179 +1,169 @@
-# Soraika's Hub — 设计 & 系统规范
+# Soraika's Hub
 
-> 本文为项目级设计与系统约定沉淀文档。凡涉及配色、动画、交互反馈、导航布局、图标、网格等前端/系统级要求的改动，均应在此追加记录，保持风格统一。
+> 自托管番剧资源管理面板：Mikan 排期浏览、Bangumi 评分推荐、AI 智能解析、qBittorrent 一键下载。
+> 适合部署在 NAS / 家用服务器上，全程自控、数据与配置持久化在本机卷中。
 
-## 一、配色
+---
 
-主题：暖色系 + 冷暖点缀，整体柔和、偏纸质质感。
+## 功能特性
 
-### 全局色（浅色 / 深色）
+- **首页番剧排期**：按星期浏览 Mikan 当季 / 历史季度番剧，剧院版 / OVA 独立区块
+- **发现页推荐引擎**：基于 Bangumi 评分与热度生成 4 个模块（口碑 / 热门 / 值得一试 / 人气之作），支持「换一批」
+- **番剧详情面板**：海报、BGM 评分/简介、字幕组列表、RSS 种子一键选择
+- **AI 智能解析**：接入 DeepSeek，自动提取文件标签分类、解析季数与集数，下载后自动重命名
+- **qBittorrent 集成**：添加下载任务、自动分类、批量下载、重命名、状态管理
+- **Mikan ↔ Bangumi 转换表**：每日自动同步官方数据，详情页精准关联，设置页可配镜像地址
+- **结构化日志**：全端接入 pino，JSON 结构化、HTTP 访问日志、按日轮转、敏感信息自动脱敏
 
-| 变量 | 浅色 | 深色 | 用途 |
-|---|---|---|---|
-| `--accent` | `#e0877a` | `#e0877a` | 主操作色（珊瑚） |
-| `--accent-gold` | `#d9a97c` | `#d9a97c` | 金色点缀 / 星期地铁线 |
-| `--bg-main` | `#fbf7f2` | `#29252b` | 页面主背景 |
-| `--bg-sidebar` | `#f7f1ea` | `#302b31` | 侧边栏背景 |
-| `--text-primary` | `#3d3733` | `#f5f0e8` | 主文字 |
-| `--text-secondary` | `#9a8f87` | `#b3aaa3` | 次要文字 |
+---
 
-### 四模块主题色（口碑 / 热门 / 值得一试 / 人气之作）
+## 技术栈
 
-| 模块 | 变量 | 浅色 strong | 深色 strong |
-|---|---|---|---|
-| 口碑 praise | `--mod-praise: #ddb25e`（金黄） | `#b78a32` | `#e7c67f` |
-| 热门 hot | `--mod-hot: #e0913f`（琥珀） | `#bd6f1f` | `#eaa96b` |
-| 值得一试 try | `--mod-try: #e0733f`（蜜橙） | `#c15428` | `#e88f65` |
-| 人气之作 popular | `--mod-popular: #d95f4a`（暖红） | `#b94736` | `#e47a65` |
+| 端 | 技术 |
+|---|---|
+| 前端 | Vue 3 · Vite · Pinia · Vue Router · @tabler/icons-vue · @phosphor-icons/vue |
+| 后端 | Node.js · Express 5 · better-sqlite3 · cheerio · fast-xml-parser |
+| AI | DeepSeek API（标签分类 / 标题解析） |
+| 日志 | pino · pino-http · pino-roll |
+| 部署 | Docker · GitHub Actions 自动构建推送镜像 |
 
-> 四个模块统一为「金黄 → 琥珀 → 蜜橙 → 暖红」的暖色渐进，低饱和、同色系，不做割裂的阵营色，避免"给番剧分三六九等"的观感。渐变轨道 `--metro-grad: linear-gradient(90deg, #ddb25e, #d95f4a)`。
+---
 
-## 二、发现页区块设计
+## 快速开始（Docker 推荐）
 
-- **首块融合**：第一个模块（口碑）不显示独立标题，内容直接衔接顶部引导栏，形成"顶栏融入正文"的观感。
-- **后块分隔**：第 2 个及之后的模块各显示一条细标题分隔（icon + 名称 + 数量），作为区块边界。
-- **滚动接管**：顶部引导栏的「当前模块名」随滚动用淡入/上滑过渡平滑切换，与内容区块位置对应。
+### 前提
 
-## 三、导航栏（固定，不浮动）
+一台可访问 Mikan / Bangumi / qBittorrent 的主机（如 NAS），已安装 Docker。
 
-- 首页 `topbar` 与发现页 `module-nav` 必须 **实色不透明**，紧贴滚动容器顶部，带清晰底边线。
-- **禁止**负 margin + 半透明 `backdrop-filter` + 圆角悬浮卡片质感。
-- 使用 `position: sticky; top: 0` 锚定在各自滚动容器（`.home-main` / `.discover-main`）顶部，z-index 独立高于内容。
-- 首页引导栏顺序固定为：**季度选择器 → 搜索框 → 星期地铁图**。
-- 发现页引导栏为**单条同行**：`[当前模块标识 + 名称] ｜ [4 站地铁图] ｜ [换一批按钮]`。
-- 模块标题（`module-header`）不再是 sticky，不带换一批按钮。
+### 部署
 
-## 四、地铁图进度连线（动态进度条）
-
-- 每条连线 = 浅灰轨道 + 主题色填充层。
-- 填充宽度随滚动用 `IntersectionObserver` + scroll 计算连续进度。
-- 缓动统一 `--ease-out: cubic-bezier(0.22, 1, 0.36, 1)`，填充过渡 0.5s 平滑「流」过，不生硬。
-- 已走过站点圆点实心亮起带光晕，未到站点空心灰。
-- **首页星期地铁图固定 7 站**：日/一/二/三/四/五/六，顺序固定，填充进度走满 7 站周期（终点=周六）。不做"今天环绕"切换。
-- 发现页模块地铁图 4 站：口碑/热门/值得一试/人气之作。
-- **剧场版 / OVA**：不进入地铁图，作为 7 天之后的独立区块（有数据显示、无数据不渲染）。
-
-## 五、图标库约定
-
-- **业务 / 交互图标**：`@tabler/icons-vue`（stroke 风格），模块/按钮/状态图标均用它。
-- **侧边栏图标**：`@phosphor-icons/vue`（weight="bold"）。
-- 模块图标映射：praise=`IconTrophy`、hot=`IconFlame`、try=`IconSparkles`、popular=`IconUsers`、today=`IconCalendar`。
-
-## 六、交互反馈
-
-- 过渡曲线：`cubic-bezier(0.22, 1, 0.36, 1)`；常规时长 0.2s–0.35s，地铁填充 0.5s。
-- hover：卡片上浮 `translateY(-4~5px)` + 柔和阴影 + 海报轻微放大。
-- 导航站点 hover：圆点放大、文字加深。
-- disabled/loading：降透明度 + `cursor: not-allowed` / `wait`，spinner 节流避免闪烁。
-- 可访问性：可聚焦元素保留 `:focus-visible` outline；`prefers-reduced-motion: reduce` 关闭非必要动画/过渡。
-
-## 七、卡片规范
-
-- 结构：`顶部信息条(左 badge 标签 / 右 评分+人数)` → `干净海报` → `底部(标题 + 年份·题材)`。
-- 海报区域不允许被标签/评分覆盖。
-- 顶部信息条需 `flex-wrap + min-width:0 + ellipsis`，评分人数过长省略，不遮挡。
-- 首页卡片 badge 显示星期（日/一/…/六），发现页显示模块名；两者都展示评分 + 人数 + 年份·题材。
-
-## 八、网格规范
-
-- 卡片网格统一 `grid-template-columns: repeat(auto-fill, minmax(170px, 1fr))`，缺口换行而非压缩缩放。
-- 两页（首页 / 发现页）保持同一网格规则，避免评分被挤压遮挡。
-
-## 九、注意事项 / 避坑
-
-### 图标库
-- 项目存在两套图标库，**不要混用**：
-  - 业务/交互图标用 `@tabler/icons-vue`（stroke 风格）。
-  - 侧边栏导航用 `@phosphor-icons/vue`（weight="bold"）。
-- 禁止在代码里写 emoji 或乱码字符作为图标，图标一律走图标库组件；后端兜底字段的 icon 只能是纯文本占位，前端不透出。
-
-### 设计要求
-- **同色系渐进，不搞"阵营色"**：多个推荐模块本质是同一批番剧的不同筛选维度，配色应使用同一色系（如暖金 → 暖橙）低饱和渐进，避免四种割裂色相造成"给番剧分三六九等"的观感。
-- **海报必须干净**：标签/评分不得覆盖在海报图片上，统一放到卡片顶部信息条。
-- **信息不重复**：导航/引导栏已经展示的信息（如当前模块名、星期），不要在紧邻的内容区又重复一块标题。
-- **卡片标签宁短勿长**：小标签显示不全时，优先只保留"评分 + 人数"这类稳定短信息，或换行/省略，不硬塞长名词。
-- **导航栏固定不浮动**：用实色背景 + 顶部锚定，不做半透明毛玻璃 + 负 margin 的悬浮卡片质感。
-- **网格缺口换行，不缩放压缩**，避免卡片内容（评分等）被挤压遮挡。
-
-### 接口未就绪的前端策略
-- 首页排期接口原本不返回评分/题材，后端已加 `getSubjectMeta` 补全但可能不稳定。**在接口稳定前，首页卡片不展示评分/分类**，只保留星期徽标与番名/海报；发现页卡片正常展示评分 + 人数。
-
-## 十、Docker 部署与在线升级
-
-### 镜像 / 仓库约定
-- 镜像发布到 **Docker Hub 公开仓库**：`soraika/soraikas-hub`。
-- 源码发布到 **GitHub 公开仓库**：`https://github.com/Soraika/Soraija-Hub`。
-
-### 构建并推送镜像（自动化：GitHub Actions）
-仓库已内置 `.github/workflows/docker.yml`：**打 tag 即自动构建并推送镜像到 Docker Hub**，无需本地安装 Docker。
-
-1. 首次配置：GitHub 仓库 → **Settings → Secrets and variables → Actions**，新增两个 secret：
-   - `DOCKERHUB_USERNAME` = `soraika`
-   - `DOCKERHUB_TOKEN` = Docker Hub 的 Access Token（hub.docker.com → Account Settings → Security → New Access Token，需 Read/Write 权限）
-2. 发布新版：
-   ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
-   Actions 自动构建并推送 `soraika/soraikas-hub:1.0.0` 与 `soraika/soraikas-hub:latest`。
-
-> 若想在本地手动构建推送（需装 Docker）：`docker build -t soraika/soraikas-hub:1.0.0 . && docker tag soraika/soraikas-hub:1.0.0 soraika/soraikas-hub:latest && docker push soraika/soraikas-hub:1.0.0 && docker push soraika/soraikas-hub:latest`
-
-### 部署（服务器 / 用户）
 ```bash
-docker compose up -d          # 首次启动
+git clone https://github.com/Soraika/Soraika-Hub.git
+cd Soraika-Hub
+docker compose up -d
 ```
-- 访问 `http://服务器IP:3001`。
-- 首次启动后进入「设置」页填写 Mikan / BGM / qBittorrent 配置；配置写入卷内 `config.json`。
 
-### 在线升级（保留配置与数据）
+访问 `http://<服务器IP>:3001`，首次启动后进入「设置」页完成配置。
+
+### 数据与配置
+
+- 数据卷 `soraika-data` 挂载到容器 `/data`，其中保存：
+  - `config.json` — 全部配置（Mikan/Bangumi/DeepSeek/qBittorrent/转换表）
+  - `soraika.db` — SQLite 数据库（下载记录等）
+  - `bangumi-mikan.json` — Mikan↔Bangumi 转换表本地缓存
+  - `logs/` — 按日轮转的日志文件（保留约 7 天）
+- **升级镜像不会丢失任何数据**（卷独立于镜像）。
+
+---
+
+## 设置页配置项
+
+| 区块 | 字段 | 说明 |
+|---|---|---|
+| 下载 | qBittorrent URL / Token / 下载基础路径 | 必填，用于添加与管理下载任务 |
+| AI | DeepSeek API 地址 / Key / 模型 | 标签解析与标题识别 |
+| 数据源 | Mikan 镜像地址 | Mikan 站点镜像（默认 `https://mikanani.kas.pub/`） |
+| 数据源 | Bangumi API 地址 / Token | 评分与条目信息（可选 Token） |
+| 数据源 | Mikan→Bangumi 转换表镜像地址 | 每日自动同步；国内网络可填 jsDelivr 等加速地址 |
+
+---
+
+## 本地开发
+
 ```bash
-# 推荐：一键脚本（自动备份配置 → 拉镜像 → 重建）
-./deploy/upgrade.sh
+# 安装全部依赖（根 + client + server）
+npm run install:all
 
-# 或手动
+# 同时启动前端（vite）与后端（node）
+npm run dev:all
+
+# 只跑后端（原始 JSON 日志 / pino-pretty 美化）
+npm run dev:server
+npm run dev:server:pretty
+```
+
+---
+
+## 环境变量
+
+| 变量 | 说明 | 默认值 |
+|---|---|---|
+| `PORT` | 服务端端口 | `3001` |
+| `DATA_DIR` | 数据目录（配置 / 数据库 / 日志 / 转换表缓存） | `server/data` |
+| `LOG_LEVEL` | 日志级别：`debug` / `info` / `warn` / `error` | `info` |
+| `LOG_OUTPUT` | 日志输出：`both`(stdout+文件) / `stdout` / `file` | `both` |
+| `LOG_DIR` | 日志目录（覆盖默认的 `DATA_DIR/logs`） | — |
+
+---
+
+## API 概览
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET/PUT | `/api/config` | 读取 / 更新配置 |
+| GET | `/api/mikan/schedule` | 番剧排期（按星期 / 历史季度） |
+| GET | `/api/mikan/subdetail/:id` | 番剧详情（字幕组列表；兼容 Mikan ID 与 Bangumi ID） |
+| GET | `/api/mikan/rss/:bangumiId/:subgroupId` | 字幕组资源（RSS） |
+| GET | `/api/mikan/search?q=` | 番剧搜索 |
+| GET/POST | `/api/mikan/mapping` `/api/mikan/mapping/sync` | 转换表状态 / 立即更新 |
+| POST | `/api/classify/tags` `/api/classify/download` | AI 标签分类 / 标题解析 |
+| GET | `/api/bgm/subject/:id` `/api/bgm/search` | Bangumi 条目详情 / 搜索 |
+| GET/POST/DELETE | `/api/qb/*` | qBittorrent 状态 / 下载 / 重命名 |
+| GET | `/api/discover/modules` `/api/discover` | 发现页推荐模块 / 换一批 |
+
+---
+
+## 目录结构
+
+```
+client/                前端（Vue 3 + Vite）
+  src/pages/           首页 / 发现页 / 搜索页 / 下载页 / 设置页
+  src/components/      卡片、详情面板、字幕组选择等
+  src/utils/logger.js  前端日志封装（pino browser）
+server/                后端（Express）
+  routes/              API 路由
+  services/            Mikan 解析 / Bangumi / 推荐引擎 / 分类器 / 转换表
+  utils/logger.js      日志封装（pino + pino-http + pino-roll）
+  data/                运行时数据（db / 日志 / 转换表缓存，gitignore）
+deploy/                部署脚本
+.github/workflows/     GitHub Actions 自动构建推送镜像
+```
+
+---
+
+## 日志说明
+
+- 服务端输出 JSON 结构化日志，格式示例：
+  ```json
+  {"level":30,"time":"2026-08-25T08:00:00.000Z","service":"soraikas-hub","tag":"mikanMapping","msg":"转换表已更新：3169 条"}
+  {"level":30,"time":"2026-08-25T08:00:01.000Z","service":"soraikas-hub","req":{"id":3,"method":"GET","url":"/api/mikan/mapping"},"res":{"statusCode":200},"responseTime":5}
+  ```
+- 默认同时写 stdout（`docker logs`）与 `DATA_DIR/logs`（按日轮转，保留约 7 天）。
+- 敏感信息（`sk-*` / `Bearer *` / token / apiKey / password 等）自动脱敏。
+- 本地开发可用 `npm run dev:server:pretty` 获得美化可读输出。
+
+---
+
+## 升级与备份
+
+```bash
+# 升级（卷不动、数据不丢）
 docker compose pull
 docker compose up -d --force-recreate
-```
-- 数据卷 `soraika-data` 映射到容器 `/data`，里面存 `config.json` 与数据库。
-- **升级只替换镜像，卷不动 → 配置与数据库不丢。**
 
-### 备份 / 恢复
-```bash
-# 备份卷（先停容器避免写冲突）
+# 备份数据卷
 docker compose stop
 docker run --rm -v soraika-data:/data -v "$PWD/backup":/backup alpine \
   tar czf /backup/soraika-data.tar.gz -C /data .
 docker compose start
-
-# 恢复
-docker compose stop
-docker run --rm -v soraika-data:/data -v "$PWD/backup":/backup alpine \
-  tar xzf /backup/soraika-data.tar.gz -C /data
-docker compose start
 ```
 
-### 脱敏红线（公开仓库 / 公开镜像必读）
-- `.gitignore` 已排除 `server/config.json`；`.dockerignore` 已排除 `server/config.json` 与 `server/data/`。
-- 镜像**不含任何用户配置与真实密钥**，首次使用需挂卷 + 在设置页填写。
-- 推送公开前自查 git 历史是否泄露过 config：
-  ```bash
-  git log --all --oneline -- server/config.json
-  ```
-  如有记录，需用 `git filter-repo` 重写历史后再公开（会改 commit 哈希）。
-- Dockerfile / compose 中**不得写死** token、密码等敏感值。
+> 设计规范见 [DESIGN.md](./DESIGN.md)；项目内部 AI 变更记录不随仓库公开。
 
-## 十一、对 AI 的规范（协作要求）
+---
 
-> 用户与 AI 协作时必须遵守的硬性约定。
+## 声明
 
-- **同步更新 README**：凡涉及设计、动画、交互、系统级、后端接口等要求，AI 必须同步写入本 README 对应章节，保持规范一致。
-- **图标一律用图标库组件**：业务/交互用 `@tabler/icons-vue`，侧边栏用 `@phosphor-icons/vue`；禁止在代码里写 emoji 或乱码字符当图标。
-- **用户举例仅供参考，必须独立思考**：用户给出的配色、方案、尺寸等举例不能不加思考照搬，AI 须先说明设计理由再定稿，避免"把示例当需求"。
-- **改完必须验证**：前端改动需跑 `vite build` 确认通过；后端改动需 `node --check` 校验语法，不得只改不验。
-- **修 bug 要定位根因**：遇到 bug 先定位根因并在回复里说明，不得只改表象敷衍。
-- **信息不重复**：导航/引导栏已展示的信息（当前模块名、星期），不要在紧邻内容区重复展示。
-- **配色同色系渐进**：多模块用同色系（暖金→暖红）低饱和渐进，不做割裂的"阵营色"，避免"给番剧分三六九等"观感。
-- **导航固定不浮动**：实色背景 + 顶部锚定，不做半透明毛玻璃 + 负 margin 悬浮卡片质感。
-- **海报必须干净**：标签/评分不得覆盖在海报上。
-- **卡片标签宁短勿长**：三级信息优先省略或换行，不硬塞长名词。
+- 本项目仅用于个人学习与自托管使用，数据来自 Mikan / Bangumi / qBittorrent 等第三方服务。
+- 请遵守各站点/服务的使用条款；请勿将本项目用于商业用途。
+- 镜像与源码均为公开仓库，请勿在其中写入任何真实密钥（通过设置页 / 卷内 `config.json` 配置）。

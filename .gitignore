@@ -8,3 +8,5 @@ Thumbs.db
 server/config.json
 server/data/
 deploy/backups/
+# 内部 AI 协作变更日志（仅本地记录，不上传公开仓库）
+AI_CHANGELOG.md
