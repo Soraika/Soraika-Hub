@@ -37,7 +37,7 @@
     <div class="info">
       <span class="name" :title="anime.title || anime.name">{{ anime.title || anime.name }}</span>
       <div v-if="metaText" class="meta">
-        <span class="meta-text">{{ metaText }}</span>
+        <span class="meta-text">{{ metaTextOverride || metaText }}</span>
         <a
           v-if="anime.bgmId"
           class="bgm-link"
@@ -73,6 +73,8 @@ const props = defineProps({
   badgeLabel: { type: String, default: null },
   // 是否显示评分+人数；首页接口未就绪时传 false
   showRating: { type: Boolean, default: true },
+  // 底部元信息覆盖（下载页传 "SE01 · 字幕组" 等自定义文本）
+  metaTextOverride: { type: String, default: null },
 })
 defineEmits(['click'])
 
