@@ -12,6 +12,10 @@ services:
       # 日志：LOG_OUTPUT=both（stdout + /data/logs 按日轮转文件，保留 7 天）；LOG_LEVEL=info
       - LOG_LEVEL=info
       - LOG_OUTPUT=both
+      # 权限：容器内运行服务的 uid/gid，默认 1000:1000（与常见 NAS 首个用户一致）。
+      # 如绑定挂载目录属主不是 1000，可改为宿主用户：PUID=$(id -u) / PGID=$(id -g)
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
     volumes:
       # 持久化卷：config.json 与数据库都落在 /data，升级镜像时卷不动、数据不丢
       - soraika-data:/data

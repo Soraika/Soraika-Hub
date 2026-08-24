@@ -14,6 +14,9 @@
     </div>
 
     <div v-else class="cards">
+      <div v-if="saveError" class="save-error">
+        <IconAlertCircle :size="16" /> {{ saveError }}
+      </div>
       <SettingsDownloadCard
         :form="form"
         :testStates="testStates"
@@ -63,6 +66,7 @@ const error = ref(false)
 const saving = ref(false)
 const saveOk = ref(false)
 const saveKey = ref('')
+const saveError = ref('')
 const bgmNoToken = ref(false)
 const mappingStatus = ref(null)
 const syncingMapping = ref(false)
@@ -148,6 +152,7 @@ async function syncMapping() {
 
 async function save(key) {
   saveOk.value = false
+  saveError.value = ''
   saveKey.value = key
   saving.value = true
   try {
@@ -162,8 +167,9 @@ async function save(key) {
 
     await updateConfig(body)
     saveOk.value = true
-  } catch {
+  } catch (e) {
     saveOk.value = false
+    saveError.value = e?.response?.data?.error || '保存失败：无法连接服务器或写入配置'
   } finally {
     saving.value = false
     setTimeout(() => { saveOk.value = false; saveKey.value = '' }, 2500)
@@ -189,4 +195,16 @@ onMounted(() => {
 .retry-btn { background: var(--accent); color: #fff; padding: 10px 24px; border-radius: var(--radius); font-size: 0.9rem; border: none; cursor: pointer; }
 
 .cards { display: flex; flex-direction: column; gap: 24px; }
+
+.save-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #ef4444;
+  font-size: 0.85rem;
+  padding: 10px 14px;
+  border-radius: 8px;
+}
 </style>

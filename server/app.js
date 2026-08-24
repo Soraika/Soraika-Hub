@@ -17,6 +17,18 @@ const config = require('./config');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// ── 启动自检：数据目录可写性（部署环境常见权限问题，启动即暴露） ──
+// 与 config.js / logger.js 的数据目录约定保持一致
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+try {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const probe = path.join(DATA_DIR, '.write-test');
+  fs.writeFileSync(probe, 'ok');
+  fs.unlinkSync(probe);
+} catch (e) {
+  logger.error({ err: e }, '数据目录不可写，配置/日志/转换表将无法保存：请检查卷权限（PUID/PGID 或目录属主）');
+}
+
 // ── 全局兜底：未捕获异常 / 未处理 rejection ──
 process.on('uncaughtException', (err) => {
   logger.fatal({ err }, '未捕获异常，进程即将退出');

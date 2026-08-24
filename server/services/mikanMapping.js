@@ -50,7 +50,7 @@ function loadLocal() {
     return true;
   } catch (e) {
     if (e.code !== 'ENOENT') {
-      log.warn('加载本地转换表失败:', e.message);
+      log.warn({ err: e }, '加载本地转换表失败');
     }
     return false;
   }
@@ -62,7 +62,7 @@ function saveLocal() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     fs.writeFileSync(MAPPING_PATH, JSON.stringify(mapping, null, 2), 'utf-8');
   } catch (e) {
-    log.error('写入本地转换表失败:', e.message);
+    log.error({ err: e }, '写入本地转换表失败');
   }
 }
 

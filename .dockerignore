@@ -18,5 +18,6 @@ server/dist/
 .DS_Store
 Thumbs.db
 docker-compose.yml
-deploy/
+deploy/*
+!deploy/entrypoint.sh
 README.md

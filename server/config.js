@@ -16,7 +16,7 @@ function load() {
     // 首次启动/无配置：静默返回空对象并尝试写一个初始空配置文件，
     // 避免每次都打印 ENOENT 吓人，同时也提前占位方便后续保存
     if (e.code !== 'ENOENT') {
-      log.warn('加载 config.json 失败:', e.message);
+      log.warn({ err: e }, '加载 config.json 失败');
     }
     const empty = {};
     try {
@@ -24,7 +24,7 @@ function load() {
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(empty, null, 2), 'utf-8');
     } catch (w) {
       // 写失败不致命（如容器卷只读），保持内存空配置，等设置页再写
-      log.warn('初始化 config.json 失败:', w.message);
+      log.warn({ err: w }, '初始化 config.json 失败');
     }
     return empty;
   }
@@ -75,18 +75,27 @@ function getAll() {
   return JSON.parse(JSON.stringify(config));
 }
 
-/** 合并更新全量配置 */
+/** 合并更新全量配置；返回 { config, saved }，saved=false 表示写盘失败 */
 function update(partial) {
   deepMerge(config, partial);
-  save();
-  return getAll();
+  const saved = save();
+  return { config: getAll(), saved };
 }
 
+/**
+ * 写盘：目录兜底 + 原子写（临时文件再 rename，避免写入中断损坏配置）。
+ * 返回 true/false，失败不抛错（配置仍保留在内存中）。
+ */
 function save() {
   try {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tmpPath = `${CONFIG_PATH}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf-8');
+    fs.renameSync(tmpPath, CONFIG_PATH);
+    return true;
   } catch (e) {
-    log.error('保存 config.json 失败:', e.message);
+    log.error({ err: e }, '保存 config.json 失败');
+    return false;
   }
 }
 

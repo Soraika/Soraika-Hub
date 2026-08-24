@@ -45,6 +45,8 @@ docker compose up -d
 
 访问 `http://<服务器IP>:3001`，首次启动后进入「设置」页完成配置。
 
+> **权限**：容器启动时会自动把 `/data` 数据目录归属调整为 `PUID/PGID`（默认 `1000:1000`，对应常见 NAS 首个用户），绑定挂载 / 命名卷均无需手动 chmod。若你的共享目录属主不是 1000，在 compose 环境变量里改为 `PUID=$(id -u)` / `PGID=$(id -g)` 即可。
+
 ### 数据与配置
 
 - 数据卷 `soraika-data` 挂载到容器 `/data`，其中保存：
@@ -90,6 +92,7 @@ npm run dev:server:pretty
 |---|---|---|
 | `PORT` | 服务端端口 | `3001` |
 | `DATA_DIR` | 数据目录（配置 / 数据库 / 日志 / 转换表缓存） | `server/data` |
+| `PUID` / `PGID` | 容器内运行服务的 uid/gid（Docker 镜像；入口自动 chown 数据目录，部署无需手动调权限） | `1000` / `1000` |
 | `LOG_LEVEL` | 日志级别：`debug` / `info` / `warn` / `error` | `info` |
 | `LOG_OUTPUT` | 日志输出：`both`(stdout+文件) / `stdout` / `file` | `both` |
 | `LOG_DIR` | 日志目录（覆盖默认的 `DATA_DIR/logs`） | — |
