@@ -98,10 +98,10 @@ body {
   transition: background 0.3s, color 0.3s;
 }
 
-/* ── 悬浮式滚动条：透明轨道，hover 到内容区/滑块时才浮现半透明滑块 ── */
+/* ── 滚动条：常驻贴边（半透明滑块始终可见，hover 加深） ── */
 * {
   scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 ::-webkit-scrollbar {
   width: 6px;
@@ -111,22 +111,12 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: transparent;
+  background: var(--scrollbar-thumb);
   border-radius: 999px;
   transition: background 0.2s;
 }
-/* 鼠标进入可滚动区域时滑块浮现 */
-*:hover::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-}
-/* 直接 hover / 拖动滑块时加深 */
-*::-webkit-scrollbar-thumb:hover,
-*:active::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
-}
-/* Firefox：内容区 hover 时激活滚动条颜色 */
-*:hover {
-  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 a {

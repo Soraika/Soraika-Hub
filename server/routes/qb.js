@@ -129,7 +129,13 @@ router.get('/anime-torrents', async (req, res) => {
     );
 
     const results = torrents.map((t, i) => {
-      const m = t.name.match(/^\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]/);
+      // 新任务：元数据存在 tags 的 soraika: 前缀里（任务名为原始标题）；旧任务回退从任务名解析
+      const metaTag = (t.tags || []).find(x => String(x).startsWith('soraika:'));
+      let m = null
+      if (metaTag) {
+        m = String(metaTag).slice('soraika:'.length).match(/^\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]/);
+      }
+      if (!m) m = t.name.match(/^\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]/);
       const files = fileResults[i] || [];
       const fileNames = files.map(f => {
         const p = f.name.split('/').pop();
@@ -142,7 +148,7 @@ router.get('/anime-torrents', async (req, res) => {
         state: t.state,
         progress: t.progress,
         size: t.size,
-        bgmid: m ? (m[1] === 'null' ? null : m[1]) : null,
+        mikanId: m ? (m[1] === 'null' ? null : m[1]) : null,
         animeName: m ? (m[2] === 'null' ? null : m[2]) : null,
         season: m && m[3] !== 'null' ? parseInt(m[3]) : 1,
         episode: m ? (m[4] === 'null' ? null : m[4]) : null,

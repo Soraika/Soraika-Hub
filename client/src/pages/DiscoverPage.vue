@@ -77,6 +77,7 @@
             <AnimeCard
               v-for="(item, idx) in modules[mod.id]"
               :key="`${mod.id}-${item.bgmId}-${item.module}`"
+              :ref="el => setCardRef(item.bgmId, el)"
               :anime="item"
               :style="{ transitionDelay: `${Math.min(idx * 25, 400)}ms` }"
               @click="goToAnime(item)"
@@ -87,9 +88,15 @@
       </template>
 
       <BackToTop target=".discover-main" />
+
+      <!-- 右下角悬浮"换一批"（与顶部共存） -->
+      <button class="shuffle-fab" :disabled="moduleLoading === activeModuleId" @click="refreshModule(activeModuleId)" title="换一批">
+        <IconArrowsShuffle :size="18" :class="{ spinning: moduleLoading === activeModuleId }" />
+        <span>换一批</span>
+      </button>
     </div>
 
-    <AnimeDetailPanel :bgmid="selectedBgmid" @close="selectedBgmid = null" />
+    <AnimeDetailPanel :subjectId="selectedSubjectId" @close="selectedSubjectId = null" />
   </div>
 </template>
 
@@ -132,7 +139,12 @@ const moduleLoading = ref(null)
 const error = ref(false)
 const ready = ref(false)
 const updatedAt = ref(null)
-const selectedBgmid = ref(null)
+const selectedSubjectId = ref(null)
+const cardRefs = ref({})
+function setCardRef(key, el) {
+  if (el) cardRefs.value[key] = el
+  else delete cardRefs.value[key]
+}
 const scrollRoot = ref(null)
 
 const activeIndex = ref(0)
@@ -190,7 +202,18 @@ async function refreshModule(modId) {
 
 async function goToAnime(item) {
   // 发现页卡片携带的是 BGM 条目 ID（推荐引擎来自 Bangumi API），详情面板经服务端转换表反查为 Mikan ID
-  selectedBgmid.value = item.bgmId
+  selectedSubjectId.value = item.bgmId
+  // 面板展开后：卡片未完全可见才滚动到可见（已完全可见则不滚）
+  setTimeout(() => scrollCardIntoView(cardRefs.value?.[item.bgmId]), 400)
+}
+
+function scrollCardIntoView(el) {
+  const container = scrollRoot.value
+  if (!el || !container) return
+  const er = el.getBoundingClientRect()
+  const cr = container.getBoundingClientRect()
+  const fullyVisible = er.top >= cr.top && er.bottom <= cr.bottom
+  if (!fullyVisible) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 function scrollToModule(id) {
@@ -267,7 +290,6 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 0 40px 32px;
-  max-width: 1400px;
   position: relative;
 }
 
@@ -456,6 +478,27 @@ onBeforeUnmount(() => {
 
 .spinning { animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* 右下角悬浮"换一批"（与回到顶部并存） */
+.shuffle-fab {
+  position: fixed; right: 100px; bottom: 40px; z-index: 200;
+  display: flex; align-items: center; gap: 6px;
+  background: var(--accent); color: #fff;
+  padding: 0 16px; height: 44px; border-radius: 999px;
+  border: none; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(184, 53, 42, 0.25);
+  font-size: 0.85rem; font-weight: 600;
+  transition: filter 0.2s, transform 0.15s;
+  /* 与 BackToTop 同步的上下摇摆动画 */
+  animation: fab-float 2.4s ease-in-out infinite;
+}
+.shuffle-fab:hover:not(:disabled) { animation: none; filter: brightness(1.08); transform: scale(1.05); }
+.shuffle-fab:active:not(:disabled) { transform: scale(0.95); }
+.shuffle-fab:disabled { opacity: 0.6; cursor: wait; }
+@keyframes fab-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
 
 /* 卡片入场/离场动画 */
 .cards-enter-active { transition: opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1), transform 0.45s cubic-bezier(0.22, 1, 0.36, 1); }

@@ -120,7 +120,8 @@ import { createLogger } from '@/utils/logger'
 const log = createLogger('AnimeDetailPanel')
 
 const props = defineProps({
-  bgmid: { type: [Number, String], default: null },
+  // 入参 ID：可能是 Mikan 番剧 ID 或 BGM 条目 ID，服务端 subdetail 会自动解析
+  subjectId: { type: [Number, String], default: null },
 })
 const emit = defineEmits(['close'])
 
@@ -128,7 +129,7 @@ const visible = ref(false)
 const loading = ref(false)
 const error = ref(false)
 const errorText = ref('加载失败')
-const currentBgmid = ref(null)
+const mikanId = ref(null)
 const detail = ref(null)
 const activeSg = ref(null)
 const activeSgName = ref('')
@@ -233,9 +234,10 @@ function sanitizeSummary(html) {
   return html.replace(/\n/g, '<br>').replace(/<script[\s\S]*?<\/script>/gi, '')
 }
 
-watch(() => props.bgmid, async (id) => {
+watch(() => props.subjectId, async (id) => {
   if (!id) { visible.value = false; return }
   visible.value = true; loading.value = true; error.value = false; errorText.value = '加载失败'
+  summaryExpanded.value = false
   detail.value = null; activeSg.value = null; torrents.value = []
   allTags.value = []; selectedTags.value = new Set(); checkedItems.value = new Set()
   batchFilter.value = 'all'; phase.value = 'content'; bgmInfo.value = null
@@ -243,8 +245,8 @@ watch(() => props.bgmid, async (id) => {
   try {
     const { data } = await getSubDetail(id)
     detail.value = data.detail || null
-    // 服务端已把 BGM 条目 ID 经转换表反查为 Mikan 番剧 ID（detail.bgmid），后续字幕组 RSS 需用它
-    currentBgmid.value = data.detail?.bgmid || id
+    // 服务端已把 BGM 条目 ID 经转换表反查为 Mikan 番剧 ID（detail.mikanId），后续字幕组 RSS / 下载任务名统一用它
+    mikanId.value = data.detail?.mikanId || id
     if (detail.value?.title) {
       const bgmPromise = searchBgm(detail.value.title).then(({ data: d }) => {
         const subjectId = d.items?.[0]?.id
@@ -254,7 +256,7 @@ watch(() => props.bgmid, async (id) => {
       }).catch(e => { log.error('BGM 搜索失败:', e) })
       await Promise.race([bgmPromise, new Promise(r => setTimeout(r, 3000))])
     }
-  } catch (e) { log.error('watch bgmid 失败:', e); error.value = true }
+  } catch (e) { log.error('watch subjectId 失败:', e); error.value = true }
   finally { loading.value = false }
 })
 
@@ -263,7 +265,7 @@ async function selectSubgroup(sg) {
   activeSg.value = sg.id
   clearTimeout(loadTimer)
 
-  const requestPromise = getBangumiRSS(currentBgmid.value, sg.id)
+  const requestPromise = getBangumiRSS(mikanId.value, sg.id)
     .then(resp => resp.data?.items || [])
     .catch(e => { log.error('getBangumiRSS 失败:', e); return [] })
 
@@ -369,7 +371,8 @@ function buildDownloadMeta(item) {
   const seasonDir = `SE${seasonPadded}`
   const savePath = `${animeName}/${seasonDir}`
   const rename = episode ? `${animeName} S${seasonPadded}E${episode}` : `${animeName} S${seasonPadded}`
-  const taskName = `[${props.bgmid || 'null'}][${animeName}][${seasonNum}][${episode || 'null'}][${activeSg.value || 'null'}][${activeSgName.value || 'null'}]`
+  // taskName 首字段统一为 Mikan 番剧 ID（发现页/首页下载格式一致，下载页据此分组/关联）
+  const taskName = `[${mikanId.value || 'null'}][${animeName}][${seasonNum}][${episode || 'null'}][${activeSg.value || 'null'}][${activeSgName.value || 'null'}]`
 
   const bgm = bgmInfo.value || {}
   const ratingValue = bgm.rating?.score != null ? bgm.rating.score : null
@@ -409,7 +412,7 @@ async function downloadOne(item) {
       } catch (e) { log.error('单条AI解析失败:', e) }
     }
     const meta = buildDownloadMeta(item)
-    await qbAdd({ magnet: item.magnet, ...meta })
+    await qbAdd({ magnet: item.magnet, ...meta, rawTitle: item.title })
     addedHashes.value = new Set([...addedHashes.value, item.magnetHash])
   } catch (e) { log.error('downloadOne 失败:', e) } finally { downloading.value = false }
 }
@@ -421,7 +424,7 @@ async function downloadAll() {
     const items = rankedTorrents.value
     for (const t of items) {
       const meta = buildDownloadMeta(t)
-      try { await qbAdd({ magnet: t.magnet, ...meta }) } catch (e) { log.error('downloadAll 单条失败:', e) }
+      try { await qbAdd({ magnet: t.magnet, ...meta, rawTitle: t.title }) } catch (e) { log.error('downloadAll 单条失败:', e) }
     }
     const allHashes = new Set(items.map(t => t.magnetHash).filter(Boolean))
     addedHashes.value = new Set([...addedHashes.value, ...allHashes])
@@ -435,7 +438,7 @@ async function downloadChecked() {
     const selected = rankedTorrents.value.filter(t => checkedItems.value.has(t.magnetHash))
     for (const t of selected) {
       const meta = buildDownloadMeta(t)
-      try { await qbAdd({ magnet: t.magnet, ...meta }) } catch (e) { log.error('downloadChecked 单条失败:', e) }
+      try { await qbAdd({ magnet: t.magnet, ...meta, rawTitle: t.title }) } catch (e) { log.error('downloadChecked 单条失败:', e) }
     }
     const allHashes = new Set(selected.map(t => t.magnetHash).filter(Boolean))
     addedHashes.value = new Set([...addedHashes.value, ...allHashes])
@@ -495,7 +498,7 @@ function close() { emit('close') }
   font-size: 0.7rem; font-weight: 500;
 }
 .bgm-summary { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.6; max-height: 3.2em; overflow: hidden; transition: max-height 0.3s ease; }
-.bgm-summary.expanded { max-height: 20em; }
+.bgm-summary.expanded { max-height: 240px; overflow-y: auto; }
 .bgm-summary p { margin: 0; }
 .bgm-expand-btn {
   background: none; border: none; color: var(--accent); font-size: 0.75rem;

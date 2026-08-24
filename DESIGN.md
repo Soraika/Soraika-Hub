@@ -177,3 +177,40 @@ docker compose start
 - **导航固定不浮动**：实色背景 + 顶部锚定，不做半透明毛玻璃 + 负 margin 悬浮卡片质感。
 - **海报必须干净**：标签/评分不得覆盖在海报上。
 - **卡片标签宁短勿长**：三级信息优先省略或换行，不硬塞长名词。
+
+---
+
+## 十二、ID 命名规范（mikanId / bgmId / subjectId）
+
+> 全端字段统一，杜绝"同名不同义"的混淆。
+
+| 统一字段 | 含义 | 出现位置 |
+|---|---|---|
+| `mikanId` | Mikan 番剧 ID（`/Home/Bangumi/{mikanId}`） | 首页排期、`parser.js` 返回、QB 任务名首字段、转换表 key、`/subdetail` 响应的 `mikanId` |
+| `bgmId` | Bangumi 条目 ID（`bgm.tv/subject/{bgmId}`） | 发现页卡片、候选池 key、转换表 value、AnimeCard 外链、DB `bgm_id` |
+| `subjectId` | 详情面板（AnimeDetailPanel）入参，兼容 Mikan/BGM 两种 ID | 首页/发现页传给面板的 prop；服务端 `/subdetail/:id` 自动解析 |
+
+- **下载任务名 `taskName` 首字段统一为 `mikanId`**：无论从首页还是发现页发起下载，任务名第一个字段都是 Mikan ID，保证下载页分组/海报/字幕组关联一致。
+- 服务端转换：`mikanMapping.lookupMikanId(任意ID)` → Mikan ID；`lookupBgmId(mikanId)` → BGM ID。
+- 首页排期补评分必须**先转换**（`lookupBgmId(mikanId)` → `getSubjectMeta(bgmId)`），不得直接用 Mikan ID 查 BGM 候选池。
+
+## 十三、下载页设计规范
+
+- **布局**：海报卡片网格（复用 `AnimeCard`），与首页/发现页一致；顶部**季度（SE）筛选标签栏**，点击快速筛选。
+- **分组**：按 `mikanId` 合并，同一番剧跨季归一张卡；卡片 badge 显示完成度（`已完成` / `x/y`），底部 meta 显示季范围（`SE01-SE02`）+ 已下载字幕组。
+- **综合侧边栏（`DownloadDetailPanel`）**：
+  - 上半部分：海报、番名、SE、**已下载字幕组** + BGM 评分/简介/标签
+  - 下半部分：**已下载集管理**，样式对齐详情面板的 TorrentList（左侧大号斜体集数 + 右侧内容/进度条/大小/删除/重命名）
+  - **筛选标签栏**：字幕组 + 季度（SE）双维度筛选，样式与详情面板资源筛选一致
+- **字幕组显示规则**：只显示"**实际已下载的字幕组**"（来自任务名解析 `subgroupName`），不罗列番剧的全部字幕组。
+
+#### 资源卡片（下载侧边栏·已下载集）
+- **结构（div 分层）**：`res-num`（集数徽标）｜ `res-info`（`res-label` 集数 + `res-meta` 大小/字幕组辅助行）｜ `res-action`（完成 ✓ / 进度环 + 操作菜单）
+- **集数徽标**：左侧 52px，暖金色半透明底 + 金色大号斜体数字（Georgia serif）
+- **主信息**：`S01E04`（accent 加粗），一行定位
+- **辅助信息（弱化）**：大小、字幕组为**灰色小字**（`--text-secondary`），无彩色；字幕组超长 `word-break` 完整显示
+- **右侧交互**：
+  - 完成态显示**绿色 ✓ 圈**（`#22c55e`），**hover 变编辑图标 ✎**（accent）
+  - 下载中显示 SVG 圆形进度环 + 百分比（颜色随状态：下载中蓝/卡住橙/暂停灰/错误红）
+  - **点击 ✓ / 进度环 → 在卡片（海报区域）旁浮出「任务配置弹窗」**：任务名输入框（预填当前名）+ **保存**（重命名）+ **删除**（红色，点击后再确认一次防误删）；弹窗为表单结构，**后期可扩展其他配置项**；点击面板其他区域 / Esc 关闭
+- **深色适配**：一律走 CSS 变量（`--bg-card`/`--bg-input`/`--bg-dropdown`/`--text-*`/`--border`），禁止硬编码浅色

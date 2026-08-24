@@ -48,9 +48,9 @@
       <div class="anime-grid">
         <AnimeCard
           v-for="anime in results"
-          :key="anime.bgmid"
+          :key="anime.mikanId"
           :anime="anime"
-          @click="goToAnime(anime.bgmid)"
+          @click="goToAnime(anime.mikanId)"
         />
       </div>
     </div>

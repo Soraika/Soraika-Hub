@@ -127,6 +127,9 @@ function saveBtnText(key) {
   font-size: 0.85rem;
   color: var(--text-secondary);
   padding: 0 14px;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
   line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;

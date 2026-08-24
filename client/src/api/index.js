@@ -24,8 +24,8 @@ export function getSchedule(year, season) {
   return api.get('/mikan/schedule', { params })
 }
 
-export function getSubDetail(bgmid) {
-  return api.get(`/mikan/subdetail/${bgmid}`)
+export function getSubDetail(id) {
+  return api.get(`/mikan/subdetail/${id}`)
 }
 
 export function getBangumiRSS(bangumiId, subgroupId) {
@@ -42,6 +42,10 @@ export function getMikanMapping() {
 
 export function syncMikanMapping() {
   return api.post('/mikan/mapping/sync')
+}
+
+export function testMikanMapping(url) {
+  return api.get('/mikan/mapping/test', { params: { url } })
 }
 
 // ── BGM ──

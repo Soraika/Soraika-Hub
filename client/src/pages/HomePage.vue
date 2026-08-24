@@ -54,12 +54,13 @@
           <TransitionGroup name="cards" tag="div" class="anime-grid" appear>
             <AnimeCard
               v-for="(anime, idx) in group.animes"
-              :key="anime.bgmid"
+              :key="anime.mikanId"
+              :ref="el => setCardRef(anime.mikanId, el)"
               :anime="anime"
               :badge-label="shortLabel(group.dayLabel)"
               :show-rating="false"
               :style="{ transitionDelay: `${Math.min(idx * 25, 400)}ms` }"
-              @click="goToAnime(anime.bgmid)"
+              @click="goToAnime(anime.mikanId)"
             />
           </TransitionGroup>
         </section>
@@ -68,7 +69,7 @@
       <BackToTop target=".home-main" />
     </div>
 
-    <AnimeDetailPanel :bgmid="selectedBgmid" @close="selectedBgmid = null" />
+    <AnimeDetailPanel :subjectId="selectedSubjectId" @close="selectedSubjectId = null" />
   </div>
 </template>
 
@@ -89,7 +90,12 @@ const schedule = ref([])
 const loading = ref(false)
 const error = ref(false)
 const keyword = ref('')
-const selectedBgmid = ref(null)
+const selectedSubjectId = ref(null)
+const cardRefs = ref({})
+function setCardRef(key, el) {
+  if (el) cardRefs.value[key] = el
+  else delete cardRefs.value[key]
+}
 const scrollRoot = ref(null)
 
 const activeIndex = ref(0)
@@ -146,7 +152,20 @@ function search() {
   if (keyword.value.trim()) router.push({ name: 'Search', query: { q: keyword.value.trim() } })
 }
 
-function goToAnime(bgmid) { selectedBgmid.value = bgmid }
+function goToAnime(mikanId) {
+  selectedSubjectId.value = mikanId
+  // 面板展开后：卡片未完全可见才滚动到可见（已完全可见则不滚）
+  setTimeout(() => scrollCardIntoView(cardRefs.value?.[mikanId]), 400)
+}
+
+function scrollCardIntoView(el) {
+  const container = scrollRoot.value
+  if (!el || !container) return
+  const er = el.getBoundingClientRect()
+  const cr = container.getBoundingClientRect()
+  const fullyVisible = er.top >= cr.top && er.bottom <= cr.bottom
+  if (!fullyVisible) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 function scrollToDay(day) {
   const el = document.getElementById(`day-${day}`)
@@ -198,7 +217,7 @@ onBeforeUnmount(() => {
 }
 .home-main {
   flex: 1; overflow-y: auto; overflow-x: hidden;
-  padding: 0 40px 32px; max-width: 1400px;
+  padding: 0 40px 32px;
   position: relative;
 }
 

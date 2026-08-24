@@ -90,15 +90,15 @@ async function fetchSchedule(opts = {}) {
       const $li = $(li);
       const link = $li.find('a.an-text');
       const href = link.attr('href') || '';
-      const bgmid = href.replace('/Home/Bangumi/', '');
+      const mikanId = href.replace('/Home/Bangumi/', '');
       const name = link.attr('title') || link.text().trim();
-      if (!bgmid || !name) return;
+      if (!mikanId || !name) return;
 
       const span = $li.find('span.js-expand_bangumi');
       const posterThumb = span.data('src') || span.attr('data-src') || '';
 
       animes.push({
-        bgmid: parseInt(bgmid) || bgmid,
+        mikanId: parseInt(mikanId) || mikanId,
         name,
         poster: posterThumb ? `${BASE}${posterThumb.replace(/\?.*$/, '')}` : '',
       });
@@ -158,14 +158,14 @@ async function fetchBangumiDetail(bangumiId, baseUrlOverride) {
     if (sgName) subgroups.push({ id: sgId, name: sgName });
   });
 
-  return { bgmid: parseInt(bangumiId) || bangumiId, title, poster, subgroups };
+  return { mikanId: parseInt(bangumiId) || bangumiId, title, poster, subgroups };
 }
 
 // ── 番剧字幕组 RSS ──
 
-async function fetchBangumiRSS(bangumiId, subgroupId, baseUrlOverride) {
+async function fetchBangumiRSS(mikanId, subgroupId, baseUrlOverride) {
   const BASE = getBaseUrl(baseUrlOverride);
-  const url = `${BASE}/RSS/Bangumi?bangumiId=${bangumiId}&subgroupid=${subgroupId}`;
+  const url = `${BASE}/RSS/Bangumi?bangumiId=${mikanId}&subgroupid=${subgroupId}`;
   const res = await fetch(url, { headers: { 'User-Agent': UA } });
   if (!res.ok) throw new Error(`RSS 请求失败: ${res.status}`);
 
@@ -211,8 +211,8 @@ async function searchBangumi(keyword, baseUrlOverride) {
   $('a[href*="/Home/Bangumi/"]').each((_, a) => {
     const $a = $(a);
     const href = $a.attr('href') || '';
-    const bgmid = href.replace('/Home/Bangumi/', '');
-    if (!bgmid) return;
+    const mikanId = href.replace('/Home/Bangumi/', '');
+    if (!mikanId) return;
 
     // 从 .an-text 的 title 获取番剧名
     const textEl = $a.find('.an-text');
@@ -228,7 +228,7 @@ async function searchBangumi(keyword, baseUrlOverride) {
       poster = poster.replace(/\?.*$/, ''); // 去查询参数
     }
 
-    items.push({ bgmid: parseInt(bgmid) || bgmid, name, poster });
+    items.push({ mikanId: parseInt(mikanId) || mikanId, name, poster });
   });
 
   return items;

@@ -1,11 +1,12 @@
 <template>
   <div class="downloads">
-    <div class="topbar">
-      <h2 class="page-title">下载管理</h2>
-      <button class="refresh-btn" :disabled="isSpinning" @click="doRefresh">
-        <IconRefresh :size="20" :class="{ spinning: isSpinning }" />
-      </button>
-    </div>
+    <div class="downloads-main" ref="scrollRoot">
+      <div class="topbar">
+        <h2 class="page-title">下载管理</h2>
+        <button class="refresh-btn" :disabled="isSpinning" @click="doRefresh">
+          <IconRefresh :size="20" :class="{ spinning: isSpinning }" />
+        </button>
+      </div>
 
     <div v-if="loading && groupedAnime.length === 0" class="state">
       <div class="spinner"></div>
@@ -24,11 +25,28 @@
         <span>{{ activeCount }} 下载中 · {{ groupedAnime.length }} 部番剧</span>
       </div>
 
+      <!-- 季度筛选标签 -->
+      <div v-if="seasonOptions.length > 0" class="season-filter-bar">
+        <button
+          class="season-filter-chip"
+          :class="{ active: seasonFilter === 'all' }"
+          @click="seasonFilter = 'all'"
+        >全部</button>
+        <button
+          v-for="opt in seasonOptions"
+          :key="opt.value"
+          class="season-filter-chip"
+          :class="{ active: seasonFilter === opt.value }"
+          @click="seasonFilter = opt.value"
+        >{{ opt.label }}</button>
+      </div>
+
       <!-- 番剧海报卡片网格（与首页/发现页一致） -->
-      <div v-if="groupedAnime.length > 0" class="anime-grid">
+      <div v-if="filteredAnime.length > 0" class="anime-grid">
         <AnimeCard
-          v-for="group in groupedAnime"
+          v-for="group in filteredAnime"
           :key="group.key"
+          :ref="el => setCardRef(group.key, el)"
           :anime="{ poster: group.poster, title: group.animeName, name: group.animeName }"
           :badge-label="badgeOf(group)"
           :show-rating="false"
@@ -41,6 +59,7 @@
         <p>暂无本平台下载任务</p>
       </div>
     </template>
+    </div>
 
     <!-- 下载详情侧边栏 -->
     <DownloadDetailPanel :group="selectedGroup" @close="selectedKey = null" @changed="fetchAll" />
@@ -63,6 +82,12 @@ const isSpinning = ref(false)
 const animeTorrents = ref([])
 const posterCache = ref({})
 const selectedKey = ref(null)
+const scrollRoot = ref(null)
+const cardRefs = ref({})
+function setCardRef(key, el) {
+  if (el) cardRefs.value[key] = el
+  else delete cardRefs.value[key]
+}
 
 const status = reactive({ connected: false, dlSpeed: '0 B/s', upSpeed: '0 B/s' })
 
@@ -79,33 +104,42 @@ function doRefresh() {
 const groupedAnime = computed(() => {
   const groups = {}
   for (const t of animeTorrents.value) {
-    const key = `${t.bgmid || t.animeName || 'unknown'}_${t.season}`
+    const season = t.season || 1
+    // 按番剧 + 季分组（每季一张卡；同番不同季是不同 Mikan ID，不合并）
+    const key = `${t.mikanId || t.animeName || 'unknown'}_${season}`
     if (!groups[key]) {
       groups[key] = {
         key,
-        bgmid: t.bgmid,
+        mikanId: t.mikanId,
         animeName: t.animeName || '未命名',
-        season: t.season || 1,
+        season,
         episodes: [],
-        poster: posterCache.value[t.bgmid] || '',
-        subgroupName: groups[key]?.subgroupName || t.subgroupName || null,
+        poster: posterCache.value[t.mikanId] || '',
       }
     }
     const state = t.state || ''
     const progress = t.progress ?? 0
     const isDone = progress >= 1 || ['uploading', 'forcedUP', 'stalledUP', 'pausedUP'].includes(state)
-    // episode 可能是纯数字字符串 "04" 或范围 "4-5"
+    // episode 可能是纯数字 "04" 或合集范围 "1-12" / "4-5"
     const epStr = t.episode
-    const seasonPad = String(t.season || 1).padStart(2, '0')
-    const epNum = epStr != null && epStr !== 'null' && !epStr.includes('-') ? parseInt(epStr) : null
-    const epLabel = epNum != null
-      ? `S${seasonPad}E${String(epNum).padStart(2, '0')}`
-      : (epStr && epStr !== 'null' ? `S${seasonPad}E${epStr}` : '--')
+    const seasonPad = String(season).padStart(2, '0')
+    const isRange = epStr != null && epStr !== 'null' && epStr.includes('-')
+    const rangeStart = isRange ? parseInt(epStr.split('-')[0]) : null
+    const epNum = !isRange && epStr != null && epStr !== 'null' ? parseInt(epStr) : null
+    const epLabel = isRange
+      ? `S${seasonPad}E${epStr}`
+      : (epNum != null
+        ? `S${seasonPad}E${String(epNum).padStart(2, '0')}`
+        : (epStr && epStr !== 'null' ? `S${seasonPad}E${epStr}` : '--'))
 
     groups[key].episodes.push({
       hash: t.hash,
       label: epLabel,
-      episode: epNum || 0,
+      season,
+      subgroupName: t.subgroupName || '',
+      episode: isRange ? epStr : (epNum || 0),
+      sortEp: rangeStart || epNum || 0,
+      isRange,
       progress: isDone ? 1 : progress,
       qbState: state,
       isDone,
@@ -113,13 +147,19 @@ const groupedAnime = computed(() => {
       name: t.name || '',
       fileCount: t.fileCount || 1,
       files: t.files || [],
-      expanded: false,
     })
   }
 
   const result = Object.values(groups).map(g => {
-    g.episodes.sort((a, b) => a.episode - b.episode)
-    const nums = g.episodes.map(e => e.episode).filter(n => n > 0).sort((a, b) => a - b)
+    g.episodes.sort((a, b) => a.sortEp - b.sortEp)
+    // 聚合：实际下载的字幕组
+    const subgroups = [...new Set(g.episodes.map(e => e.subgroupName).filter(Boolean))]
+    g.subgroups = subgroups
+    g.subgroupLabel = subgroups.join(' · ') || ''
+    g.seasons = [g.season]
+    g.seasonRange = `SE${String(g.season).padStart(2, '0')}`
+
+    const nums = g.episodes.map(e => e.sortEp).filter(n => n > 0).sort((a, b) => a - b)
     const ranges = []
     if (nums.length > 0) {
       let start = nums[0], end = nums[0]
@@ -139,6 +179,18 @@ const groupedAnime = computed(() => {
   return result
 })
 
+// 季度（SE）筛选
+const seasonFilter = ref('all')
+const seasonOptions = computed(() => {
+  const s = new Set()
+  for (const g of groupedAnime.value) for (const n of (g.seasons || [])) s.add(n)
+  return [...s].sort((a, b) => a - b).map(n => ({ value: n, label: `SE${String(n).padStart(2, '0')}` }))
+})
+const filteredAnime = computed(() => {
+  if (seasonFilter.value === 'all') return groupedAnime.value
+  return groupedAnime.value.filter(g => (g.seasons || []).includes(seasonFilter.value))
+})
+
 const activeCount = computed(() => {
   return animeTorrents.value.filter(t => ['downloading', 'forcedDL', 'stalledDL'].includes(t.state)).length
 })
@@ -146,13 +198,26 @@ const activeCount = computed(() => {
 // 当前选中的下载组（右侧详情侧边栏）
 const selectedGroup = computed(() => groupedAnime.value.find(g => g.key === selectedKey.value) || null)
 
-function openDetail(group) { selectedKey.value = group.key }
+function openDetail(group) {
+  selectedKey.value = group.key
+  // 等侧边栏 320ms 宽度展开动画结束后：卡片未完全可见才滚动到可见（已完全可见则不滚）
+  setTimeout(() => scrollCardIntoView(cardRefs.value?.[group.key]), 400)
+}
+
+function scrollCardIntoView(el) {
+  const container = scrollRoot.value
+  if (!el || !container) return
+  const er = el.getBoundingClientRect()
+  const cr = container.getBoundingClientRect()
+  const fullyVisible = er.top >= cr.top && er.bottom <= cr.bottom
+  if (!fullyVisible) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 function badgeOf(g) {
   return g.episodes.length > 0 && g.doneCount === g.episodes.length ? '已完成' : `${g.doneCount}/${g.episodes.length}`
 }
 function metaOf(g) {
-  return `SE${String(g.season).padStart(2, '0')}${g.subgroupName ? ' · ' + g.subgroupName : ''}`
+  return `${g.seasonRange}${g.subgroupLabel ? ' · ' + g.subgroupLabel : ''}`
 }
 
 // ── helpers ──
@@ -171,14 +236,14 @@ async function fetchAll() {
     else { status.connected = false }
     animeTorrents.value = tRes.data.torrents || []
 
-    // 拉取海报：去重 bgmid
-    const seenBgmids = new Set()
+    // 拉取海报：去重 mikanId
+    const seenMikanIds = new Set()
     for (const t of animeTorrents.value) {
-      if (t.bgmid && !seenBgmids.has(t.bgmid)) {
-        seenBgmids.add(t.bgmid)
-        getSubDetail(t.bgmid).then(({ data }) => {
+      if (t.mikanId && !seenMikanIds.has(t.mikanId)) {
+        seenMikanIds.add(t.mikanId)
+        getSubDetail(t.mikanId).then(({ data }) => {
           if (data?.detail?.poster) {
-            posterCache.value[t.bgmid] = data.detail.poster
+            posterCache.value[t.mikanId] = data.detail.poster
           }
         }).catch(() => {})
       }
@@ -205,7 +270,12 @@ onUnmounted(() => clearInterval(refreshTimer))
 </script>
 
 <style scoped>
-.downloads { padding: 32px 40px; max-width: 1400px; }
+/* flex 布局：左侧内容区 + 右侧详情侧边栏（推挤，不遮挡） */
+.downloads { display: flex; height: 100vh; overflow: hidden; }
+.downloads-main {
+  flex: 1; min-width: 0; overflow-y: auto;
+  padding: 32px 40px;
+}
 .topbar { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
 .page-title { font-size: 1.5rem; font-weight: 700; color: var(--text-primary); margin: 0; }
 .refresh-btn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 8px; background: var(--bg-input); border: 1px solid var(--border); color: var(--text-secondary); cursor: pointer; transition: 0.2s; }
@@ -222,6 +292,32 @@ onUnmounted(() => clearInterval(refreshTimer))
 .status-text { font-weight: 600; color: var(--text-primary); }
 .divider { color: var(--border); }
 .speed { color: var(--accent-gold); font-weight: 500; }
+
+/* 季度筛选标签栏 */
+.season-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.season-filter-chip {
+  padding: 4px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.season-filter-chip:hover { color: var(--text-primary); border-color: var(--accent); }
+.season-filter-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
 
 /* 番剧海报网格（与首页/发现页一致） */
 .anime-grid {

@@ -59,16 +59,23 @@ async function addTorrent(item) {
   const params = new URLSearchParams();
   params.set('urls', url);
   params.set('category', 'soraika-hub');
-  if (item.tags) {
-    params.set('tags', Array.isArray(item.tags) ? item.tags.join(',') : item.tags);
-  }
+
+  // 元数据 tag（soraika: 前缀）供下载页解析分组；原 tags 保留
+  const tagList = item.tags
+    ? (Array.isArray(item.tags) ? item.tags.slice() : item.tags.split(','))
+    : [];
+  if (item.taskName) tagList.push(`soraika:${item.taskName}`);
+  if (tagList.length) params.set('tags', tagList.join(','));
+
   if (item.savePath) {
     const { basePath } = getQBConfig();
     const fullPath = basePath.replace(/\/$/, '') + '/' + item.savePath.replace(/^\//, '');
     params.set('savepath', fullPath);
   }
-  if (item.taskName) {
-    params.set('rename', item.taskName);
+  // QB 任务名：优先用原始种子标题（下载页显示原始资源）；旧任务无 rawTitle 时回退 taskName
+  const displayName = item.rawTitle || item.taskName;
+  if (displayName) {
+    params.set('rename', displayName);
   }
 
   const hash = extractHash(url);

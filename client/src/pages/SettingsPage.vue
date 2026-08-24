@@ -56,7 +56,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { IconAlertCircle } from '@tabler/icons-vue'
-import { getConfig, updateConfig, getMikanMapping, syncMikanMapping } from '@/api'
+import { getConfig, updateConfig, getMikanMapping, syncMikanMapping, testMikanMapping } from '@/api'
 import SettingsDownloadCard from '@/components/SettingsDownloadCard.vue'
 import SettingsAiCard from '@/components/SettingsAiCard.vue'
 import SettingsSourceCard from '@/components/SettingsSourceCard.vue'
@@ -87,11 +87,17 @@ async function testUrl(key, url) {
   if (!url || testStates[key] === 'testing') return
   testStates[key] = 'testing'
   try {
-    const controller = new AbortController()
-    const to = setTimeout(() => controller.abort(), 5000)
-    await fetch(url, { method: 'HEAD', signal: controller.signal, mode: 'no-cors' })
-    clearTimeout(to)
-    testStates[key] = 'success'
+    if (key === 'mapping') {
+      // 转换表：走后端真正拉取并校验 JSON（HEAD/no-cors 测不准）
+      const { data } = await testMikanMapping(url)
+      testStates.mapping = data?.valid ? 'success' : 'error'
+    } else {
+      const controller = new AbortController()
+      const to = setTimeout(() => controller.abort(), 5000)
+      await fetch(url, { method: 'HEAD', signal: controller.signal, mode: 'no-cors' })
+      clearTimeout(to)
+      testStates[key] = 'success'
+    }
   } catch {
     testStates[key] = 'error'
   }
@@ -116,7 +122,7 @@ async function loadConfig() {
     }
     form.mikan = {
       baseUrl: c.mikan?.baseUrl || '',
-      mappingUrl: c.mikan?.mappingUrl || 'https://raw.githubusercontent.com/xiaoyvyv/bangumi-data/main/data/mikan/bangumi-mikan.json',
+      mappingUrl: c.mikan?.mappingUrl || '',
     }
     form.bgm = { baseUrl: c.bgm?.baseUrl || '', token: c.bgm?.token || '' }
     bgmNoToken.value = !c.bgm?.token

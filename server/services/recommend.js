@@ -307,9 +307,9 @@ function moduleCandidates(moduleId) {
   return list;
 }
 
-/** 按 bgmid（即 BGM 条目 id）从候选池取元信息，供首页排期卡片补评分/题材 */
-function getSubjectMeta(bgmid) {
-  const item = candidateMap.get(bgmid) || candidateMap.get(Number(bgmid)) || candidateMap.get(String(bgmid));
+/** 按 BGM 条目 id 从候选池取元信息，供首页排期卡片补评分/题材 */
+function getSubjectMeta(bgmId) {
+  const item = candidateMap.get(bgmId) || candidateMap.get(Number(bgmId)) || candidateMap.get(String(bgmId));
   if (!item) return null;
   return {
     score: item.rating?.score || null,
