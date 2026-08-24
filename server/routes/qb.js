@@ -130,7 +130,9 @@ router.get('/anime-torrents', async (req, res) => {
 
     const results = torrents.map((t, i) => {
       // 新任务：元数据存在 tags 的 soraika: 前缀里（任务名为原始标题）；旧任务回退从任务名解析
-      const metaTag = (t.tags || []).find(x => String(x).startsWith('soraika:'));
+      // QB API 的 tags 可能是逗号分隔字符串，也可能是数组，做兼容
+      const tags = typeof t.tags === 'string' ? t.tags.split(',') : (Array.isArray(t.tags) ? t.tags : []);
+      const metaTag = tags.find(x => String(x).startsWith('soraika:'));
       let m = null
       if (metaTag) {
         m = String(metaTag).slice('soraika:'.length).match(/^\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]/);
