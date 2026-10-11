@@ -239,7 +239,9 @@ AI 是**可选功能**：没配 `AI_API_KEY` 也照常跑 —— 相关接口回
   `p.bangumi-info a[href*=subject]` → `bgmId`；`p.bangumi-title` → 标题。
 - **落库（塞进 `anime` 主表，不建 map 表）**：
   - `http-404` **不塞**（页面不存在，纯垃圾行）
-  - `no-bgm-link`（页面在、没挂 Bangumi 链接）**要塞**：`bgm_id = NULL` + 保留 `title`，
+  - **连标题都取不到**（页面在、但没有 `p.bangumi-title`，多半是跳回首页/空页）**也不塞** ——
+    否则库里会出现一堆 `title = mikan:470` 这种既没名字也没链接的假行
+  - `no-bgm-link`（页面在、有标题、没挂 Bangumi 链接）**要塞**：`bgm_id = NULL` + 保留 `title`，
     并标 **`bgm_miss_count = 3`**（≥ `worker.missLimit`）+ `bgm_checked_at = 扫描时间`
     → 借现有退避机制：不立刻重抓，`missRetryHours`（默认 7 天）后自动重试一次
   - `ok` 的写 `mikan_id` + `bgm_id` + `title`（Mikan 的标题）

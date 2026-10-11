@@ -56,7 +56,10 @@ export async function runSweep(options = {}) {
   const conc = Math.max(1, Number(options.conc ?? 4))
   const limit = Number(options.limit ?? 0)
   const dryRun = Boolean(options.dryRun)
+  /** 单次请求超时：比客户端的 30s 短 —— 这里要的是「快速失败、接着扫下一个」 */
   const timeoutMs = Number(options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  /** 连续多少个空页就提前收工（**只在"已经找到过有效条目"之后生效**，否则低 id 段会一上来就停） */
+  const stopAfterEmpty = Math.max(10, Number(options.stopAfterEmpty ?? 300))
   const log = options.log ?? logger
 
   const scanned = new Set(stmt.scannedIds.all().map((r) => String(r.mikan_id)))
@@ -64,7 +67,7 @@ export async function runSweep(options = {}) {
   for (let id = from; id <= to; id++) if (!scanned.has(String(id))) all.push(id)
   const targets = limit > 0 ? all.slice(0, limit) : all
 
-  const stat = { from, to, conc, dryRun, rangeIds: to - from + 1, skipped: to - from + 1 - all.length, targets: targets.length, ok: 0, noLink: 0, notFound: 0, failed: 0, inserted: 0 }
+  const stat = { from, to, conc, dryRun, stopAfterEmpty, rangeIds: to - from + 1, skipped: to - from + 1 - all.length, targets: targets.length, ok: 0, noLink: 0, notFound: 0, failed: 0, inserted: 0, consecutiveEmpty: 0, stoppedEarly: false }
   log.info(stat, 'sweep.start')
   if (!targets.length) return { ...stat, samples: [] }
 
@@ -73,6 +76,12 @@ export async function runSweep(options = {}) {
   let cursor = 0
   let done = 0
   const startedAt = Date.now()
+
+  /** 空页计数：连着太多个就认为到了有效区间的尾巴（见 stopAfterEmpty 的说明） */
+  const noteEmpty = () => {
+    stat.consecutiveEmpty++
+    if (stat.ok > 0 && stat.consecutiveEmpty >= stopAfterEmpty) stat.stoppedEarly = true
+  }
 
   async function one(id) {
     let res
@@ -86,13 +95,22 @@ export async function runSweep(options = {}) {
     }
     if (res.status !== 200) {
       stat.notFound++
+      noteEmpty()
       return // 页面不存在：不写库
     }
 
     const html = await res.text()
     // quiet：批量扫描时「没挂 bgm 链接」是预期结果，不要为它刷 warn（老番很多都没挂）
     const bgmId = getAnimeBangumiId(html, { quiet: true })?.bangumiId ?? null
-    const title = getAnimeTitle(html) || `mikan:${id}`
+    const title = getAnimeTitle(html)
+    // 连标题都取不到 → 这不是番剧详情页（多半是跳回首页/空页）→ 和 404 一样**不写库**
+    // （否则库里会出现一堆 title = mikan:470 这种假行，既没名字也没链接）
+    if (!title && !bgmId) {
+      stat.notFound++
+      noteEmpty()
+      return
+    }
+    stat.consecutiveEmpty = 0 // 这是个真实条目（有没有挂 BGM 链接另说）
 
     if (bgmId) {
       stat.ok++
@@ -109,7 +127,7 @@ export async function runSweep(options = {}) {
         stmt.insert.run(
           val(String(id)),
           val(bgmId),
-          val(title),
+          val(title || `mikan:${id}`), // 有 bgmId 却没标题的极少数情况：用 mikan:<id> 兜底，别丢数据
           now - (id % 3) * 86400000, // 错开 0/1/2 天，避免集中到期
           bgmId ? 0 : config.worker.missLimit, // 没链接的顶到上限 → 交给退避机制，7 天后才重试
           now,
@@ -129,7 +147,7 @@ export async function runSweep(options = {}) {
   }
 
   async function worker() {
-    while (cursor < targets.length) {
+    while (cursor < targets.length && !stat.stoppedEarly) {
       const id = targets[cursor++]
       await one(id)
       done++
@@ -159,6 +177,7 @@ if (isCli) {
     conc: arg('conc', 4),
     limit: arg('limit', 0),
     timeoutMs: arg('timeout', DEFAULT_TIMEOUT_MS),
+    stopAfterEmpty: arg('stop-after-empty', 300),
     dryRun: flag('dry-run'),
   })
 }

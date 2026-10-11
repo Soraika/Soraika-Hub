@@ -37,6 +37,12 @@ const stmt = {
     WHERE bgm_id IS NOT NULL AND series_checked_at IS NULL AND id < ?
     ORDER BY id DESC LIMIT 1
   `),
+  /** 批量取（并发跑时用）：一次领 N 条，领完就推进游标 —— 不会重复处理同一条 */
+  batch: db.prepare(`
+    SELECT * FROM anime
+    WHERE bgm_id IS NOT NULL AND series_checked_at IS NULL AND id < ?
+    ORDER BY id DESC LIMIT ?
+  `),
   count: db.prepare('SELECT COUNT(*) AS n FROM anime WHERE bgm_id IS NOT NULL AND series_checked_at IS NULL'),
   clearChecked: db.prepare('UPDATE anime SET series_checked_at = NULL'),
 }
@@ -125,8 +131,13 @@ export async function fillSeriesFor(row, { log = logger } = {}) {
   return 'done'
 }
 
-/** 补一批（limit <= 0 = 一直补到没有待算） */
-export async function runSeries({ limit = 0, gapMs, force = false, log = logger } = {}) {
+/**
+ * 补一批（limit <= 0 = 一直补到没有待算）
+ * @param {{ limit?:number, gapMs?:number, conc?:number, force?:boolean, log?:object }} [options]
+ *   `conc`：并发条数。首轮全量补齐时有几千条，串行 5s/条要两小时 → 并发 3 约 50 分钟。
+ *           **只影响速度，不影响正确性**（一次领 N 条、领完即推进游标，不会重复处理）。
+ */
+export async function runSeries({ limit = 0, gapMs, conc = 1, force = false, log = logger } = {}) {
   if (!config.ai.enabled) {
     // 没配 AI 就整轮退出：写入要 AI 成功才发生，否则同一条会被反复捞起来空转
     log.warn({ pending: stmt.count.get().n }, 'series.skip ai-disabled')
@@ -138,21 +149,30 @@ export async function runSeries({ limit = 0, gapMs, force = false, log = logger 
   }
 
   const gap = Number.isFinite(Number(gapMs)) ? Number(gapMs) : config.worker.gapMs
-  const result = { aiDisabled: false, processed: 0, done: 0, skipped: 0, pending: stmt.count.get().n }
+  const window = Math.max(1, Number(conc) || 1)
+  const result = { aiDisabled: false, conc: window, processed: 0, done: 0, skipped: 0, pending: stmt.count.get().n }
   let cursorId = Number.MAX_SAFE_INTEGER
   const rest = Number(limit) > 0 ? Number(limit) : Infinity
 
-  for (let i = 0; i < rest; i++) {
-    const row = stmt.next.get(cursorId)
-    if (!row) break
-    cursorId = row.id // 本轮只前进、不回头（失败的下轮再来）
-    const outcome = await fillSeriesFor(row, { log })
-    result.processed++
-    if (outcome === 'done') result.done++
-    else if (outcome === 'ai-disabled') {
-      result.aiDisabled = true
-      break
-    } else result.skipped++
+  while (result.processed < rest) {
+    const rows = window === 1 ? [stmt.next.get(cursorId)].filter(Boolean) : stmt.batch.all(cursorId, window)
+    if (!rows.length) break
+    cursorId = rows[rows.length - 1].id // 本轮只前进、不回头（失败的下轮再来）
+
+    const outcomes = await Promise.all(rows.map((row) => fillSeriesFor(row, { log })))
+    for (const outcome of outcomes) {
+      result.processed++
+      if (outcome === 'done') result.done++
+      else if (outcome === 'ai-disabled') {
+        result.aiDisabled = true
+        break
+      } else result.skipped++
+    }
+    if (result.aiDisabled) break
+    if (result.processed % 50 === 0) {
+      result.pending = stmt.count.get().n
+      log.info({ ...result }, 'series.progress')
+    }
     await sleep(gap)
   }
 
@@ -168,5 +188,10 @@ if (isCli) {
   // 独立进程也要吃设置页里的覆盖项（AI key 可能填在设置页而不是 .env）
   const overridden = loadStoredSettings()
   logger.info({ pending: stmt.count.get().n, aiEnabled: config.ai.enabled, settingsOverridden: overridden }, 'cli.series start')
-  await runSeries({ limit: arg('limit', 0), gapMs: arg('gap'), force: process.argv.includes('--force') })
+  await runSeries({
+    limit: arg('limit', 0),
+    gapMs: arg('gap'),
+    conc: arg('conc', 1),
+    force: process.argv.includes('--force'),
+  })
 }
