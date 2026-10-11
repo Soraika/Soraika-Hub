@@ -19,6 +19,18 @@ export function fetchAnimeDetail(id) {
 }
 
 /**
+ * 同系列的作品（面板标题旁「系列」chip 点开用）
+ * 纯读库，很快；**没算过系列时后端返回 null**（不是错误）→ 前端不渲染 chip
+ * @param {number|string} id 作品主键
+ * @returns {Promise<null | { rootTitle:string, namingStyle:string|null, currentIndex:number|null,
+ *   items: Array<{ animeId:number, bgmId:string|null, title:string, index:number|null,
+ *                  relation:string|null, current:boolean }> }>}
+ */
+export function fetchAnimeSeries(id) {
+  return apiGet(`/api/anime/${encodeURIComponent(id)}/series`, { timeout: 10000 })
+}
+
+/**
  * 作品下的字幕组列表（面板「资源」区第一级）
  * 库里没有时后端会现场补一次 Mikan 详情页，所以给它宽一点超时
  * @param {number|string} id 作品主键

@@ -146,6 +146,25 @@ try {
   /* ── ④b 切换动画：三态与换作品都包在 out-in 过渡里（UI 契约，别被顺手删掉） ── */
   const panelSource = readFileSync(new URL('../src/components/detail/AnimeDetailPanel.vue', import.meta.url), 'utf8')
   check(panelSource.includes('<Transition name="phase" mode="out-in">'), '面板三态包在 <Transition name="phase" mode="out-in"> 里（不硬切）')
+
+  /* ── 系列 chip（标题区）：一拍即开、点某部就换作品 ────────────────────── */
+  check(
+    panelSource.includes('class="chip-series"') &&
+      panelSource.includes('series.items.length > 1') &&
+      panelSource.includes('PopoverPanel') &&
+      panelSource.includes("emit('open', item.animeId)"),
+    '系列 chip：标题区一拍即开（弹层列同系列），点某部换面板（emit open）',
+  )
+  check(
+    panelSource.includes('useSeries') &&
+      readFileSync(new URL('../src/composables/useSeries.js', import.meta.url), 'utf8').includes('catch') &&
+      readFileSync(new URL('../src/api/anime.js', import.meta.url), 'utf8').includes('/series'),
+    '系列是附加信息：取不到就当没有（不把面板拖进错误态）；接口 /api/anime/:id/series',
+  )
+  check(
+    readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8').includes('@open="openAnime"'),
+    '容器把面板的 open 事件接到 openAnime（全站一个面板，切换 = 改 activeAnimeId）',
+  )
   check(
     panelSource.includes('key="loading"') && panelSource.includes('key="error"') && panelSource.includes("key=\"'detail-' + data.id\""),
     '三个分支各带 key（否则同组件间不触发过渡）',

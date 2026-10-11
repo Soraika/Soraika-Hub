@@ -27,6 +27,7 @@
       :error-text="animeError?.message || ''"
       @close="closeAnime"
       @retry="retryAnime"
+      @open="openAnime"
     />
   </div>
 </template>

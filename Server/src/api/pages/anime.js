@@ -8,7 +8,7 @@
  *   3. 字幕组 / 资源列表是**另外两条接口**（getAnimeSubgroups / getSubgroupReleases）：
  *      它们要打上游、会慢，不能拖累「点开就有」的详情；资源列表还带进程内缓存。
  */
-import { findById, listSubgroups, replaceSubgroups } from '../../db/anime.js'
+import { findById, listSeriesMembers, listSubgroups, replaceSubgroups } from '../../db/anime.js'
 import { fail } from '../../lib/errors.js'
 import { logger } from '../../lib/logger.js'
 import { upstreamCache } from '../../cache/mem.js'
@@ -62,6 +62,40 @@ export async function getAnimeSubgroups(id, { log = logger } = {}) {
 
   log.debug({ id, source, total: rows.length }, 'anime.subgroups ok')
   return { items: rows.map(toSubgroupItem), source }
+}
+
+/**
+ * 同系列的作品 —— 面板标题旁「系列」chip 点开的那一份（CONVENTIONS.md §10.2）
+ * ---------------------------------------------------------------------------
+ * 只列**已在库**的成员：不在库的没有作品主键、点不进去，显示了也是死条目（前端「缺了就是无」）。
+ * 一条 `WHERE series_id = ?` 就够（`listSeriesMembers` 已按「正传在前、番外在后」排好）。
+ * **没算过系列时返回 null**（不是错误）—— 前端据此不渲染 chip。
+ * @param {number|string} id 作品主键
+ */
+export function getAnimeSeries(id, { log = logger } = {}) {
+  const row = findById(id)
+  if (!row) throw fail('NOT_FOUND', `没有 id=${id} 的作品记录`)
+  if (!row.series_id) return null
+
+  const members = listSeriesMembers(row.series_id)
+  // 根名 / 命名风格只写在「代表行」上（代表行的 id 就是 series_id）
+  const representative = members.find((m) => m.id === row.series_id)
+
+  log.debug({ id, seriesId: row.series_id, members: members.length }, 'anime.series ok')
+  return {
+    rootTitle: representative?.series_root_title || '',
+    namingStyle: representative?.naming_style || null,
+    currentIndex: row.series_index ?? null,
+    items: members.map((m) => ({
+      animeId: m.id,
+      bgmId: m.bgm_id,
+      /** 成品展示名：优先中文名（与 toAnimeDetail 同口径，不在前端拼） */
+      title: m.title_cn || m.title,
+      index: m.series_index,
+      relation: m.series_relation,
+      current: m.id === row.id,
+    })),
+  }
 }
 
 /**

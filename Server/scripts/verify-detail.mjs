@@ -118,6 +118,15 @@ try {
   const again = (await get(`/api/anime/${card.id}`)).body?.data
   check(JSON.stringify(again) === JSON.stringify(detail), '重复请求结果一致（纯读库，不触发上游）')
 
+  /* ── 系列（面板标题旁那个 chip）：没算过系列时 data 为 null —— 不是错误 ──── */
+  const seriesRes = await get(`/api/anime/${card.id}/series`)
+  check(
+    seriesRes.res.ok && seriesRes.body?.data === null,
+    '系列接口可用；这个库还没算过系列 → data 为 null（不是 500，前端据此不渲染 chip）',
+  )
+  const seriesBad = await get('/api/anime/abc/series')
+  check(seriesBad.res.status === 400 && seriesBad.body?.error?.code === 'BAD_REQUEST', '系列接口：非法 id → 400 / BAD_REQUEST')
+
   /* ── 字幕组（资源区第一级）与资源列表（第二级）──────────────────────── */
   const sgRes = await get(`/api/anime/${card.id}/subgroups`)
   const subgroupData = sgRes.body?.data

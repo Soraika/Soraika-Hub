@@ -3,7 +3,7 @@
  * 与 home.js 同构：只做「校验 id + 调聚合层 + 返回信封」
  */
 import { Router } from 'express'
-import { getAnimeDetail, getAnimeSubgroups, getSubgroupReleases } from '../api/pages/anime.js'
+import { getAnimeDetail, getAnimeSeries, getAnimeSubgroups, getSubgroupReleases } from '../api/pages/anime.js'
 import { fail } from '../lib/errors.js'
 
 export const animeRouter = Router()
@@ -23,6 +23,18 @@ function animeIdOf(req) {
 animeRouter.get('/anime/:id', (req, res, next) => {
   try {
     res.json({ ok: true, data: getAnimeDetail(animeIdOf(req), { log: req.log }) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * GET /api/anime/:id/series
+ * 同系列的作品（面板标题旁的「系列」chip 点开用）。**没算过系列时 data 为 null**，不是错误。
+ */
+animeRouter.get('/anime/:id/series', (req, res, next) => {
+  try {
+    res.json({ ok: true, data: getAnimeSeries(animeIdOf(req), { log: req.log }) })
   } catch (err) {
     next(err)
   }

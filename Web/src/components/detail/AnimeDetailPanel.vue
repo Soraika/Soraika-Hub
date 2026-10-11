@@ -35,6 +35,37 @@
               <div class="detail-chips">
                 <span v-if="data.weekdayText" class="chip chip-week">{{ data.weekdayText }}</span>
                 <span v-if="data.epsText" class="chip">{{ data.epsText }}</span>
+
+                <!-- 系列：点开列同系列其它作品。放标题区（海报右边）而不是单独开卡片 ——
+                     「系列」本质是**导航**（点它换作品），不是内容；面板只有 340px 宽，
+                     单独一块占位不划算。只列库里有的成员（不在库的点不进去）。 -->
+                <span v-if="series && series.items.length > 1" class="chip-series">
+                  <button
+                    class="chip chip-series-btn"
+                    type="button"
+                    data-popover-anchor
+                    :aria-expanded="seriesOpen"
+                    :title="seriesTooltip"
+                    @click="seriesOpen = !seriesOpen"
+                  >
+                    {{ seriesChipText }}
+                  </button>
+                  <PopoverPanel :open="seriesOpen" label="同系列作品" @close="seriesOpen = false">
+                    <p class="series-head">{{ series.rootTitle || '同系列' }} · {{ series.items.length }} 部</p>
+                    <button
+                      v-for="item in series.items"
+                      :key="item.animeId"
+                      class="series-item"
+                      :class="{ on: item.current }"
+                      type="button"
+                      :disabled="item.current"
+                      @click="pickSeries(item)"
+                    >
+                      <span class="series-tag">{{ seriesTagOf(item) }}</span>
+                      <span class="series-name">{{ item.title }}</span>
+                    </button>
+                  </PopoverPanel>
+                </span>
               </div>
             </div>
           </header>
@@ -144,9 +175,11 @@ import StateBlock from '@/components/ui/StateBlock.vue'
 import SubgroupBar from './SubgroupBar.vue'
 import ReleaseList from './ReleaseList.vue'
 import AiSlot from './AiSlot.vue'
+import PopoverPanel from '@/components/ui/PopoverPanel.vue'
 import { useReleases } from '@/composables/useReleases'
 import { useAiTags } from '@/composables/useAiTags'
 import { useEpisodes } from '@/composables/useEpisodes'
+import { useSeries } from '@/composables/useSeries'
 import { episodeOf, isBatchEpisode, releaseHighlights } from '@/utils/episode'
 
 /**
@@ -168,7 +201,7 @@ const props = defineProps({
   /** 失败时的具体文案（ApiError.message） */
   errorText: { type: String, default: '' },
 })
-const emit = defineEmits(['close', 'retry'])
+const emit = defineEmits(['close', 'retry', 'open'])
 
 /**
  * 资源区（字幕组 → 资源列表）由面板自己取数
@@ -196,6 +229,31 @@ const {
  * 资源到手就丢给 AI 解析每条资源的集号；没配 AI 时静默退回前端规则兜底。
  */
 const { episodes: aiEpisodes, load: loadEpisodes } = useEpisodes()
+
+/**
+ * 同系列的作品（标题旁那个「系列」chip）
+ * 数据来自后端 `GET /api/anime/:id/series` —— 只列**库里有的**成员（不在库的点不进去）。
+ * 没算过系列时后端返回 null → 这里 series 为 null → 模板不渲染 chip。
+ */
+const { data: series, load: loadSeries, reset: resetSeries } = useSeries()
+const seriesOpen = ref(false)
+const seriesChipText = computed(() => {
+  const s = series.value
+  if (!s) return ''
+  // 正传显示季位（S02）；番外自己没有季位 → 退回「N 部」
+  return s.currentIndex ? `系列 S${String(s.currentIndex).padStart(2, '0')}` : `系列 ${s.items.length} 部`
+})
+const seriesTooltip = computed(() => {
+  const s = series.value
+  return s ? `${s.rootTitle || '同系列'} · 库里共 ${s.items.length} 部` : ''
+})
+/** 番外没有季位 → 用归类当角标（OVA / 剧场版 / 总集篇…） */
+const seriesTagOf = (item) => (item.index ? `S${String(item.index).padStart(2, '0')}` : item.relation || '番外')
+/** 点系列里的某一部：换面板显示的作品（复用容器的 openAnime） */
+function pickSeries(item) {
+  seriesOpen.value = false
+  if (!item.current) emit('open', item.animeId)
+}
 
 /**
  * 这批资源的整体特征（简报）—— 规则算的基础项 + 只在"有差别"时才列的分类维度
@@ -265,8 +323,14 @@ watch(
   () => props.data?.id,
   (id) => {
     expanded.value = false
-    if (id) openReleases(id)
-    else resetReleases()
+    seriesOpen.value = false
+    resetSeries()
+    if (id) {
+      openReleases(id)
+      loadSeries(id)
+    } else {
+      resetReleases()
+    }
   },
   { immediate: true },
 )
@@ -448,6 +512,67 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-weight: 600;
+}
+
+/* ── 系列 chip（标题区）：点开列同系列作品 ───────────────────────────────
+   外层 span 只负责 `position: relative`（PopoverPanel 是绝对定位挂在它下面）。 */
+.chip-series {
+  position: relative;
+  display: inline-flex;
+}
+.chip-series-btn {
+  cursor: pointer;
+  transition: color var(--dur-fast), border-color var(--dur-fast);
+}
+.chip-series-btn:hover {
+  color: var(--accent);
+}
+.series-head {
+  margin: 0 0 6px;
+  padding: 0 4px;
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+.series-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  text-align: left;
+  transition: background var(--dur-fast), color var(--dur-fast);
+}
+.series-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+/* 当前这一部：只强调、不可点（点它等于什么都不做） */
+.series-item.on {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+.series-item.on:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.series-tag {
+  flex-shrink: 0;
+  min-width: 28px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+.series-item.on .series-tag {
+  color: var(--accent);
+}
+.series-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── 信息卡：评分 / 放送 / 标签 ───────────────────────────────────────── */
