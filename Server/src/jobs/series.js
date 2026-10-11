@@ -49,11 +49,28 @@ const stmt = {
 
 /**
  * 给一条作品补齐系列信息
+ * ---------------------------------------------------------------------------
+ * **任何异常都不许抛出去**：worker 的调度循环靠这里返回 `'skipped'` 来决定"放回队列、下轮再来"。
+ * 上游 404 / 超时 / 写库失败一旦抛穿，死的不只是这一条，而是整个守护进程（冒烟测踩到过）。
  * @param {object} row anime 行（需要 id / bgm_id）
- * @returns {Promise<'done'|'skipped'|'ai-disabled'|'no-bgm'>}
+ * @returns {Promise<'done'|'skipped'|'ai-disabled'|'no-bgm'>} `'skipped'` = 这次没算成、**什么都没写** → 下轮重试
  */
 export async function fillSeriesFor(row, { log = logger } = {}) {
   if (!row?.bgm_id) return 'no-bgm'
+  try {
+    return await fillSeriesOnce(row, { log })
+  } catch (err) {
+    // 统一的兜底：什么都不写（含 series_checked_at）→ 留在待算里，下轮自动重试
+    log.warn(
+      { id: row?.id, bgmId: row?.bgm_id, code: err?.code, status: err?.detail?.status, err: err?.message },
+      'series.fill fail',
+    )
+    return 'skipped'
+  }
+}
+
+/** 真正干活的那趟（异常由上面的 fillSeriesFor 兜） */
+async function fillSeriesOnce(row, { log = logger } = {}) {
   const startedAt = Date.now()
   const startId = String(row.bgm_id)
 
@@ -105,10 +122,13 @@ export async function fillSeriesFor(row, { log = logger } = {}) {
     setSeriesMeta(libRow.id, { seriesId, seriesRelation: extraRelation.get(item.id) || '其他', seriesCheckedAt: now })
   }
   if (repRow) {
+    // 根名兜底：AI 对「单部作品（链上只有它自己）」经常返回空 rootTitle
+    // —— 这时用作品自己的展示名（title_cn 优先），总比顶层目录叫「未归类」强
+    const fallbackTitle = repRow.title_cn || repRow.title || ''
     setSeriesMeta(repRow.id, {
       seriesId,
       namingStyle: ai.namingStyle || repRow.naming_style,
-      seriesRootTitle: ai.rootTitle || repRow.series_root_title,
+      seriesRootTitle: ai.rootTitle || repRow.series_root_title || fallbackTitle,
       seriesCheckedAt: now,
     })
   }
@@ -185,13 +205,24 @@ export async function runSeries({ limit = 0, gapMs, conc = 1, force = false, log
 const isCli = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url
 if (isCli) {
   const arg = (name, fallback) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? fallback
+  const counts = () => ({
+    done: db.prepare('SELECT COUNT(*) AS n FROM anime WHERE series_checked_at IS NOT NULL').get().n,
+    pending: stmt.count.get().n,
+  })
+
   // 独立进程也要吃设置页里的覆盖项（AI key 可能填在设置页而不是 .env）
   const overridden = loadStoredSettings()
-  logger.info({ pending: stmt.count.get().n, aiEnabled: config.ai.enabled, settingsOverridden: overridden }, 'cli.series start')
-  await runSeries({
-    limit: arg('limit', 0),
-    gapMs: arg('gap'),
-    conc: arg('conc', 1),
-    force: process.argv.includes('--force'),
-  })
+
+  if (process.argv.includes('--status')) {
+    // 只看进度、不干活（回填在后台跑时用它看进度，纯读）
+    logger.info({ ...counts(), aiEnabled: config.ai.enabled, settingsOverridden: overridden }, 'cli.series status')
+  } else {
+    logger.info({ ...counts(), aiEnabled: config.ai.enabled, settingsOverridden: overridden }, 'cli.series start')
+    await runSeries({
+      limit: arg('limit', 0),
+      gapMs: arg('gap'),
+      conc: arg('conc', 1),
+      force: process.argv.includes('--force'),
+    })
+  }
 }

@@ -112,3 +112,54 @@ export const takeNextStale = ({ olderThan }) => stmt.nextStale.get(val(staleYear
 
 /** 每日更新队列还剩多少条 */
 export const countStale = ({ olderThan }) => stmt.countStale.get(val(staleYear()), val(olderThan))?.n ?? 0
+
+/* ── 触发③：系列链补齐 —— 「还没算过系列」的作品走一次链（CONVENTIONS.md §10.1）─────
+ *
+ * 与上面两个触发不同的地方，逐条对上 §5 的七条：
+ *   谓词 : `bgm_id IS NOT NULL AND series_checked_at IS NULL`（谁没算过算谁）
+ *   认领 : 把 `series_checked_at` 置 **-1（哨兵 = 处理中）**，CAS 语义：只有还是 NULL 才算抢到
+ *   处理 : jobs/series.js#fillSeriesFor（走链 + AI 归一 + 落库），一条一个事务边界、幂等
+ *   退出 : 成功由 fillSeriesFor 写入真实时间；AI 没配/失败 → release 回 NULL（下轮再来）
+ *   退避 : 失败由 worker 里的"冷却"处理（连续失败指数退避），不在这里做
+ *   恢复 : worker 启动时 resetStaleSeriesClaims() 把上次崩在中间的 -1 清回 NULL
+ *   可观测: countSeriesPending / countSeriesDone 进 /api/health 的 worker 段
+ *
+ * 为什么用 -1 而不是另开一列：这张表已经为"系列"加了 6 列，值为负的时间戳不可能出现，
+ * 且谓词是 `IS NULL`（-1 天然进不了队列），不新增列就能拿到"正在处理"的语义。
+ */
+const seriesStmt = {
+  next: db.prepare(`
+    SELECT * FROM anime
+    WHERE bgm_id IS NOT NULL AND series_checked_at IS NULL
+    ORDER BY id DESC
+    LIMIT 1
+  `),
+  claim: db.prepare('UPDATE anime SET series_checked_at = -1 WHERE id = ? AND series_checked_at IS NULL'),
+  release: db.prepare('UPDATE anime SET series_checked_at = NULL WHERE id = ? AND series_checked_at = -1'),
+  resetStale: db.prepare('UPDATE anime SET series_checked_at = NULL WHERE series_checked_at = -1'),
+  countPending: db.prepare('SELECT COUNT(*) AS n FROM anime WHERE bgm_id IS NOT NULL AND series_checked_at IS NULL'),
+  countDone: db.prepare('SELECT COUNT(*) AS n FROM anime WHERE series_checked_at IS NOT NULL'),
+}
+
+/**
+ * 认领一条「待算系列」（CAS 抢占；多进程同时跑也不会重复走链/重复花钱）
+ * @returns {object|null} 抢到的那行；没任务 / 被别的进程抢先 → null
+ */
+export function claimNextSeriesPending() {
+  const row = seriesStmt.next.get()
+  if (!row) return null
+  const claimed = seriesStmt.claim.run(val(row.id))
+  return claimed.changes === 1 ? { ...row, series_checked_at: -1 } : null
+}
+
+/** 放回队列（AI 没配 / 这次失败）：把它从"处理中"改回"待算" */
+export const releaseSeries = (id) => seriesStmt.release.run(val(id))
+
+/** 启动时清理上次崩在中间留下的"处理中"标记 → 返回清掉的条数 */
+export const resetStaleSeriesClaims = () => seriesStmt.resetStale.run().changes
+
+/** 还没算系列的条数 */
+export const countSeriesPending = () => seriesStmt.countPending.get()?.n ?? 0
+
+/** 已经算系列的条数 */
+export const countSeriesDone = () => seriesStmt.countDone.get()?.n ?? 0

@@ -13,6 +13,7 @@ import { upstreamCache } from '../../cache/mem.js'
 import { config } from '../../config.js'
 import { fail } from '../../lib/errors.js'
 import { request } from '../../lib/http-client.js'
+import { logger } from '../../lib/logger.js'
 
 /** 条目详情缓存时长：评分/标签变化很慢，6 小时足够 */
 const SUBJECT_TTL_MS = 6 * 60 * 60 * 1000
@@ -58,17 +59,30 @@ export async function fetchSubject(bgmId) {
  */
 export async function fetchRelatedSubjects(bgmId) {
   if (!bgmId) throw fail('BAD_REQUEST', '缺少 bgmId')
-  const list = await upstreamCache.wrap(
-    `bgm:related:${bgmId}`,
-    () =>
-      request(`${config.bgm.base}/v0/subjects/${encodeURIComponent(bgmId)}/subjects`, {
-        headers: headers(),
-        expect: 'json',
-        timeoutMs: config.bgm.timeoutMs,
-        tip: `Bangumi 关联条目 ${bgmId}`,
-      }),
-    RELATED_TTL_MS,
-  )
+  let list
+  try {
+    list = await upstreamCache.wrap(
+      `bgm:related:${bgmId}`,
+      () =>
+        request(`${config.bgm.base}/v0/subjects/${encodeURIComponent(bgmId)}/subjects`, {
+          headers: headers(),
+          expect: 'json',
+          timeoutMs: config.bgm.timeoutMs,
+          tip: `Bangumi 关联条目 ${bgmId}`,
+        }),
+      RELATED_TTL_MS,
+    )
+  } catch (err) {
+    // 404 = 这个条目在镜像上根本不存在（实测 `GET /v0/subjects/{id}` 也 404，
+    // 因为它只出现在别人的关联列表里）→ 语义上等价于「没有关联」，**不是**故障：
+    // 走链时跳过它就行，不该让它把整条链甚至整个守护进程带崩（冒烟测踩到过）。
+    // 刻意**不缓存**空结果：万一是镜像侧临时抽风，冻 7 天会把链悄悄走断。
+    if (err?.detail?.status === 404) {
+      logger.warn({ bgmId }, 'bgm.related not-found')
+      return []
+    }
+    throw err // 超时 / 5xx 仍然抛出 —— 调用方据此放弃这次，别把半条链写进库
+  }
   return (Array.isArray(list) ? list : []).map((item) => ({
     id: String(item?.id ?? ''),
     name: item?.name || '',

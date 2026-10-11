@@ -118,7 +118,8 @@ export function pickRepresentative(chain, library) {
 export function normalizeSeriesAiOutput(raw, { extraIds = [] } = {}) {
   const allowed = new Set(extraIds.map(String))
   const namingStyle = NAMING_STYLES.includes(raw?.namingStyle) ? raw.namingStyle : null
-  const rootTitle = String(raw?.rootTitle ?? '')
+  // 键名兜底：模型有时会给 root_title / rootName 这类写法（换个模型就容易出现）
+  const rootTitle = String(raw?.rootTitle ?? raw?.root_title ?? raw?.rootName ?? '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 40)

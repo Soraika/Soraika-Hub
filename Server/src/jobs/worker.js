@@ -16,19 +16,34 @@
 import { pathToFileURL } from 'node:url'
 import { loadStoredSettings } from '../api/pages/settings.js'
 import { config } from '../config.js'
-import { claimNextMissingBgm, countGaveUp, countMissingBgm, countStale } from '../db/queue.js'
+import {
+  claimNextMissingBgm,
+  claimNextSeriesPending,
+  countGaveUp,
+  countMissingBgm,
+  countSeriesDone,
+  countSeriesPending,
+  countStale,
+  releaseSeries,
+  resetStaleSeriesClaims,
+} from '../db/queue.js'
 import { logger } from '../lib/logger.js'
 import { enrichOne, lastDailyBoundary, refreshStaleOne } from './enrich.js'
+import { fillSeriesFor } from './series.js'
 
 /** 运行状态（模块内私有：外部只能通过 getWorkerState() 拿快照，避免被随手改） */
 const workerState = {
   running: false,
   startedAt: 0,
+  /** 最后一次「最后防线」兜住的异常（`/api/health` 里看得到；非 null 就说明有 bug 要修） */
+  lastError: null,
   /** 触发①：补齐档案（bgm_id IS NULL，不限季） */
   missing: { processed: 0, enriched: 0, noBgmId: 0, failed: 0, pending: 0, gaveUp: 0 },
   /** 触发②：今年的番剧每日更新（每天固定时刻开始刷一遍整份档案） */
   daily: { at: '', year: 0, boundaryAt: 0, refreshed: 0, due: 0, doneAt: 0 },
-  /** 两个队列都空了几轮 */
+  /** 触发③：系列链补齐（新作品入库后算一次；老系列不主动重算 —— 见 CONVENTIONS.md §10.1） */
+  series: { processed: 0, done: 0, skipped: 0, pending: 0, doneTotal: 0, cooldownUntil: 0 },
+  /** 三个队列都空了几轮 */
   idleCycles: 0,
   lastError: null,
 }
@@ -38,6 +53,9 @@ export const getWorkerState = () => structuredClone(workerState)
 
 let stopped = false
 let running = false
+/** 触发③的失败退避：连续失败就指数拉长冷却（最多 10 分钟），别在上游抖动时反复打 */
+let seriesFailStreak = 0
+let seriesCooldownUntil = 0
 /** 循环的 promise（优雅停机时等它退出） */
 let loopDone = null
 /** 唤醒正在休眠的循环：停机时不用干等一个 idleMs */
@@ -65,6 +83,11 @@ export function startWorker({ log = logger } = {}) {
   stopped = false
   workerState.running = true
   workerState.startedAt = Date.now()
+  // 上次崩在中间的行（series_checked_at = -1 哨兵）放回队列，否则它们会一直卡在"处理中"
+  const released = resetStaleSeriesClaims()
+  workerState.series.pending = countSeriesPending()
+  workerState.series.doneTotal = countSeriesDone()
+  if (released) log.warn({ released }, 'worker.series release-stale')
   log.info(
     {
       gapMs: config.worker.gapMs,
@@ -75,10 +98,11 @@ export function startWorker({ log = logger } = {}) {
       missRetryHours: config.worker.missRetryHours,
       pending: countMissingBgm(),
       gaveUp: countGaveUp(),
+      seriesPending: workerState.series.pending,
     },
     'worker.start ok',
   )
-  void (loopDone = loop(log).finally(() => {
+  void (loopDone = runLoop(log).finally(() => {
     running = false
     workerState.running = false
   }))
@@ -93,6 +117,32 @@ export function stopWorker() {
   stopped = true
   wake?.()
   return loopDone ?? Promise.resolve()
+}
+
+/**
+ * 自愈包装：`loop` 里任何一步意外抛出，都不许把守护进程打死
+ * ---------------------------------------------------------------------------
+ * 冒烟测踩到过：上游 404 从 `fillSeriesFor` 抛穿 → loop 退出 → **整个进程死掉**（后台静默停摆，
+ * 表面上"服务在跑"但队列再也不推进）。所以这里再兜一层：记日志 → 清掉可能残留的"处理中"认领
+ * → 退避后重新进入 loop。
+ *
+ * 各条的失败仍然由各条自己处理（enrichOne / fillSeriesFor 都返回 outcome 而不是抛），
+ * 这一层是**最后一道**防线：一旦命中就说明某处漏了 try，属于要修的 bug。
+ */
+async function runLoop(log) {
+  while (!stopped) {
+    try {
+      await loop(log)
+      return // loop 正常退出（stopped）→ 一起收工
+    } catch (err) {
+      workerState.lastError = { at: Date.now(), code: err?.code ?? '', message: err?.message ?? String(err) }
+      log.error({ code: err?.code, status: err?.detail?.status, err: err?.message }, 'worker.loop crash')
+      const released = resetStaleSeriesClaims()
+      if (released) log.warn({ released }, 'worker.loop release-stale')
+      if (stopped) return
+      await pause(Math.max(config.worker.gapMs, 3000))
+    }
+  }
 }
 
 async function loop(log) {
@@ -114,7 +164,7 @@ async function loop(log) {
     }
 
     // ── 触发②：今年的番剧每日更新（整份档案重刷）─────────────────────────
-    // 两个触发**每轮各推进一条**：若改成「先清空补齐队列再处理每日更新」，
+    // 三个触发**每轮各推进一条**：若改成「先清空补齐队列再处理每日更新」，
     // 补齐队列长期非空时每日更新会被饿死 —— 这是刻意避免的调度方式。
     if (await refreshStaleOne({ log })) {
       workerState.daily.at = config.worker.dailyAt
@@ -133,13 +183,45 @@ async function loop(log) {
       )
     }
 
-    // ── 两个队列都没有任务：休眠一会儿再看 ───────────────────────────────
+    // ── 触发③：系列链补齐（新作品入库后算一次 —— 见 CONVENTIONS.md §10.1）──────
+    // 三个触发**每轮各推进一条**（同上：谁也不许被饿死）。
+    // AI 没配就整段跳过；失败按连续失败次数指数退避（5s→10s→… 最多 10 分钟），
+    // 免得上游抖动时一秒打三次 AI 白花钱。
+    if (config.ai.enabled && Date.now() >= seriesCooldownUntil) {
+      const seriesRow = claimNextSeriesPending()
+      if (seriesRow) {
+        const outcome = await fillSeriesFor(seriesRow, { log })
+        workerState.series.processed++
+        if (outcome === 'done') {
+          workerState.series.done++
+          seriesFailStreak = 0
+          seriesCooldownUntil = 0
+        } else {
+          // 'skipped'（AI 这次失败）/ 'ai-disabled' / 'no-bgm'：都放回队列，下轮再看
+          workerState.series.skipped++
+          releaseSeries(seriesRow.id)
+          if (outcome === 'skipped') {
+            seriesFailStreak++
+            seriesCooldownUntil = Date.now() + Math.min(600000, 5000 * 2 ** seriesFailStreak)
+          }
+        }
+        workerState.series.pending = countSeriesPending()
+        workerState.series.doneTotal = countSeriesDone()
+        workerState.series.cooldownUntil = seriesCooldownUntil
+        worked = true
+        await pause(config.worker.gapMs)
+      }
+    }
+
+    // ── 三个队列都没有任务：休眠一会儿再看 ───────────────────────────────
     if (!worked) {
       const year = config.worker.staleYear || new Date().getFullYear()
       workerState.daily.due = countStale({ year, olderThan: lastDailyBoundary() })
       workerState.idleCycles++
       workerState.missing.pending = countMissingBgm()
       workerState.missing.gaveUp = countGaveUp()
+      workerState.series.pending = countSeriesPending()
+      workerState.series.doneTotal = countSeriesDone()
       await pause(config.worker.idleMs)
     }
   }

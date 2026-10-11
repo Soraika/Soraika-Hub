@@ -120,7 +120,16 @@ log.info?.(`✓ ${row.title}｜bgmId=${x}｜字幕组 ${n} 个｜评分 ${s}（$
 6. **恢复**：进程重启后如何续跑（分界线 / 标记落库，不依赖内存状态）
 7. **可观测**：队列长度 + 已处理数进 `/api/health`，且能区分「队列空」与「永远补不了」
 
-现成模板：`db/queue.js` + `jobs/worker.js`（两个触发：补齐 / 每日更新）。
+现成模板：`db/queue.js` + `jobs/worker.js`（**三个触发**：补齐 / 每日更新 / 系列链补齐，
+**每轮各推进一条** —— 否则长队列会把短队列饿死）。
+
+触发③（系列链补齐）是「新作品入库才算一次」的队列，七条落在 `db/queue.js` 的注释里，要点：
+
+- 谓词 `bgm_id IS NOT NULL AND series_checked_at IS NULL`（谁没算过算谁）
+- 认领把 `series_checked_at` 置 **-1（哨兵 = 处理中）** 再 CAS 判定 —— 不新增列就拿到「正在处理」语义
+- 成功写真实时间；失败 / 未配 AI → worker 放回 `NULL`（下轮再来）
+- 退避在 worker 内存里做（连续失败 5s→10s→…最多 10 分钟），别在上游抖动时反复打
+- 启动时 `resetStaleSeriesClaims()` 把上次崩在中间的 `-1` 清回 `NULL`
 
 ---
 
@@ -212,8 +221,13 @@ AI 是**可选功能**：没配 `AI_API_KEY` 也照常跑 —— 相关接口回
 - **正传 / 番外由代码判定，不给 AI**：链上的是正传、链外的 `type===2` 是番外。
   AI 只做三件事：判 `namingStyle`、给 `rootTitle`、给番外归类；`index` 是输入、不许它改。
 - **AI 失败 / 未配置 → 什么都不写**（`series_checked_at` 也为空）→ 自动留在「待算」里下次重试。
-- **触发时机**：**新作品入库（后台补齐）时算一次**，链上老成员顺带归入同一个 `series_id`；
-  老系列**不主动重算**（只有新季出现才会变），需要时 `npm run series:refresh` 手工重算。
+- **`rootTitle` 空值兜底**：单部作品（链上只有它自己）AI 常不给总名 → 回落用代表行自己的展示名
+  （`title_cn || title`），顶层目录不至于叫「未归类」。键名同时兼容 `rootTitle` / `root_title` / `rootName`
+  （换个模型就容易写成后面两种）。
+- **触发时机**：**新作品入库（后台补齐）时算一次** —— 也就是 worker 的触发③（`claimNextSeriesPending`，
+  每轮一条 + 指数退避），链上老成员顺带归入同一个 `series_id`；老系列**不主动重算**（只有新季出现才会变）。
+  手工跑：`npm run series`（补到没有为止）/ `--limit=N` / `--conc=N`（并发，只影响速度）/ `--force`（全部重算）；
+  `npm run series -- --status` 只报进度、不干活。
 
 **10.2 存储（挂 `anime` 表，不建新表）**
 
