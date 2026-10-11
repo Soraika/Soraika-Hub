@@ -26,6 +26,13 @@
           </span>
           <span v-if="ratingText" class="rating-total">{{ ratingText }}</span>
         </div>
+
+        <!-- 评分还没有（后台正在补档 / 上游确实没评分）→ **不空着**：
+             占住评分位给一个脉冲占位，分数一到原位替换。
+             高度与 .rating-score 一致 + .card-topbar 的 min-height 兜底，卡片不会抖一下。 -->
+        <span v-else-if="showRating" class="rating rating-pending" title="评分待补（后台正在补档，补到就显示）">
+          <span class="pending-bar" />
+        </span>
       </slot>
     </div>
 
@@ -122,12 +129,10 @@ function onClick() {
   if (props.clickable) emit('click')
 }
 
-// 顶部信息条：左徽标、右评分有任一内容就渲染，都没有则整条不占位
+// 顶部信息条：左徽标、右评分有任一内容就渲染，都没有则整条不占位。
+// **「评分待补」也算有内容** —— 否则分数一到位整条信息条才出现，卡片会跳一下。
 const hasTopbar = computed(
-  () =>
-    Boolean(props.badge || slots.badge) ||
-    Boolean(slots.rating) ||
-    (props.showRating && (Boolean(props.scoreText) || (props.score !== null && props.score !== '')))
+  () => Boolean(props.badge || slots.badge) || Boolean(slots.rating) || props.showRating,
 )
 
 // 仅视觉分级（≥7 分加重），不参与任何业务判断
@@ -231,6 +236,29 @@ const scoreStrong = computed(() => Number(props.score) >= 7)
 }
 .rating-score.weak {
   color: var(--text-on-card-muted);
+}
+
+/* ── 评分待补（库里还没有分数：后台正在补档 / 上游确实没评分）────────────────
+   占住评分位（左对齐，和 .rating-score 同位同高），分数一到原位替换 —— 卡片不会抖。 */
+.rating-pending {
+  justify-content: flex-start;
+}
+.pending-bar {
+  width: 34px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  /* 骨架条的经典做法：底色 + 一条更亮的高光在 400% 宽的背景上平移 */
+  background: linear-gradient(90deg, var(--bg-hover) 25%, var(--border) 37%, var(--bg-hover) 63%);
+  background-size: 400% 100%;
+  animation: pending-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes pending-shimmer {
+  from {
+    background-position: 100% 50%;
+  }
+  to {
+    background-position: 0 50%;
+  }
 }
 .rating-total {
   min-width: 0;

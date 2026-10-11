@@ -9,11 +9,11 @@
  *   · 页面在但没挂 Bangumi 链接 → 写 `mikan_id` + `title`，并把 `bgm_miss_count` 顶到上限
  *                                + `bgm_checked_at = now` → 借现有退避机制：不立刻重抓，
  *                                `missRetryHours`（默认 7 天）后自动重试一次
- *   · 解析出 bgmId              → 写 `mikan_id` + `bgm_id` + `title`
+ *   · 解析出 bgmId              → 写 `mikan_id` + `bgm_id` + `title`（**`bgm_checked_at` 留空**：
+ *                                它表示"上次刷档案的时间"，留空才能让档案补齐队列立刻接手）
  *   · `year` / `season` / `weekday` → **一律留空**：首页 `listBySeason` 与每日刷新靠它们过滤，
  *                                留空才不会把「只有映射的作品」混进排期
  *   · 库里已存在的 mikan_id      → **一个字段都不动**（否则 `bgm_checked_at` 会被重置、推迟它的刷新）
- *   · 新行按 `id % 3` 把 `bgm_checked_at` 往前错开 0/1/2 天 → 避免第 3 天集中到期
  *
  * 增量：扫过的都会进库，所以「库里已有的 mikan_id」天然就是「已扫过」的集合 —— 不需要额外的进度文件。
  *
@@ -128,7 +128,10 @@ export async function runSweep(options = {}) {
           val(String(id)),
           val(bgmId),
           val(title || `mikan:${id}`), // 有 bgmId 却没标题的极少数情况：用 mikan:<id> 兜底，别丢数据
-          now - (id % 3) * 86400000, // 错开 0/1/2 天，避免集中到期
+          // `bgm_checked_at` 的语义是「上次**刷档案**的时间」—— 档案补齐（触发④）拿它当退避窗口。
+          // 有 bgmId 的新行**必须留空**：它们的 year 是空的、本来就不参与每日更新错峰，
+          // 之前写 now 只剩副作用（把新扫进来的行挡在档案队列外 7 天 → 老番没评分没标签）。
+          bgmId ? null : now,
           bgmId ? 0 : config.worker.missLimit, // 没链接的顶到上限 → 交给退避机制，7 天后才重试
           now,
           now,

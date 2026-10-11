@@ -17,8 +17,10 @@ import { pathToFileURL } from 'node:url'
 import { loadStoredSettings } from '../api/pages/settings.js'
 import { config } from '../config.js'
 import {
+  claimNextArchive,
   claimNextMissingBgm,
   claimNextSeriesPending,
+  countArchivePending,
   countGaveUp,
   countMissingBgm,
   countSeriesDone,
@@ -98,6 +100,7 @@ export function startWorker({ log = logger } = {}) {
       missRetryHours: config.worker.missRetryHours,
       pending: countMissingBgm(),
       gaveUp: countGaveUp(),
+      archivePending: countArchivePending(),
       seriesPending: workerState.series.pending,
     },
     'worker.start ok',
@@ -149,8 +152,10 @@ async function loop(log) {
   while (!stopped) {
     let worked = false
 
-    // ── 触发①：补齐档案（bgm_id IS NULL，不限季）──────────────────────────
-    const missing = claimNextMissingBgm()
+    // ── 触发①：补齐档案（两条队列，顺序即优先级）──────────────────────────
+    //   ① 没有 bgmId 的（新番、用户正在看）→ ② 有 bgmId 但缺评分/标签/简介的
+    //   （扫描进来的老番，占八成 —— 这条以前没有，导致老番季的卡片一直没评分）
+    const missing = claimNextMissingBgm() ?? claimNextArchive()
     if (missing) {
       const outcome = await enrichOne(missing, log)
       workerState.missing.processed++
@@ -220,6 +225,7 @@ async function loop(log) {
       workerState.idleCycles++
       workerState.missing.pending = countMissingBgm()
       workerState.missing.gaveUp = countGaveUp()
+      workerState.missing.archivePending = countArchivePending()
       workerState.series.pending = countSeriesPending()
       workerState.series.doneTotal = countSeriesDone()
       await pause(config.worker.idleMs)

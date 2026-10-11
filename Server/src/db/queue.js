@@ -113,6 +113,49 @@ export const takeNextStale = ({ olderThan }) => stmt.nextStale.get(val(staleYear
 /** 每日更新队列还剩多少条 */
 export const countStale = ({ olderThan }) => stmt.countStale.get(val(staleYear()), val(olderThan))?.n ?? 0
 
+/* ── 触发④：档案补齐（有 bgm_id，但评分 / 标签 / 简介还空着）─────────────────────
+ * 为什么必须有这条：**扫描进来的行只有 bgm_id 和标题**（实测 2607/3237 条，占八成），
+ * 而上面两条队列都够不着它们：
+ *   · 触发① 要 `bgm_id IS NULL`  —— 这些行有 bgm_id
+ *   · 触发② 要 `year = 当年`     —— 扫描写入时 year/season 一律留空（CONVENTIONS §10.3）
+ * 结果就是老番季的卡片没有评分、点进去面板也是空的（"有 bgm_id 却没档案"）。
+ *
+ * 谓词：`bgm_id IS NOT NULL AND (score/tags/summary 任一为空)` + 退避窗口 ——
+ *   补过之后仍然缺的（上游真没评分）隔 missRetryHours 再试一次，不会变成死循环。
+ * 处理：`jobs/enrich.js#enrichOne` 认得 `row.bgm_id` → **跳过 Mikan 详情页**，只打 Bangumi 一次。
+ */
+const archiveStmt = {
+  next: db.prepare(`
+    SELECT * FROM anime
+    WHERE bgm_id IS NOT NULL
+      AND (score IS NULL OR tags IS NULL OR summary IS NULL)
+      AND (bgm_checked_at IS NULL OR bgm_checked_at < ?)
+    ORDER BY bgm_checked_at IS NOT NULL, bgm_checked_at ASC, id DESC
+    LIMIT 1
+  `),
+  /** 认领（CAS）：只有 bgm_checked_at 仍是刚才读到的值才算抢到 */
+  claim: db.prepare(`
+    UPDATE anime SET bgm_checked_at = ?
+    WHERE id = ? AND bgm_id IS NOT NULL AND bgm_checked_at IS ?
+  `),
+  count: db.prepare(`
+    SELECT COUNT(*) AS n FROM anime
+    WHERE bgm_id IS NOT NULL AND (score IS NULL OR tags IS NULL OR summary IS NULL)
+      AND (bgm_checked_at IS NULL OR bgm_checked_at < ?)
+  `),
+}
+
+/** 认领一条「有 bgm_id 但缺档案」的（CAS 抢占；多进程同时跑不重复请求上游） */
+export function claimNextArchive() {
+  const row = archiveStmt.next.get(val(retryBefore()))
+  if (!row) return null
+  const claimed = archiveStmt.claim.run(Date.now(), val(row.id), val(row.bgm_checked_at))
+  return claimed.changes === 1 ? { ...row, bgm_checked_at: Date.now() } : null
+}
+
+/** 还缺档案的条数（看板用；与 claimNextArchive 同一谓词，保证口径一致） */
+export const countArchivePending = () => archiveStmt.count.get(val(retryBefore()))?.n ?? 0
+
 /* ── 触发③：系列链补齐 —— 「还没算过系列」的作品走一次链（CONVENTIONS.md §10.1）─────
  *
  * 与上面两个触发不同的地方，逐条对上 §5 的七条：

@@ -112,7 +112,10 @@ const stmt = {
       SUM(CASE WHEN mikan_id IS NOT NULL THEN 1 ELSE 0 END)                    AS withMikan,
       SUM(CASE WHEN bgm_id IS NOT NULL THEN 1 ELSE 0 END)                      AS withBgm,
       SUM(CASE WHEN mikan_id IS NOT NULL AND bgm_id IS NULL THEN 1 ELSE 0 END) AS mikanOnly,
-      SUM(CASE WHEN score IS NOT NULL THEN 1 ELSE 0 END)                       AS withScore
+      SUM(CASE WHEN score IS NOT NULL THEN 1 ELSE 0 END)                       AS withScore,
+      -- 有 bgm_id 但档案还空着的（评分/标签/简介任一为空）→ 触发④「档案补齐」的目标
+      SUM(CASE WHEN bgm_id IS NOT NULL AND (score IS NULL OR tags IS NULL OR summary IS NULL)
+               THEN 1 ELSE 0 END)                                              AS needArchive
     FROM anime
   `),
 }

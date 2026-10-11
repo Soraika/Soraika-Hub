@@ -263,11 +263,12 @@ AI 是**可选功能**：没配 `AI_API_KEY` 也照常跑 —— 相关接口回
   - `no-bgm-link`（页面在、有标题、没挂 Bangumi 链接）**要塞**：`bgm_id = NULL` + 保留 `title`，
     并标 **`bgm_miss_count = 3`**（≥ `worker.missLimit`）+ `bgm_checked_at = 扫描时间`
     → 借现有退避机制：不立刻重抓，`missRetryHours`（默认 7 天）后自动重试一次
-  - `ok` 的写 `mikan_id` + `bgm_id` + `title`（Mikan 的标题）
+  - `ok` 的写 `mikan_id` + `bgm_id` + `title`（Mikan 的标题），
+    **`bgm_checked_at` 留空**：它的语义是「上次刷档案的时间」，
+    留空才会被档案补齐队列（触发④）当场接手 —— 写 now 会把它挡在门外 `missRetryHours`（7 天）
   - **`year` / `season` / `weekday` 一律留空**：首页 `listBySeason` 与每日更新都靠这三个字段过滤，
     留空才不会把「只有映射的作品」混进排期
   - **库里已存在的行一个字段都不改**（否则 `bgm_checked_at` 被重置、推迟它的刷新）
-  - 首次批量灌入按 `id % 3` 把 `bgm_checked_at` 错开 0/1/2 天 → 避免第 3 天集中到期
 - **`anime.title` 来自 Mikan、`anime.title_cn` 来自 Bangumi**（`bgmToRow`），两者不是一回事；
   扫描进来的行**只有 `title`**，`title_cn` / 评分 / 简介靠后台补齐。展示优先 `title_cn`（`toAnimeDetail`）。
 - 实测规模（一次全量）：`mikanId` 有效区间 **183 ~ 4124**、`ok` **3235**、`no-bgm-link` 2132、`http-404` 33；
