@@ -5,8 +5,17 @@
  * 规则出处：CONVENTIONS.md §10.1（走链、AI 只做三件事）、§10.2（代表行）、§10.5（归档目录）。
  */
 
-/** 只有这两个关系算「正传链」的边；其余关系只收集、不展开 */
+/** 只有这两个关系算「正传链」的边；其余关系一律**不展开** */
 export const CHAIN_RELATIONS = new Set(['续集', '前传'])
+/**
+ * 收进系列、但不展开的关系（番外类）—— **必须是白名单，不能"除了续集前传都收"**
+ * ---------------------------------------------------------------------------
+ * 实测：`异世界四重奏` ↔ `OVERLORD` 之间是 **「角色出演」**（交叉作品，各自还有自己的正传链）。
+ * 一旦把它们当番外收进来，两次走链会互相把对方写进自己的 `series_id` —— 结果两边混成一个系列、
+ * `series_index` 还会撞（出现两个 index=1）。所以「衍生 / 角色出演 / 相同世界观 / 联动 / 系列 /
+ * 原作 / 片头曲 / 游戏 / 书籍…」**连收都不收**（正是 §10.1 说的"别顺着联动跑到别的作品去"）。
+ */
+export const EXTRA_RELATIONS = new Set(['番外篇', '总集篇', '剧场版'])
 /** BGM 条目类型：1 书籍 / 2 动画 / 3 音乐 / 4 游戏 / 6 三次元 —— 只要动画 */
 export const TYPE_ANIME = 2
 /** 番外归类取值（AI 只能从这个集合里选，越界的一律落「其他」） */
@@ -23,7 +32,8 @@ const pad2 = (n) => String(n).padStart(2, '0')
  * ---------------------------------------------------------------------------
  * 请求数 = 链长（进击的巨人 8 次、物语 12 次）。三条硬规则：
  *   · 只跟 `续集 / 前传` 且 `type === 2` 的边扩展；
- *   · 番外（其余 `type===2` 关系）**只收集不展开** —— 否则会顺着「联动」跑到别的作品去；
+ *   · 番外（`EXTRA_RELATIONS` 白名单里的）**只收集不展开**；白名单外的一律丢弃
+ *     —— 交叉作品（角色出演 / 衍生）会把两个系列搅在一起；
  *   · 链序 = 从「没有前驱」的那个起、沿 `next` 走出来的顺序（不看年份、不看 id、不看列表顺序）。
  * @param {{ startBgmId:string|number,
  *           loadRelated:(bgmId:string)=>Promise<Array<{id:string,name?:string,nameCn?:string,relation:string,type:number}>>,
@@ -59,7 +69,14 @@ export async function walkSeries({ startBgmId, loadRelated, log }) {
           if (item.relation === '续集') node.next = brief
           else node.prev = brief
         }
-        if (!nodes.has(other)) {
+        const known = nodes.get(other)
+        if (known) {
+          // 起点是自己先插进 nodes 的（名字为空）→ 别人提到它时顺手补上，日志里才看得见是谁
+          if (!known.name && !known.nameCn) {
+            known.name = brief.name
+            known.nameCn = brief.nameCn
+          }
+        } else {
           if (nodes.size >= MAX_CHAIN_NODES) {
             truncated = true
             continue
@@ -67,7 +84,7 @@ export async function walkSeries({ startBgmId, loadRelated, log }) {
           nodes.set(other, { ...brief, prev: null, next: null })
           if (!seen.has(other)) queue.push(other)
         }
-      } else if (!nodes.has(other) && other !== start) {
+      } else if (EXTRA_RELATIONS.has(item.relation) && !nodes.has(other) && other !== start) {
         // 番外：只收集（同一 id 可能挂在多个节点上，保留第一次见到的关系名）
         if (!extras.has(other)) extras.set(other, { ...brief, relation: item.relation })
       }

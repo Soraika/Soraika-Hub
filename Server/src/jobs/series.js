@@ -114,11 +114,25 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
   /* ④ 落库（setSeriesMeta 是 COALESCE 语义：传 null 不会抹掉已有值） */
   const now = Date.now()
   const extraRelation = new Map(ai.extras.map((e) => [e.bgmId, e.relation]))
+  const conflicts = []
+  /**
+   * 写一个成员：**首写优先** —— 这行已经归属别的系列时不抢。
+   * 两个系列之间偶尔会有同一行（番外 / 剧场版 被两边都挂着）：谁先算出来算谁的，
+   * 否则后算的会把对方的 `series_id` / `series_index` 覆盖成混合状态（实测踩过：
+   * 混出「两个 index=1」的系列）。这里只记录冲突，不报错 —— 属于可接受的数据现实。
+   */
+  const writeMember = (libRow, meta) => {
+    if (libRow.series_id && String(libRow.series_id) !== String(seriesId)) {
+      conflicts.push({ id: libRow.id, kept: libRow.series_id, wanted: seriesId })
+      return
+    }
+    setSeriesMeta(libRow.id, { seriesId, ...meta })
+  }
+
   for (const node of chain) {
     const libRow = libMap.get(node.id)
     if (!libRow) continue
-    setSeriesMeta(libRow.id, {
-      seriesId,
+    writeMember(libRow, {
       seriesIndex: node.index,
       seriesRelation: node.index === 1 ? null : '续集', // 链头没有「相对前驱」的关系
       seriesCheckedAt: now,
@@ -127,15 +141,14 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
   for (const item of extras) {
     const libRow = libMap.get(item.id)
     if (!libRow) continue
-    setSeriesMeta(libRow.id, { seriesId, seriesRelation: extraRelation.get(item.id) || '其他', seriesCheckedAt: now })
+    writeMember(libRow, { seriesRelation: extraRelation.get(item.id) || '其他', seriesCheckedAt: now })
   }
   // 根名兜底：AI 对「单部作品（链上只有它自己）」经常返回空 rootTitle ——
   // 这时用作品自己的展示名（title_cn 优先），总比顶层目录叫「未归类」强。
   // 注意：日志里报的必须是**最终落库的那个值**，否则会看到「日志说空、库里其实有」的假象。
   const rootName = ai.rootTitle || repRow?.series_root_title || repRow?.title_cn || repRow?.title || ''
   if (repRow) {
-    setSeriesMeta(repRow.id, {
-      seriesId,
+    writeMember(repRow, {
       namingStyle: ai.namingStyle || repRow.naming_style,
       seriesRootTitle: rootName,
       seriesCheckedAt: now,
@@ -153,6 +166,7 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
       inLibrary: libMap.size,
       namingStyle: ai.namingStyle || repRow?.naming_style || null,
       rootTitle: rootName,
+      ...(conflicts.length ? { conflicts } : {}),
       ms: Date.now() - startedAt,
     },
     'series.fill ok',

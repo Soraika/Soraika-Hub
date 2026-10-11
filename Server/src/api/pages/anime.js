@@ -78,6 +78,8 @@ export function getAnimeSeries(id, { log = logger } = {}) {
   if (!row.series_id) return null
 
   const members = listSeriesMembers(row.series_id)
+  // 单成员系列不值得显示「系列」chip（点开只有它自己）→ 与「没算过」一样返回 null
+  if (members.length < 2) return null
   // 根名 / 命名风格只写在「代表行」上（代表行的 id 就是 series_id）
   const representative = members.find((m) => m.id === row.series_id)
 
