@@ -78,7 +78,13 @@ try {
 
   check(home.includes('day-section'), '渲染出排期区块')
   check(home.includes(firstItem.title), `真数据卡片进了 DOM → 「${firstItem.title}」`)
-  check(home.includes(`/api/img/anime/${firstItem.id}`), `海报走统一出图入口 → /api/img/anime/${firstItem.id}`)
+  /* 海报地址有两种（都合法）：① 本地已缓存 / 连图源都没有 → 统一出图入口 `/api/img/anime/{id}`；
+     ② 有图源但本地还没缓存 → **图源直链**（浏览器先直接显示，后端同时预热存本地）。
+     所以这里验的是「后端给的那个地址确实进了 DOM」，而不是钉死某一种形态。 */
+  check(
+    (firstItem.poster || '').length > 0 && home.includes(firstItem.poster),
+    `海报地址来自后端并进了 DOM → ${String(firstItem.poster).slice(0, 64)}`,
+  )
   check(home.includes(proxied.data.season.label), `季选显示后端下发的季 → ${proxied.data.season.label}`)
   for (const label of ['周日', '周一', '周二', '周三', '周四', '周五', '周六']) {
     check(home.includes(label), `${label} 区块在（地铁 7 站都有落点）`)
@@ -154,6 +160,15 @@ try {
       panelSource.includes('PopoverPanel') &&
       panelSource.includes("emit('open', item.animeId)"),
     '系列 chip：标题区一拍即开（弹层列同系列），点某部换面板（emit open）',
+  )
+  /* 弹层**不能**挂在 chip 上：面板内层是 `overflow-x: hidden` 的滚动区，
+     绝对定位的弹层从 chip 左沿往右展开时会顶出面板右侧被裁掉（用户反馈"右边被挡住"）。
+     正确做法：挂 `.detail-header` 上、left/right 撑满面板内容宽度 → 怎么放都在面板里。 */
+  check(
+    /\.detail-header\s*\{[^}]*position:\s*relative/s.test(panelSource) &&
+      /\.detail-header \.series-popover\s*\{[^}]*left:\s*0[^}]*right:\s*0/s.test(panelSource) &&
+      !/\.chip-series\s*\{[^}]*position:\s*relative/s.test(panelSource),
+    '系列弹层挂在 header 上撑满面板宽度（挂 chip 上会被 overflow-x: hidden 裁掉右侧）',
   )
   check(
     panelSource.includes('useSeries') &&

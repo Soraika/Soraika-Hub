@@ -33,12 +33,8 @@
               <h2 class="detail-title">{{ data.title }}</h2>
               <p v-if="data.titleOriginal" class="detail-title-alt">{{ data.titleOriginal }}</p>
               <div class="detail-chips">
-                <span v-if="data.weekdayText" class="chip chip-week">{{ data.weekdayText }}</span>
-                <span v-if="data.epsText" class="chip">{{ data.epsText }}</span>
-
-                <!-- 系列：点开列同系列其它作品。放标题区（海报右边）而不是单独开卡片 ——
-                     「系列」本质是**导航**（点它换作品），不是内容；面板只有 340px 宽，
-                     单独一块占位不划算。只列库里有的成员（不在库的点不进去）。 -->
+                <!-- 系列放**最前**：它是导航（点它换作品），比星期/集数更该挨着标题。
+                     弹层不挂在这颗 chip 上（原因见 header 里 PopoverPanel 上的注释）。 -->
                 <span v-if="series && series.items.length > 1" class="chip-series">
                   <button
                     class="chip chip-series-btn"
@@ -49,25 +45,41 @@
                     @click="seriesOpen = !seriesOpen"
                   >
                     {{ seriesChipText }}
+                    <IconChevronDown class="chip-caret" :size="11" :class="{ open: seriesOpen }" />
                   </button>
-                  <PopoverPanel :open="seriesOpen" label="同系列作品" @close="seriesOpen = false">
-                    <p class="series-head">{{ series.rootTitle || '同系列' }} · {{ series.items.length }} 部</p>
-                    <button
-                      v-for="item in series.items"
-                      :key="item.animeId"
-                      class="series-item"
-                      :class="{ on: item.current }"
-                      type="button"
-                      :disabled="item.current"
-                      @click="pickSeries(item)"
-                    >
-                      <span class="series-tag">{{ seriesTagOf(item) }}</span>
-                      <span class="series-name">{{ item.title }}</span>
-                    </button>
-                  </PopoverPanel>
                 </span>
+
+                <span v-if="data.weekdayText" class="chip chip-week">{{ data.weekdayText }}</span>
+                <span v-if="data.epsText" class="chip">{{ data.epsText }}</span>
               </div>
             </div>
+
+            <!-- 系列弹层：挂在 **header** 上（不是那颗 chip 上）。
+                 面板只有 340px 宽、内层又是 `overflow-x: hidden` 的滚动区（styles/base.css
+                 的 .scroll-area）——弹层挂在 chip 上时会从 chip 左沿往右顶出面板，右侧被裁掉
+                 （用户反馈的"被挡住"）。挂 header 后用 left/right 撑满面板内容宽度：
+                 chip 换不换行、在第一行还是第二行都不会被切。 -->
+            <PopoverPanel
+              v-if="series && series.items.length > 1"
+              class="series-popover"
+              :open="seriesOpen"
+              label="同系列作品"
+              @close="seriesOpen = false"
+            >
+              <p class="series-head">{{ series.rootTitle || '同系列' }} · {{ series.items.length }} 部</p>
+              <button
+                v-for="item in series.items"
+                :key="item.animeId"
+                class="series-item"
+                :class="{ on: item.current }"
+                type="button"
+                :disabled="item.current"
+                @click="pickSeries(item)"
+              >
+                <span class="series-tag">{{ seriesTagOf(item) }}</span>
+                <span class="series-name">{{ item.title }}</span>
+              </button>
+            </PopoverPanel>
           </header>
 
           <section class="card">
@@ -169,7 +181,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { IconExternalLink, IconStarFilled, IconX } from '@tabler/icons-vue'
+import { IconChevronDown, IconExternalLink, IconStarFilled, IconX } from '@tabler/icons-vue'
 import PosterImage from '@/components/common/PosterImage.vue'
 import StateBlock from '@/components/ui/StateBlock.vue'
 import SubgroupBar from './SubgroupBar.vue'
@@ -465,6 +477,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 /* ── 头部：海报 + 标题 ────────────────────────────────────────────────── */
 .detail-header {
+  position: relative; /* 系列弹层的定位锚点（见下面 .series-popover） */
   display: flex;
   gap: 14px;
   align-items: flex-start;
@@ -514,18 +527,46 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   font-weight: 600;
 }
 
-/* ── 系列 chip（标题区）：点开列同系列作品 ───────────────────────────────
-   外层 span 只负责 `position: relative`（PopoverPanel 是绝对定位挂在它下面）。 */
+/* ── 系列 chip（标题区第一颗）：点开列同系列作品 ─────────────────────────
+   弹层**不挂在这里**（挂在 .detail-header 上）—— 面板内层是 `overflow-x: hidden`
+   的滚动区（styles/base.css 的 .scroll-area），绝对定位挂在 chip 上会被右侧裁掉。
+   这里只管这颗 chip 自己的样子。 */
 .chip-series {
-  position: relative;
   display: inline-flex;
 }
 .chip-series-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   cursor: pointer;
-  transition: color var(--dur-fast), border-color var(--dur-fast);
+  /* 它是**导航**不是状态标签：给边框 + 透明底，让人一眼看出"能点" */
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  transition: color var(--dur-fast), border-color var(--dur-fast), background var(--dur-fast);
 }
 .chip-series-btn:hover {
+  border-color: var(--accent);
+  background: var(--bg-hover);
   color: var(--accent);
+}
+.chip-caret {
+  flex-shrink: 0;
+  opacity: 0.75;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.chip-caret.open {
+  transform: rotate(180deg);
+}
+
+/* 系列弹层（挂在 .detail-header 上）：**撑满面板内容宽度**，怎么放都在面板里。
+   选择器比 PopoverPanel 自己的 `.popover` 多一层，所以能稳定覆盖它的 left/right/top。 */
+.detail-header .series-popover {
+  left: 0;
+  right: 0;
+  width: auto;
+  min-width: 0;
+  max-height: 46vh;
 }
 .series-head {
   margin: 0 0 6px;
