@@ -132,16 +132,27 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
   for (const node of chain) {
     const libRow = libMap.get(node.id)
     if (!libRow) continue
-    writeMember(libRow, {
-      seriesIndex: node.index,
-      seriesRelation: node.index === 1 ? null : '续集', // 链头没有「相对前驱」的关系
-      seriesCheckedAt: now,
-    })
+    writeMember(
+      libRow,
+      // 起点自己是剧场版/OVA（用户直接点开的）→ 不给季位，按番外类别写
+      node.demoted
+        ? { seriesRelation: node.demoted, seriesCheckedAt: now }
+        : {
+            seriesIndex: node.index,
+            seriesRelation: node.index === 1 ? null : '续集', // 链头没有「相对前驱」的关系
+            seriesCheckedAt: now,
+          },
+    )
   }
   for (const item of extras) {
     const libRow = libMap.get(item.id)
     if (!libRow) continue
-    writeMember(libRow, { seriesRelation: extraRelation.get(item.id) || '其他', seriesCheckedAt: now })
+    writeMember(libRow, {
+      // 代码判出来的类别优先（剧场版/总集篇/OVA 是按名字认的，比 AI 稳）；
+      // 没有就用 AI 的归类，再没有落「其他」。
+      seriesRelation: item.category || extraRelation.get(item.id) || '其他',
+      seriesCheckedAt: now,
+    })
   }
   // 根名兜底：AI 对「单部作品（链上只有它自己）」经常返回空 rootTitle ——
   // 这时用作品自己的展示名（title_cn 优先），总比顶层目录叫「未归类」强。

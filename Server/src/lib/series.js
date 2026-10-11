@@ -16,6 +16,24 @@ export const CHAIN_RELATIONS = new Set(['续集', '前传'])
  * 原作 / 片头曲 / 游戏 / 书籍…」**连收都不收**（正是 §10.1 说的"别顺着联动跑到别的作品去"）。
  */
 export const EXTRA_RELATIONS = new Set(['番外篇', '总集篇', '剧场版'])
+
+/**
+ * 名字判定：这条**不是正传**（剧场版 / 总集篇 / OVA）→ 返回归一类别；像正传 → null
+ * ---------------------------------------------------------------------------
+ * 为什么必须在关系之外再按名字判一次：**BGM 会把剧场版挂在「续集」边上**
+ * （实测《妄想学生会》的 剧场版 1、2 都是 TV 的「续集」）—— 只看关系，它们会被排进
+ * 正传链、分到季位（S03 / S04），而剧场版根本没有「第几季」的概念（用户直接就看出不对）。
+ * 反过来「TV 的续作是剧场版」又极其常见（EVA、鬼灭、咒术…），所以也不能一律忽略「续集」边。
+ * 兜底原则：名字看不出来的一律**当正传**（宁可多给一个季位，也别把正传踢出链）。
+ */
+export function extraCategoryOfName(name, nameCn) {
+  const text = `${name || ''} ${nameCn || ''}`.trim()
+  if (!text) return null
+  if (/^(剧场版|劇場版|电影|電影|映画|剧场|劇場)/.test(text)) return '剧场版'
+  if (/^(总集篇|總集篇|総集編|总集编)/.test(text)) return '总集篇'
+  if (/^(OVA|OAD|ONA)([^a-z]|$)/i.test(text)) return 'OVA'
+  return null
+}
 /** BGM 条目类型：1 书籍 / 2 动画 / 3 音乐 / 4 游戏 / 6 三次元 —— 只要动画 */
 export const TYPE_ANIME = 2
 /** 番外归类取值（AI 只能从这个集合里选，越界的一律落「其他」） */
@@ -46,6 +64,8 @@ export async function walkSeries({ startBgmId, loadRelated, log }) {
   const start = String(startBgmId)
   const extras = new Map()
   const seen = new Set()
+  /** 名字判定为「不是正传」的节点：id → 归一类别（剧场版/总集篇/OVA） */
+  const demoted = new Map()
   /** id → { id, name, nameCn, prev, next }（边存成「指向对方的 id + 名字」） */
   const nodes = new Map([[start, { id: start, name: '', nameCn: '', prev: null, next: null }]])
   const queue = [start]
@@ -64,6 +84,12 @@ export async function walkSeries({ startBgmId, loadRelated, log }) {
       const brief = { id: other, name: item.name || '', nameCn: item.nameCn || '' }
 
       if (CHAIN_RELATIONS.has(item.relation)) {
+        // 剧场版/总集篇/OVA 即使挂在「续集」边上也不是正传的一季：
+        // **照常建前后指针**（链要从它身上穿过去，否则它后面的季就走不到了），
+        // 只记一笔，最后拼链时不给季位。
+        const category = extraCategoryOfName(item.name, item.nameCn)
+        if (category) demoted.set(other, category)
+
         const node = nodes.get(id)
         if (node) {
           if (item.relation === '续集') node.next = brief
@@ -101,12 +127,28 @@ export async function walkSeries({ startBgmId, loadRelated, log }) {
   // 拼有序链：从「没有前驱」的那个开始，沿 next 走
   const hasPrev = new Set([...nodes.values()].filter((n) => n.prev && nodes.has(n.prev.id)).map((n) => n.id))
   let cursor = [...nodes.values()].find((n) => !hasPrev.has(n.id))
-  const chain = []
+  const ordered = []
   const visited = new Set()
   while (cursor && !visited.has(cursor.id)) {
     visited.add(cursor.id)
-    chain.push({ id: cursor.id, name: cursor.name, nameCn: cursor.nameCn, index: chain.length + 1 })
+    ordered.push({ id: cursor.id, name: cursor.name, nameCn: cursor.nameCn })
     cursor = cursor.next && nodes.has(cursor.next.id) ? nodes.get(cursor.next.id) : null
+  }
+
+  // 分流：名字判定为「不是正传」的（剧场版/总集篇/OVA）归番外、**不占季位**；
+  // 其余按链序给 1,2,3…（季位必须连续，否则归档目录会出现 S01/S03 这种空洞）。
+  // 起点就算自己是剧场版也**留在链上**（否则链空 → 没有代表行 → 什么都写不了），
+  // 但用 `demoted` 标出来，写库时按番外处理（不给季位）。
+  const chain = []
+  for (const node of ordered) {
+    const category = demoted.get(node.id) ?? null
+    if (category && node.id !== start) {
+      if (!extras.has(node.id)) {
+        extras.set(node.id, { id: node.id, name: node.name, nameCn: node.nameCn, relation: category, category })
+      }
+      continue
+    }
+    chain.push({ ...node, index: chain.length + 1, demoted: category })
   }
 
   // 走不到链上的（关系没标全 / 成环）单独回报，方便排查

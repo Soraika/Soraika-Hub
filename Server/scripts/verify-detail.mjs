@@ -137,6 +137,19 @@ try {
   const seriesBad = await get('/api/anime/abc/series')
   check(seriesBad.res.status === 400 && seriesBad.body?.error?.code === 'BAD_REQUEST', '系列接口：非法 id → 400 / BAD_REQUEST')
 
+  /* 剧场版 / 总集篇 挂在「续集」边上也不是正传的一季（BGM 就是这么标的，实测《妄想学生会》）。
+     它们必须归番外、**不给季位**，否则弹层会显示成 S03 / S04 这种根本没意义的季号。 */
+  const { extraCategoryOfName } = await import('../src/lib/series.js')
+  check(
+    extraCategoryOfName('劇場版 生徒会役員共', '剧场版 妄想学生会') === '剧场版' &&
+      extraCategoryOfName('劇場版 チェンソーマン レゼ篇') === '剧场版' &&
+      extraCategoryOfName('総集編 なにか') === '总集篇' &&
+      extraCategoryOfName('OVA なんとか') === 'OVA' &&
+      extraCategoryOfName('オーバーロードⅡ', 'OVERLORD 第二季') === null &&
+      extraCategoryOfName('石纪元 科学与未来') === null,
+    '名字判定：剧场版/总集篇/OVA 不算正传（不给季位），普通续季不受影响',
+  )
+
   /* ── 字幕组（资源区第一级）与资源列表（第二级）──────────────────────── */
   const sgRes = await get(`/api/anime/${card.id}/subgroups`)
   const subgroupData = sgRes.body?.data
