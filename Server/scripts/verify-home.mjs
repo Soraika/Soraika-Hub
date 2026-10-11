@@ -86,8 +86,8 @@ try {
     `卡片字段齐全：${fields.join(' / ')}`,
   )
   check(
-    cards.every((c) => c.poster === '' || c.poster.startsWith('/api/img/anime/')),
-    '海报一律走统一出图入口（/api/img/anime/:id）',
+    cards.every((c) => c.poster === '' || c.poster.startsWith('/api/img/anime/') || /^https?:\/\//.test(c.poster)),
+    '海报地址来自后端（统一出图入口 / 图源直链），连 bgm_id 都没有才给空',
   )
   check(
     cards.every((c) => (c.score === null ? c.ratingText === '' : c.ratingText.length > 0)),
@@ -114,19 +114,33 @@ try {
   const noRoute = await get('/api/not-exist')
   check(noRoute.res.status === 404 && noRoute.body?.error?.code === 'NOT_FOUND', '未知路由 → 404 / NOT_FOUND')
 
-  /* ── 出图：缓存头 + content-type ────────────────────────────────────── */
-  const withPoster = cards.find((c) => c.poster)
-  if (withPoster) {
-    const res = await fetch(`${base}${withPoster.poster}`)
-    check(res.ok && /^image\//.test(res.headers.get('content-type') || ''), `出图 ${withPoster.poster} → ${res.status} ${res.headers.get('content-type')}`)
+  /* ── 出图：缓存头 + content-type ──────────────────────────────────────
+   * 海报地址有两种（都合法）：**统一出图入口**（本地已缓存 / 需要中转）与
+   * **图源直链**（本地还没缓存，直接给上游地址让浏览器先显示，后端同时预热）。
+   * 两种都要真的能出图 —— 分别验。 */
+  const viaProxy = cards.find((c) => c.poster?.startsWith('/api/img/anime/'))
+  if (viaProxy) {
+    const res = await fetch(`${base}${viaProxy.poster}`)
+    check(
+      res.ok && /^image\//.test(res.headers.get('content-type') || ''),
+      `出图（统一入口）${viaProxy.poster} → ${res.status} ${res.headers.get('content-type')}`,
+    )
     check(/max-age=\d+/.test(res.headers.get('cache-control') || ''), `出图带 Cache-Control → ${res.headers.get('cache-control')}`)
+  }
+  const direct = cards.find((c) => /^https?:\/\//.test(c.poster || ''))
+  if (direct) {
+    const res = await fetch(direct.poster, { redirect: 'follow' })
+    check(
+      res.ok && /^image\//.test(res.headers.get('content-type') || ''),
+      `出图（图源直链）${String(direct.poster).slice(0, 56)}… → ${res.status} ${res.headers.get('content-type')}`,
+    )
   }
 
   /* ── 图片缓存：命名要跨库稳定、回源要校验内容 ──────────────────────────
      踩过的两个坑：① 文件名用自增 id → 重建库后 id 全变，几百张图变孤儿，
      每次都回源（缓存等于不存在）；② 回源不校验内容 → 图床防盗链返回的 200+HTML
      被当海报存下来。这里直接测嗅探函数 + 源码级钉住命名规则。 */
-  const { sniffImage } = await import('../src/rout/img.js')
+  const { sniffImage } = await import('../src/cache/poster.js')
   const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(20)])
   const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(20)])
   const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBP'), Buffer.alloc(8)])
@@ -140,13 +154,27 @@ try {
     'HTML 错误页 / 空文件一律不算图片（否则会被当海报缓存下来）',
   )
   const imgSource = readFileSync(new URL('../src/rout/img.js', import.meta.url), 'utf8')
+  const posterSource = readFileSync(new URL('../src/cache/poster.js', import.meta.url), 'utf8')
+  const homeSource = readFileSync(new URL('../src/api/pages/home.js', import.meta.url), 'utf8')
   check(
-    /const hashOf = \(src\)/.test(imgSource) && /const rel = `\$\{hashOf\(row\.poster_src\)\}/.test(imgSource),
+    /const hashOf = \(src\)/.test(posterSource) && /const rel = `\$\{hashOf\(src\)\}\$\{ext\}`/.test(posterSource),
     '缓存文件名用**海报地址哈希**（不是自增 id）—— 重建库后缓存依然命中',
   )
   check(
     imgSource.includes('findCached(id, row.poster_src)') && imgSource.includes('renameSync'),
     '命中先查磁盘（哈希名 → 旧 id 名），并把旧命名的文件迁移成哈希名',
+  )
+  check(
+    /downloadAndSave\(id, src\)/.test(imgSource) && /res\.redirect\(302, src\)/.test(imgSource),
+    '回源失败不是报错，而是 302 把原图交给浏览器（页面绝不空着）',
+  )
+  check(
+    /warmPosters\(rows\)/.test(homeSource) && /export function warmPosters/.test(posterSource),
+    '首页会**后台预热**海报（库里没图源就先问 Bangumi，拿到就存本地）',
+  )
+  check(
+    /export const posterUrlOf/.test(readFileSync(new URL('../src/lib/format.js', import.meta.url), 'utf8')),
+    '海报地址规则只有一处（lib/format.js#posterUrlOf：本地 → 图源直链 → 出图入口）',
   )
 
   /* ── 优雅停机 ──────────────────────────────────────────────────────────

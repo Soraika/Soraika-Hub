@@ -1,10 +1,19 @@
 /**
  * 出图接口 —— 全站统一的海报入口
  * ---------------------------------------------------------------------------
- * 前端只认 `/api/img/anime/{id}`：
- *   · 本地有缓存 → 直接发文件（不再打上游）
- *   · 没有 → 回源抓一次 → **校验确实是图片** → 落盘 → 路径写回数据库 → 发出去
- * 好处：换源/防盗链/加尺寸参数都只改这里；浏览器侧还能吃长缓存。
+ * 前端只认 `/api/img/anime/{id}`。**图源是一条三级链，缺哪级补哪级**：
+ *
+ *   ① 本地缓存（磁盘）→ 直接发文件，不打上游
+ *   ② 库里的 `poster_src` → 回源抓一次 → 校验确实是图片 → 落盘 → 路径写回库
+ *   ③ `poster_src` 为空 → **现场问 Bangumi 要封面**（`bgm_id` → `images.large/common`）
+ *      → 拿到就回写 `poster_src`（这条上游请求一辈子只花一次）→ 再走 ②
+ *   ④ 回源失败（防盗链 / 图床挂 / 图已失效）→ **302 把原图交给浏览器**去取
+ *      （浏览器带的是本站 Referer，常常反而能拿到；拿不到也只是裂图，
+ *        前端 PosterImage 的 onerror 会兜到占位底纹 —— 绝不会"接口报错、页面空着"）
+ *
+ * 为什么必须有 ③：**扫描出来的行只有 `bgm_id`、没有封面**（实测 2607/3237 条，占八成）。
+ * 早先写成「没有 poster_src 就给空地址 / 直接 404」，结果八成作品直接显示占位底纹 ——
+ * 就是用户看到的"没有图"。图源的兜底属于后端，前端只认这一个入口。
  *
  * 两个**必须**按这里实现、不能省的判断（都踩过）：
  *   1. 命中先看**磁盘**，不是看 `poster_path` 字段。
@@ -17,132 +26,27 @@
  *      URL 后缀也不可信（`/images/x.jpg?width=400`、Bangumi 的 hash 名都要靠内容判断）。
  */
 import { Router } from 'express'
-import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { readdirSync, renameSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import {
+  MAX_BYTES,
+  MIN_BYTES,
+  TYPE_BY_EXT,
+  cacheDir,
+  downloadAndSave,
+  ensurePosterSrc,
+  hashOf,
+  findCached,
+} from '../cache/poster.js'
 import { config } from '../config.js'
 import { findById, setPosterPath } from '../db/anime.js'
 import { fail } from '../lib/errors.js'
 import { logger } from '../lib/logger.js'
-import { request } from '../lib/http-client.js'
 
 export const imgRouter = Router()
 
-const cacheDir = resolve(process.cwd(), config.image.dir)
-mkdirSync(cacheDir, { recursive: true })
 
-const TYPE_BY_EXT = {
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.png': 'image/png',
-  '.webp': 'image/webp',
-  '.gif': 'image/gif',
-  '.avif': 'image/avif',
-}
-/** 磁盘上会去找的扩展名（按可能性排序） */
-const CACHE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif']
-/** 比这个还小的文件不可能是海报（是 HTML 错误页 / 空文件） */
-const MIN_BYTES = 512
-/** 单张上限：超过就当上游返回了别的东西，别往磁盘里灌 */
-const MAX_BYTES = 12 * 1024 * 1024
-
-/**
- * 图片内容嗅探：返回**真实**扩展名，不是图片返回 null
- * 支持 JPEG / PNG / GIF / WebP / AVIF —— 覆盖 Mikan 与 Bangumi 两个源。
- */
-export function sniffImage(buf) {
-  if (!Buffer.isBuffer(buf) || buf.length < 12) return null
-  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return '.jpg'
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return '.png'
-  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return '.gif'
-  if (buf.subarray(0, 4).toString('latin1') === 'RIFF' && buf.subarray(8, 12).toString('latin1') === 'WEBP') {
-    return '.webp'
-  }
-  if (buf.subarray(4, 8).toString('latin1') === 'ftyp') return '.avif'
-  return null
-}
-
-/** 从原始地址推扩展名（仅供嗅探失败时兜底使用） */
-function pickExt(src) {
-  try {
-    const ext = new URL(src).pathname.slice(src.lastIndexOf('.')).toLowerCase()
-    return CACHE_EXTS.includes(ext) ? (ext === '.jpeg' ? '.jpg' : ext) : '.jpg'
-  } catch {
-    return '.jpg'
-  }
-}
-
-/** URL 的 origin（图床普遍校验 Referer，不带就给你防盗链占位图） */
-function refererOf(src) {
-  try {
-    return `${new URL(src).origin}/`
-  } catch {
-    return ''
-  }
-}
-
-/**
- * 缓存文件名 —— 用**海报地址的哈希**
- * ---------------------------------------------------------------------------
- * 为什么不用 `{id}`（自增主键）：它**不跨库稳定**。重建库 / 重新抓取后 id 全变，
- * 磁盘上抓好的几百张图瞬间变成对不上的孤儿 —— 实测 469 条里 313 条正是如此：
- * 文件都在、体积也正常，但按 id 找不到，于是每次访问都回源，缓存等于不存在。
- * 海报地址才是稳定身份：同一个 src 永远对应同一张图。
- * 旧命名（`{id}.jpg`）仍然兼容查找，命中后由 `healPosterPaths` 迁到新名字。
- */
-const hashOf = (src) => createHash('sha1').update(String(src)).digest('hex').slice(0, 16)
-
-/**
- * 在磁盘上找这个作品的缓存文件
- * 顺序：新命名（哈希）→ 旧命名（{id}）；都不看数据库字段。
- * 顺手清掉明显是坏的文件（HTML 错误页 / 空文件）——留着只会让人以为"缓存过了"。
- */
-function findCached(id, src) {
-  const key = hashOf(src)
-  const candidates = [...CACHE_EXTS.map((ext) => `${key}${ext}`), ...CACHE_EXTS.map((ext) => `${id}${ext}`)]
-  for (const name of candidates) {
-    const file = join(cacheDir, name)
-    if (!existsSync(file)) continue
-    const { size } = statSync(file)
-    if (size >= MIN_BYTES && size <= MAX_BYTES) return { file, name }
-    try {
-      unlinkSync(file)
-      logger.warn({ file, size }, 'img.cache 丢掉坏文件')
-    } catch {
-      /* 删不掉也不影响：下面会重新回源覆盖它 */
-    }
-  }
-  return null
-}
-
-/** 同一个 id 的回源只跑一次（并发进来时共用同一个 Promise） */
-const inflight = new Map()
-
-async function fetchPoster(id, src) {
-  if (inflight.has(id)) return inflight.get(id)
-  const task = request(src, {
-    expect: 'buffer',
-    timeoutMs: 20000,
-    retries: 1,
-    tip: '海报回源',
-    headers: { Accept: 'image/*,*/*;q=0.8', ...(refererOf(src) ? { Referer: refererOf(src) } : {}) },
-  })
-    .then((buf) => {
-      const ext = sniffImage(buf)
-      if (!ext) {
-        throw fail('UPSTREAM', `回源拿到的不是图片（${buf.length} 字节，可能是防盗链或图片已失效）`, {
-          url: src,
-        })
-      }
-      if (buf.length > MAX_BYTES) throw fail('UPSTREAM', `回源的图片过大（${buf.length} 字节）`, { url: src })
-      return { buf, ext }
-    })
-    .finally(() => inflight.delete(id))
-  inflight.set(id, task)
-  return task
-}
-
-/** GET /api/img/anime/:id */
+/** GET /api/img/anime/:id —— 图源三级链：本地缓存 → poster_src → 现场问 Bangumi */
 imgRouter.get('/img/anime/:id', async (req, res, next) => {
   try {
     const id = Number(req.params.id)
@@ -150,26 +54,33 @@ imgRouter.get('/img/anime/:id', async (req, res, next) => {
 
     const row = findById(id)
     if (!row) throw fail('NOT_FOUND', `没有 id=${id} 的作品记录`)
-    if (!row.poster_src) throw fail('NOT_FOUND', '这条作品没有海报地址')
 
     res.setHeader('Cache-Control', `public, max-age=${config.image.maxAgeSec}`)
 
-    // 1) 磁盘命中 → 直接发（顺便把数据库里缺失的路径补上）
-    const hit = findCached(id, row.poster_src)
-    if (hit) {
-      if (row.poster_path !== hit.name) setPosterPath(id, hit.name)
-      res.setHeader('Content-Type', TYPE_BY_EXT[hit.name.slice(hit.name.lastIndexOf('.'))] || 'image/jpeg')
-      return res.sendFile(hit.file)
+    // ① 磁盘命中 → 直接发（顺便把数据库里缺失的路径补上；不回源、不问 BGM）
+    if (row.poster_src) {
+      const hit = findCached(id, row.poster_src)
+      if (hit) {
+        if (row.poster_path !== hit.name) setPosterPath(id, hit.name)
+        res.setHeader('Content-Type', TYPE_BY_EXT[hit.name.slice(hit.name.lastIndexOf('.'))] || 'image/jpeg')
+        return res.sendFile(hit.file)
+      }
     }
 
-    // 2) 回源 → 校验 → 落盘 → 回写路径
-    const { buf, ext } = await fetchPoster(id, row.poster_src)
-    const rel = `${hashOf(row.poster_src)}${ext}`
-    writeFileSync(join(cacheDir, rel), buf)
-    setPosterPath(id, rel)
+    // ② 定图源：库里存的优先（那是当初选定的那张），没有就问 Bangumi 要一次
+    const src = row.poster_src || (await ensurePosterSrc(row))
+    if (!src) throw fail('NOT_FOUND', `id=${id} 没有可用海报（库里没存、Bangumi 也没给）`)
 
-    res.setHeader('Content-Type', TYPE_BY_EXT[ext] || 'image/jpeg')
-    res.send(buf)
+    // ③ 回源 → 校验 → 落盘 → 回写（与列表/详情的后台预热共用同一套实现）
+    try {
+      const { buf, ext } = await downloadAndSave(id, src)
+      res.setHeader('Content-Type', TYPE_BY_EXT[ext] || 'image/jpeg')
+      return res.send(buf)
+    } catch (err) {
+      // ④ 我们抓不动（防盗链 / 图床挂 / 图已失效）→ 把原图地址交给浏览器自己取
+      logger.warn({ id, src, err: err.message }, 'img 回源失败 → 302 交浏览器')
+      return res.redirect(302, src)
+    }
   } catch (err) {
     next(err)
   }

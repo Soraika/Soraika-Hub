@@ -6,7 +6,7 @@
  * poster 同样走统一出图入口：/api/img/anime/{id}（缓存 / 防盗链 / 换源都在后端）。
  */
 import { config } from '../../config.js'
-import { DAY_META, compactNumber, parseTags, ratingText, scoreText, themeTags } from '../../lib/format.js'
+import { DAY_META, compactNumber, parseTags, posterUrlOf, ratingText, scoreText, themeTags } from '../../lib/format.js'
 
 /**
  * 一行 anime 记录 → 详情面板数据
@@ -30,7 +30,7 @@ export function toAnimeDetail(row) {
     id: row.id,
     title,
     titleOriginal,
-    poster: row.poster_src ? `/api/img/anime/${row.id}` : '',
+    poster: posterUrlOf(row),
     score: hasScore ? row.score : null,
     scoreText: hasScore ? scoreText(row.score) : '',
     ratingText: hasScore ? ratingText(total) : '',

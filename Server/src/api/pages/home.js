@@ -8,6 +8,7 @@
  *      「mikanId → bgmId（权威）→ Bangumi 评分」并回写；补进去的评分下次请求就能看到。
  *      首页请求路径里**不做任何评分补齐**（不阻塞、也不用猜测式标题匹配）
  */
+import { warmPosters } from '../../cache/poster.js'
 import { config } from '../../config.js'
 import { listBySeason, maxUpdatedAt, upsertManyFromMikan } from '../../db/anime.js'
 import { logger } from '../../lib/logger.js'
@@ -41,6 +42,10 @@ export async function getHomeSchedule({ year, season, force = false, log = logge
     rows = listBySeason(target.year, target.season)
     // 评分/字幕组由后台守护进程逐条补齐（jobs/worker.js），这里不等它
   }
+
+  // 库里没图源的行：后台把封面 / 本地缓存补上（前端拿到的仍是直链，不用等）——
+  // 第一次点开就有图，第二次这条就已经是本地缓存了（见 cache/poster.js）
+  warmPosters(rows)
 
   // debug 级别：带上 requestId（请求路径传的是 req.log），排「某个请求为什么慢」时很有用
   log.debug(

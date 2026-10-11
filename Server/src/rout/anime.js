@@ -20,9 +20,9 @@ function animeIdOf(req) {
  * id 是**作品主键**，不是 mikanId / bgmId ——
  * 来源 id 会随换源变，主键不会，面板/路由/缓存都用它才有稳定身份。
  */
-animeRouter.get('/anime/:id', (req, res, next) => {
+animeRouter.get('/anime/:id', async (req, res, next) => {
   try {
-    res.json({ ok: true, data: getAnimeDetail(animeIdOf(req), { log: req.log }) })
+    res.json({ ok: true, data: await getAnimeDetail(animeIdOf(req), { log: req.log }) })
   } catch (err) {
     next(err)
   }
@@ -30,11 +30,12 @@ animeRouter.get('/anime/:id', (req, res, next) => {
 
 /**
  * GET /api/anime/:id/series
- * 同系列的作品（面板标题旁的「系列」chip 点开用）。**没算过系列时 data 为 null**，不是错误。
+ * 同系列的作品（面板标题旁的「系列」chip 点开用）。**没算过就现场跑一遍走链**；
+ * 真的没有别的成员时 data 为 null（不是错误）。
  */
-animeRouter.get('/anime/:id/series', (req, res, next) => {
+animeRouter.get('/anime/:id/series', async (req, res, next) => {
   try {
-    res.json({ ok: true, data: getAnimeSeries(animeIdOf(req), { log: req.log }) })
+    res.json({ ok: true, data: await getAnimeSeries(animeIdOf(req), { log: req.log }) })
   } catch (err) {
     next(err)
   }

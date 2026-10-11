@@ -95,6 +95,17 @@ const stmt = {
   `),
   /** 出图接口把本地缓存路径写回来（下次直接读文件，不再打上游） */
   updatePosterPath: db.prepare('UPDATE anime SET poster_path = ?, updated_at = ? WHERE id = ?'),
+  /**
+   * 出图接口回写图源（现场问 Bangumi 拿到的封面 / 换过源）与本地缓存路径
+   * 两个值都是 COALESCE 语义：传 null 不覆盖已有值 —— 只想改一个就只传一个
+   */
+  updatePosterSource: db.prepare(`
+    UPDATE anime SET
+      poster_src  = COALESCE(?, poster_src),
+      poster_path = COALESCE(?, poster_path),
+      updated_at  = ?
+    WHERE id = ?
+  `),
   stats: db.prepare(`
     SELECT
       COUNT(*)                                                                 AS total,
@@ -181,6 +192,14 @@ export const findByBgmId = (bgmId) => stmt.byBgmId.get(val(bgmId)) ?? null
 export const findById = (id) => stmt.byId.get(val(id)) ?? null
 /** 出图接口落地本地缓存后回写路径 */
 export const setPosterPath = (id, posterPath) => stmt.updatePosterPath.run(val(posterPath), Date.now(), val(id))
+
+/**
+ * 出图接口回写图源与缓存路径（任一传 null = 不改那一项）
+ * 两处用到：① 现场问 Bangumi 拿到封面 → 把 `poster_src` 存下来（这条上游请求一辈子只花一次）
+ *          ② 回源成功落盘 → 把本地文件名存下来
+ */
+export const setPosterSource = (id, { src = null, path = null } = {}) =>
+  stmt.updatePosterSource.run(val(src), val(path), Date.now(), val(id))
 
 /** 映射/评分覆盖率统计（CLI 与排错用） */
 export const stats = () => stmt.stats.get()

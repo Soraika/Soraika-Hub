@@ -12,6 +12,7 @@ import {
   getAnimeDetailPage,
   getAnimeRSSPage,
   getAnimeReleaseFromRSS,
+  getAnimeTitle,
   getMikanSeasonPage,
   getSeasonAnimeList,
   getSubGroupList,
@@ -19,6 +20,7 @@ import {
 import { config } from '../../config.js'
 import { fail } from '../../lib/errors.js'
 import { mikanToRow, releaseToItem } from '../../lib/format.js'
+import { logger } from '../../lib/logger.js'
 
 /**
  * 抓某季排期 → anime 行数组
@@ -26,7 +28,10 @@ import { mikanToRow, releaseToItem } from '../../lib/format.js'
  * @param {string} season 春 / 夏 / 秋 / 冬
  */
 export async function fetchSeasonSchedule(year, season) {
-  const html = await getMikanSeasonPage(config.mikan.base, year, season)
+  const html = await getMikanSeasonPage(config.mikan.base, year, season, 3, (text) =>
+    // 空壳页校验：真季度页一定有番剧条目，一条都没有就是"这次没取到"（要重试，而不是当成空季）
+    (getSeasonAnimeList(text)?.length ?? 0) > 0,
+  )
   const list = getSeasonAnimeList(html)
 
   if (!Array.isArray(list) || list.length === 0) {
@@ -44,15 +49,45 @@ export async function fetchSeasonSchedule(year, season) {
  * 档案解析：Mikan 详情页一次请求，同时拿「权威 bgmId + 字幕组列表」
  * —— 后台守护进程「补齐整部作品档案」的入口（架构图里「传入 mikanid → 番名/bgmid/海报/字幕组列表」那条）
  * 注意：bgmId 可能为空（详情页没挂 Bangumi 链接）、字幕组可能为空（新番常见）—— 都是正常情况，照常返回。
+ *
+ * **两层重试**（"字幕组偶尔读不到"的解法）：
+ *   1. 传输层：超时 / 5xx / 429 / 空响应 —— 由 clients/Mikan.js 重试（指数退避）
+ *   2. 解析层：**200 但连标题都解析不出来** = 上游给了空壳页（反爬 / 限流 / 网关抽风），
+ *      这不是"这部没有字幕组"，而是"这次没取到" → 这里再试一次
+ * 再加一层并发去重：同一个 mikanId 只抓一次（面板连点 / 两个接口同时问都只花一次请求）。
  * @param {string|number} mikanId
  * @returns {Promise<{ bangumiId: string|null, subgroups: Array<{subgroupName:string, subgroupRSSId:string, subgroupMikanId:string}> }>}
  */
 export async function fetchAnimeProfile(mikanId) {
-  const html = await getAnimeDetailPage(config.mikan.base, mikanId)
-  return {
-    bangumiId: getAnimeBangumiId(html)?.bangumiId ?? null,
-    subgroups: getSubGroupList(html) ?? [],
+  const key = String(mikanId)
+  if (profileInflight.has(key)) return profileInflight.get(key)
+  const task = loadProfile(key).finally(() => profileInflight.delete(key))
+  profileInflight.set(key, task)
+  return task
+}
+
+/** 详情页解析重试次数（传输层已在 client 里重试过，这里只兜"空壳页"） */
+const PROFILE_ATTEMPTS = 2
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const profileInflight = new Map()
+
+async function loadProfile(mikanId) {
+  let htmlLength = 0
+  for (let attempt = 1; attempt <= PROFILE_ATTEMPTS; attempt++) {
+    const html = await getAnimeDetailPage(config.mikan.base, mikanId)
+    const bangumiId = getAnimeBangumiId(html, { quiet: attempt > 1 })?.bangumiId ?? null
+    const subgroups = getSubGroupList(html) ?? []
+    // 真页面必有标题：标题都解析不出来 → 空壳页，重试
+    if (getAnimeTitle(html)) return { bangumiId, subgroups }
+    htmlLength = html?.length ?? 0
+    if (attempt < PROFILE_ATTEMPTS) {
+      const wait = 500 * 2 ** (attempt - 1)
+      logger.warn({ mikanId, attempt, htmlLength, wait }, 'mikan.profile 空壳页 → 重试')
+      await sleep(wait)
+    }
   }
+  logger.error({ mikanId, htmlLength }, 'mikan.profile 反复解析为空（上游可能改版 / 限流）')
+  return { bangumiId: null, subgroups: [] }
 }
 
 /**

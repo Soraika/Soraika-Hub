@@ -103,6 +103,28 @@ export function metaText({ year, tags, watching }) {
 export const absoluteUrl = (base, path) =>
   !path ? null : /^https?:\/\//i.test(path) ? path : `${base}${path.startsWith('/') ? '' : '/'}${path}`
 
+/**
+ * 卡片 / 详情的海报地址 —— **本地有就用本地，没有就直接给图源直链**
+ * ---------------------------------------------------------------------------
+ *   ① 本地已缓存（`poster_path`）→ `/api/img/anime/{id}`：走本地文件，最快、不吃防盗链
+ *   ② 有图源但没缓存         → **图源直链**：浏览器立刻就能显示，不用等我们中转一次；
+ *                              同时 `cache/poster.js#warmPoster` 在后台把图存到本地，
+ *                              下一条就变成本地命中（这就是「直接返回 url，同时后端也下载」）
+ *   ③ 既没缓存也没图源       → `/api/img/anime/{id}`：交出图接口现场问 Bangumi 要封面
+ *                              （扫描来的行只有 bgm_id，占八成）—— 依然不空着
+ *   ④ 连 bgm_id 都没有       → `''`（前端显示占位底纹，这是真的没有）
+ *
+ * 为什么不是「一律走 /api/img/anime/{id}」：那样每张图都要等我们回源一次（首页一屏
+ * 十几张就是十几秒的等待），而且图源挂了我们才 302，用户先看到的是一片占位底纹。
+ * 直链 + 后台预热是"看得见 + 存得下"两头都要。
+ */
+export const posterUrlOf = (row) => {
+  if (!row?.id) return ''
+  if (row.poster_path) return `/api/img/anime/${row.id}`
+  if (row.poster_src) return row.poster_src
+  return row.bgm_id ? `/api/img/anime/${row.id}` : ''
+}
+
 /** 标签列存的是 JSON 字符串，读出来还原成数组 */
 export function parseTags(value) {
   if (!value) return []

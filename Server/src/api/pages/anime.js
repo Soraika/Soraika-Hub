@@ -1,80 +1,116 @@
 /**
  * 作品详情聚合层 —— 侧边面板点开后要的那一份档案
  * ---------------------------------------------------------------------------
- * 与首页聚合层的区别：**详情本身纯读库，不碰上游**。
- *   1. 面板要秒开：点海报只走一次 SQLite 主键查询，不触发任何抓取
- *   2. 内容来自后台守护进程（jobs/worker.js）持续补齐的档案：评分 / 标签 / 简介 / 集数。
- *      有就是有、没有就是没有 —— 缺的块不显示，也不在这里现场去猜（为什么见 sources/bgm.js）
- *   3. 字幕组 / 资源列表是**另外两条接口**（getAnimeSubgroups / getSubgroupReleases）：
- *      它们要打上游、会慢，不能拖累「点开就有」的详情；资源列表还带进程内缓存。
+ * 与首页聚合层的区别：首页那一层只管排期；这一层是**面板看到啥就保证有啥**。
+ *
+ *   1. 面板要秒开：点海报只走一次 SQLite 主键查询
+ *   2. **缺字段就现取一遍**（CONVENTIONS.md §10.4）：评分 / 标签 / 简介为空时，现场
+ *      复用后台那套 `enrichOne()`（Mikan 详情页 + Bangumi 条目）补齐再读回来 ——
+ *      补一次之后库里就有了，后续请求不再打上游。同一条 5 分钟内只补一次（防抖）。
+ *   3. 字幕组 / 资源列表是**另外两条接口**，而且**每次都直接问上游**（不吃库、不缓存）：
+ *      新番随时加字幕组、种子上新很频繁，只有现场取才是最新的；
+ *      抓到顺手落库（下载队列 / 归档要用这些 id），但**不拿库里的当答案**。
+ *   4. 系列：没算过就现场跑一遍走链（用户看了啥、库里没有就补一遍）
  */
+import { warmPoster } from '../../cache/poster.js'
 import { findById, listSeriesMembers, listSubgroups, replaceSubgroups } from '../../db/anime.js'
+import { enrichOne } from '../../jobs/enrich.js'
+import { fillSeriesFor } from '../../jobs/series.js'
 import { fail } from '../../lib/errors.js'
 import { logger } from '../../lib/logger.js'
-import { upstreamCache } from '../../cache/mem.js'
 import { toAnimeDetail, toSubgroupItem } from '../mappers/anime.js'
 import { fetchAnimeProfile, fetchSubgroupReleases } from '../sources/mikan.js'
 
-/** 资源列表的进程内缓存时长：种子上新不频繁，5 分钟足够，省得反复打上游 */
-const RELEASES_TTL_MS = 5 * 60 * 1000
+/** 现场补档的防抖窗口：同一条作品 5 分钟内只补一次（连点 / 来回切换不重复打上游） */
+const ENRICH_DEBOUNCE_MS = 5 * 60 * 1000
+const enrichedAt = new Map()
+
+/** 档案字段缺了就该现取：有 bgm_id 才可能补到东西（评分 / 标签 / 简介任一为空） */
+const needsEnrich = (row) =>
+  Boolean(row?.bgm_id) && (row.score == null || row.tags == null || row.summary == null)
 
 /**
- * 按作品主键取详情
+ * 按作品主键取详情（缺字段现场补一次再返回）
  * @param {number|string} id 作品主键（前端卡片里的 item.id）
  * @param {{ log?: object }} [options]
  */
-export function getAnimeDetail(id, { log = logger } = {}) {
-  const row = findById(id)
-  if (!row) throw fail('NOT_FOUND', `没有 id=${id} 的作品记录`)
+export async function getAnimeDetail(id, { log = logger } = {}) {
+  const numId = Number(id)
+  let row = findById(numId)
+  if (!row) throw fail('NOT_FOUND', `没有 id=${numId} 的作品记录`)
 
-  log.debug({ id }, 'anime.detail ok')
+  warmPoster(row) // 海报已在 DTO 里给了直链，这里只是顺手把它存到本地
+
+  const last = enrichedAt.get(numId) ?? 0
+  if (needsEnrich(row) && Date.now() - last > ENRICH_DEBOUNCE_MS) {
+    enrichedAt.set(numId, Date.now())
+    const outcome = await enrichOne(row, log)
+    if (outcome === 'enriched') {
+      row = findById(numId) ?? row // 补完读回来（这次响应就带上评分/标签/简介）
+      log.info({ id: numId }, 'anime.detail 现场补齐')
+    }
+  }
+
+  log.debug({ id: numId }, 'anime.detail ok')
   return toAnimeDetail(row)
 }
 
 /**
- * 作品下的字幕组列表
+ * 作品下的字幕组列表 —— **每次都直接问 Mikan**（不吃库、不缓存）
  * ---------------------------------------------------------------------------
- * 库里优先（后台补齐时连同档案一起落的字幕组）；库里为空时**现场抓一次** Mikan 详情页补上：
- *   · 新番刚开播、或那 3 条拿不到 bgmId 的作品，后台可能还没轮到，但面板不该因此空着
- *   · 抓失败只 warn 并返回空列表（面板显示「暂无字幕组」），不把整块搞成错误态 ——
- *     上游抖一下不至于让用户连评分简介都看不了
- * @returns {Promise<{ items: Array<{id:number,name:string,mikanId:string,rssId:string}>, source: 'db'|'mikan' }>}
+ * 为什么不吃库：新番随时会加字幕组、旧的也可能改名换 RSS id，只有现场取才是最新的。
+ * 抓到就 `replaceSubgroups` 落库（下载队列 / 归档要用这些 id），但**不拿库里的当答案**。
+ * 上游抓不动时**退化到库里已有的**（有比没有好，面板不至于空着）+ 把失败记进日志 ——
+ * 连着失败就是 Mikan 那边的问题，不该让用户看空列表。
+ * @returns {Promise<{ items: Array<{id:number,name:string,mikanId:string,rssId:string}>, source: 'mikan'|'db-fallback'|'none' }>}
  */
 export async function getAnimeSubgroups(id, { log = logger } = {}) {
   const row = findById(id)
   if (!row) throw fail('NOT_FOUND', `没有 id=${id} 的作品记录`)
 
-  let rows = listSubgroups(id)
-  let source = 'db'
-
-  if (!rows.length && row.mikan_id) {
-    try {
-      const profile = await fetchAnimeProfile(row.mikan_id)
-      if (profile.subgroups.length) {
-        replaceSubgroups(id, profile.subgroups, row.mikan_id)
-        rows = listSubgroups(id)
-        source = 'mikan'
-      }
-    } catch (err) {
-      log.warn({ id, mikanId: row.mikan_id, err: err.message }, 'anime.subgroups fetch-fail')
-    }
+  if (!row.mikan_id) {
+    log.warn({ id }, 'anime.subgroups no-mikan-id')
+    return { items: [], source: 'none' }
   }
 
-  log.debug({ id, source, total: rows.length }, 'anime.subgroups ok')
-  return { items: rows.map(toSubgroupItem), source }
+  try {
+    const profile = await fetchAnimeProfile(row.mikan_id)
+    if (profile.subgroups.length) replaceSubgroups(id, profile.subgroups, row.mikan_id)
+    const items = listSubgroups(id).map(toSubgroupItem)
+    log.debug({ id, total: items.length, source: 'mikan' }, 'anime.subgroups ok')
+    return { items, source: 'mikan' }
+  } catch (err) {
+    const items = listSubgroups(id).map(toSubgroupItem)
+    log.warn({ id, mikanId: row.mikan_id, err: err.message, fallback: items.length }, 'anime.subgroups fetch-fail')
+    return { items, source: 'db-fallback' }
+  }
 }
 
 /**
  * 同系列的作品 —— 面板标题旁「系列」chip 点开的那一份（CONVENTIONS.md §10.2）
  * ---------------------------------------------------------------------------
+ * **没算过就现场跑一遍**：用户看到哪部、库里系列字段还空着，就当场走一次链
+ * （1~8 次 1 跳 + 可能的 1 次 AI），顺带把链上其它已在库的成员一起标好。
+ * 跑完照常返回；失败 / 真的没有别的成员 → 返回 null（前端据此不渲染 chip）。
+ *
  * 只列**已在库**的成员：不在库的没有作品主键、点不进去，显示了也是死条目（前端「缺了就是无」）。
- * 一条 `WHERE series_id = ?` 就够（`listSeriesMembers` 已按「正传在前、番外在后」排好）。
- * **没算过系列时返回 null**（不是错误）—— 前端据此不渲染 chip。
  * @param {number|string} id 作品主键
  */
-export function getAnimeSeries(id, { log = logger } = {}) {
-  const row = findById(id)
-  if (!row) throw fail('NOT_FOUND', `没有 id=${id} 的作品记录`)
+export async function getAnimeSeries(id, { log = logger } = {}) {
+  const numId = Number(id)
+  let row = findById(numId)
+  if (!row) throw fail('NOT_FOUND', `没有 id=${numId} 的作品记录`)
+
+  if (!row.series_checked_at && row.bgm_id) {
+    const outcome = await fillSeriesFor(row, { log })
+    if (outcome === 'done') {
+      row = findById(numId) ?? row
+      log.info({ id: numId }, 'anime.series 现场补齐')
+    } else {
+      log.debug({ id: numId, outcome }, 'anime.series 现场补齐未成（照现状返回）')
+    }
+  }
+
   if (!row.series_id) return null
 
   const members = listSeriesMembers(row.series_id)
@@ -83,7 +119,7 @@ export function getAnimeSeries(id, { log = logger } = {}) {
   // 根名 / 命名风格只写在「代表行」上（代表行的 id 就是 series_id）
   const representative = members.find((m) => m.id === row.series_id)
 
-  log.debug({ id, seriesId: row.series_id, members: members.length }, 'anime.series ok')
+  log.debug({ id: numId, seriesId: row.series_id, members: members.length }, 'anime.series ok')
   return {
     rootTitle: representative?.series_root_title || '',
     namingStyle: representative?.naming_style || null,
@@ -101,11 +137,12 @@ export function getAnimeSeries(id, { log = logger } = {}) {
 }
 
 /**
- * 某字幕组的资源列表（种子）
+ * 某字幕组的资源列表（种子）—— **每次直接问上游，不缓存**
  * ---------------------------------------------------------------------------
+ * 为什么去掉缓存：种子上新很频繁，5 分钟缓存经常让用户看到旧列表（"怎么还没有新的"）。
+ * 一次 RSS 请求很便宜，直接取最新的。
  * 归属校验不能省：subgroupId 来自前端，必须先确认它**属于这部作品**，
  * 否则改个数字就能读出别部作品的资源（同一字幕组在不同作品下的 RSS id 是不同的）。
- * 结果按「作品 + 字幕组」缓存 5 分钟 —— 面板里来回点字幕组不会反复打上游。
  * @param {number|string} id 作品主键
  * @param {number|string} subgroupId subgroup 表的行主键
  */
@@ -125,14 +162,8 @@ export async function getSubgroupReleases(id, subgroupId, { log = logger } = {})
     return { subgroup: toSubgroupItem(subgroup), items: [], total: 0, cached: false }
   }
 
-  const key = `mikan:releases:${row.mikan_id}:${subgroup.subgroup_rss_id}`
-  const hit = upstreamCache.get(key) !== undefined
-  const items = await upstreamCache.wrap(
-    key,
-    () => fetchSubgroupReleases(row.mikan_id, subgroup.subgroup_rss_id),
-    RELEASES_TTL_MS,
-  )
+  const items = await fetchSubgroupReleases(row.mikan_id, subgroup.subgroup_rss_id)
 
-  log.debug({ id, subgroupId: subgroup.id, total: items.length, cached: hit }, 'anime.releases ok')
-  return { subgroup: toSubgroupItem(subgroup), items, total: items.length, cached: hit }
+  log.debug({ id, subgroupId: subgroup.id, total: items.length }, 'anime.releases ok')
+  return { subgroup: toSubgroupItem(subgroup), items, total: items.length, cached: false }
 }

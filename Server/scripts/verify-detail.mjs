@@ -71,7 +71,12 @@ try {
 
   check(detail.id === card.id, `按主键取回同一部 → id=${detail.id}`)
   check(detail.title === card.title, `详情标题与卡片一致 → ${detail.title}`)
-  check(detail.poster === card.poster && (detail.poster === '' || detail.poster.startsWith('/api/img/anime/')), '海报同样走统一出图入口')
+  const isPosterAddr = (p) => p === '' || p.startsWith('/api/img/anime/') || /^https?:\/\//.test(p)
+  check(
+    isPosterAddr(detail.poster) && isPosterAddr(card.poster),
+    // 两者**不必逐字相等**：后台预热一旦把图存到本地，地址就会从「图源直链」变成「本地入口」
+    `海报地址同规则（详情 ${String(detail.poster).slice(0, 46)} / 卡片 ${String(card.poster).slice(0, 46)}）`,
+  )
   check(detail.score === card.score && detail.ratingText === card.ratingText, `评分口径与卡片不分叉 → ${detail.score} / ${detail.ratingText}`)
   check(
     detail.scoreText === card.scoreText && (detail.score == null || detail.scoreText === Number(detail.score).toFixed(1)),
@@ -118,11 +123,16 @@ try {
   const again = (await get(`/api/anime/${card.id}`)).body?.data
   check(JSON.stringify(again) === JSON.stringify(detail), '重复请求结果一致（纯读库，不触发上游）')
 
-  /* ── 系列（面板标题旁那个 chip）：没算过系列时 data 为 null —— 不是错误 ──── */
+  /* ── 系列（面板标题旁那个 chip）：**没算过就现场跑一遍**（用户看了啥、库里没有就补一遍）
+   * 两种结论都合法：① 现算出系列（items ≥ 2）② 这部确实没有同系列其它成员（null）。
+   * 不允许的只有两件事：500 / 返回只有它自己的单成员系列。 */
   const seriesRes = await get(`/api/anime/${card.id}/series`)
+  const series = seriesRes.body?.data
   check(
-    seriesRes.res.ok && seriesRes.body?.data === null,
-    '系列接口可用；这个库还没算过系列 → data 为 null（不是 500，前端据此不渲染 chip）',
+    seriesRes.res.ok && (series === null || (Array.isArray(series.items) && series.items.length >= 2)),
+    series
+      ? `系列接口现场算出 ${series.items.length} 部（根名「${series.rootTitle}」）`
+      : '系列接口：这部确实没有同系列其它成员 → data 为 null（前端据此不渲染 chip）',
   )
   const seriesBad = await get('/api/anime/abc/series')
   check(seriesBad.res.status === 400 && seriesBad.body?.error?.code === 'BAD_REQUEST', '系列接口：非法 id → 400 / BAD_REQUEST')
@@ -195,7 +205,10 @@ try {
     }
 
     const again2 = (await get(`/api/anime/${card.id}/releases?subgroupId=${firstSg.id}`)).body?.data
-    check(again2?.cached === true && again2.total === rel.total, `第二次命中进程内缓存 → cached=${again2?.cached}`)
+    check(
+      again2?.cached === false && again2.total === rel.total,
+      `资源列表**不缓存**、每次直连上游 → cached=${again2?.cached}（总数稳定=${rel.total}）`,
+    )
 
     // 归属校验：前端传来的 subgroupId 必须先确认属于这部作品
     const wrongSg = await get(`/api/anime/${card.id}/releases?subgroupId=99999999`)

@@ -3,7 +3,18 @@ import * as cheerio from 'cheerio';
 import { logger } from '../lib/logger.js';
 
 
-async function fetchWithTimeOut(fetchUrl, tip, retries = 2) {
+/**
+ * 抓 Mikan 页面（统一入口：超时 + 重试）
+ * ---------------------------------------------------------------------------
+ * 为什么要有请求头：**不带 UA 会被当成爬虫**（Mikan 会回 200 + 空壳页/验证页），
+ * 表现出来就是"字幕组/资源偶尔读不到"——不是网络问题，是身份问题。
+ * 重试策略：只重试「可能自愈」的失败（网络错 / 5xx / 429 / 空响应 / 校验不通过），
+ * 4xx 是参数错，重试没意义。退避用指数 + 抖动（0.4s → 1.2s → 3.6s），
+ * 比原来固定 5 秒快得多，抖动避免多个请求同时重试再撞到一起。
+ * @param {(html: string) => boolean} [validate] 可选的"内容校验"：
+ *   返回 false 视为本次没取到（200 但页面是空壳），照样重试
+ */
+async function fetchWithTimeOut(fetchUrl, tip, retries = 3, validate = null) {
   const startedAt = Date.now();
 
   // 地址为空 / 格式非法：属于调用方参数错误，不重试
@@ -25,18 +36,32 @@ async function fetchWithTimeOut(fetchUrl, tip, retries = 2) {
     logger.debug({ tip, url: finalUrl.href }, 'mikan.fetch start');
     const response = await fetch(finalUrl.href, {
       method: 'GET',
+      headers: {
+        // 装成普通浏览器：Mikan 对无 UA 的请求会回空壳页（实测"偶发失败"多半是这个）
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,ja;q=0.8,en;q=0.7',
+      },
       signal: AbortSignal.timeout(30000),
     });
 
     if (!response.ok) {
       logger.warn({ tip, url: finalUrl.href, status: response.status }, 'mikan.fetch fail');
-      throw new Error(`HTTP ${response.status}`);
+      const err = new Error(`HTTP ${response.status}`);
+      // 4xx = 参数/页面不存在，重试没意义
+      if (response.status < 500 && response.status !== 429) err.noRetry = true;
+      throw err;
     }
 
     const html = await response.text();
     if (!html) {
       logger.warn({ tip, url: finalUrl.href }, 'mikan.fetch empty');
       throw new Error('返回值为空');
+    }
+    if (validate && !validate(html)) {
+      logger.warn({ tip, url: finalUrl.href, htmlLength: html.length }, 'mikan.fetch validate-fail');
+      throw new Error('页面内容校验未通过（多半是上游返回了空壳页）');
     }
 
     logger.debug(
@@ -45,13 +70,14 @@ async function fetchWithTimeOut(fetchUrl, tip, retries = 2) {
     );
     return html;
   } catch (error) {
-    if (retries > 0) {
+    if (retries > 0 && !error.noRetry) {
+      const wait = Math.round(400 * 3 ** (3 - retries) * (0.8 + Math.random() * 0.4)); // 0.4s → 1.2s → 3.6s（带抖动）
       logger.warn(
-        { tip, url: finalUrl.href, retriesLeft: retries - 1, err: error.message },
+        { tip, url: finalUrl.href, retriesLeft: retries - 1, wait, err: error.message },
         'mikan.fetch retry',
       );
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      return fetchWithTimeOut(finalUrl.href, tip, retries - 1);
+      await new Promise(resolve => setTimeout(resolve, wait));
+      return fetchWithTimeOut(finalUrl.href, tip, retries - 1, validate);
     }
 
     logger.error(
@@ -62,11 +88,11 @@ async function fetchWithTimeOut(fetchUrl, tip, retries = 2) {
   }
 }
 
-async function getMikanHomePage(baseUrl, retries = 2) {
+async function getMikanHomePage(baseUrl, retries = 3) {
   return await fetchWithTimeOut(baseUrl, 'MikanHomePage', retries);
 }
 
-async function getMikanSeasonPage(baseUrl, year, season, retries = 2) {
+async function getMikanSeasonPage(baseUrl, year, season, retries = 3, validate = null) {
   if (!(baseUrl && year && season)) {
     logger.error({ baseUrl, year, season }, 'mikan.season invalid-params');
     throw new Error('请求 MikanSeasonPage 失败：传入参数缺少或为空');
@@ -83,10 +109,10 @@ async function getMikanSeasonPage(baseUrl, year, season, retries = 2) {
   finalUrl.searchParams.set('year', year);
   finalUrl.searchParams.set('seasonStr', season);
 
-  return await fetchWithTimeOut(finalUrl.href, 'MikanSeasonPage', retries);
+  return await fetchWithTimeOut(finalUrl.href, 'MikanSeasonPage', retries, validate);
 }
 
-async function getAnimeDetailPage(baseUrl, mikanid, retries = 2) {
+async function getAnimeDetailPage(baseUrl, mikanid, retries = 3) {
   if (!(baseUrl && mikanid)) {
     logger.error({ baseUrl, mikanId: mikanid }, 'mikan.detail invalid-params');
     throw new Error('请求 AnimeDetailPage 失败：传入参数缺少或为空');
@@ -104,7 +130,7 @@ async function getAnimeDetailPage(baseUrl, mikanid, retries = 2) {
   return await fetchWithTimeOut(finalUrl.href, 'AnimeDetailPage', retries);
 }
 
-async function getAnimeRSSPage(baseUrl, mikanid, subgroupRSSId, retries = 2) {
+async function getAnimeRSSPage(baseUrl, mikanid, subgroupRSSId, retries = 3) {
   if (!(baseUrl && mikanid && subgroupRSSId)) {
     logger.error({ baseUrl, mikanId: mikanid, subgroupRSSId }, 'mikan.rss invalid-params');
     throw new Error('请求 AnimeRSSPage 失败：传入参数缺少或为空');
