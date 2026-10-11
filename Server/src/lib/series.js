@@ -81,7 +81,14 @@ export async function walkSeries({ startBgmId, loadRelated, log }) {
             truncated = true
             continue
           }
-          nodes.set(other, { ...brief, prev: null, next: null })
+          // **反向指针也要设**：BGM 的关系经常是单向的（只有 S1 标了「续集→S2」，
+          // S2 页面上没有「前传→S1」）。不设的话 S2 会被当成链头，
+          // 链序就从中间断开（实测石纪元出现 7,8,1,2,3… 这种顺序）→ `series_index` 全错。
+          const fresh = { ...brief, prev: null, next: null }
+          const back = { id, name: node?.name || '', nameCn: node?.nameCn || '' }
+          if (item.relation === '续集') fresh.prev = back
+          else fresh.next = back
+          nodes.set(other, fresh)
           if (!seen.has(other)) queue.push(other)
         }
       } else if (EXTRA_RELATIONS.has(item.relation) && !nodes.has(other) && other !== start) {
