@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <link rel="icon" href="/favicon.ico">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Soraika's Hub —— 自托管番剧资源管理面板">
+    <title>Soraika's Hub</title>
+    <!-- 主题防闪：在任何样式与脚本之前先把主题类写到 <html>。
+         否则深色用户会先看到一帧浅色底（FOUC），刷新时尤其明显。
+         判断逻辑与 src/composables/useTheme.js 一致，存储键也要保持一致。 -->
+    <script>
+      ;(function () {
+        try {
+          var KEY = 'soraikahub:theme'
+          var saved = window.localStorage.getItem(KEY)
+          var mode = saved === 'light' || saved === 'dark' ? saved : 'system'
+          var dark =
+            mode === 'dark' ||
+            (mode === 'system' &&
+              window.matchMedia &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches)
+          var root = document.documentElement
+          root.classList.add(dark ? 'theme-dark' : 'theme-light')
+          root.style.colorScheme = dark ? 'dark' : 'light'
+        } catch (e) {
+          /* 存储不可用（隐私模式等）就按默认浅色走，交给 Vue 接管 */
+        }
+      })()
+    </script>
+
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

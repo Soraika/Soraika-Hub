@@ -1,0 +1,171 @@
+/**
+ * 后台守护进程 —— 常驻补齐「作品档案」，并定时重查评分
+ * ---------------------------------------------------------------------------
+ * 循环（永不退出，除收到停止信号）：
+ *   1. 从待补队列认领一条 → 补齐（Mikan 详情页 → bgmid + 字幕组；Bangumi → 评分/标签/简介）
+ *      → 落库 → 间隔 gapMs → 再认领下一条
+ *   2. 队列空了：趁空档做一轮「定时重查评分」（只覆盖最近 N 季、每轮限量），然后休眠 idleMs
+ *
+ * 两种跑法：
+ *   · 跟随 API 服务（默认，WORKER_INLINE=1）：不用多开终端
+ *   · 独立守护：把 WORKER_INLINE 设为 0，然后 `npm run worker`（前后端重启不影响它）
+ *   两种同时跑也安全 —— 任务用 CAS 认领，不会重复请求上游。
+ *
+ * 状态会同步到 workerState，`GET /api/health` 里能看到进度。
+ */
+import { pathToFileURL } from 'node:url'
+import { loadStoredSettings } from '../api/pages/settings.js'
+import { config } from '../config.js'
+import { claimNextMissingBgm, countGaveUp, countMissingBgm, countStale } from '../db/queue.js'
+import { logger } from '../lib/logger.js'
+import { enrichOne, lastDailyBoundary, refreshStaleOne } from './enrich.js'
+
+/** 运行状态（模块内私有：外部只能通过 getWorkerState() 拿快照，避免被随手改） */
+const workerState = {
+  running: false,
+  startedAt: 0,
+  /** 触发①：补齐档案（bgm_id IS NULL，不限季） */
+  missing: { processed: 0, enriched: 0, noBgmId: 0, failed: 0, pending: 0, gaveUp: 0 },
+  /** 触发②：今年的番剧每日更新（每天固定时刻开始刷一遍整份档案） */
+  daily: { at: '', year: 0, boundaryAt: 0, refreshed: 0, due: 0, doneAt: 0 },
+  /** 两个队列都空了几轮 */
+  idleCycles: 0,
+  lastError: null,
+}
+
+/** 给 /api/health 用的只读快照（structuredClone：调用方拿到的是副本，改不动内部状态） */
+export const getWorkerState = () => structuredClone(workerState)
+
+let stopped = false
+let running = false
+/** 循环的 promise（优雅停机时等它退出） */
+let loopDone = null
+/** 唤醒正在休眠的循环：停机时不用干等一个 idleMs */
+let wake = null
+
+/** 可被 stopWorker 立刻打断的 sleep（等待时长最长的就是 idleMs，不打断会让停机卡 30 秒） */
+function pause(ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      wake = null
+      resolve()
+    }, ms)
+    wake = () => {
+      clearTimeout(timer)
+      wake = null
+      resolve()
+    }
+  })
+}
+
+/** 启动守护进程（幂等：已在跑就直接返回） */
+export function startWorker({ log = logger } = {}) {
+  if (running) return
+  running = true
+  stopped = false
+  workerState.running = true
+  workerState.startedAt = Date.now()
+  log.info(
+    {
+      gapMs: config.worker.gapMs,
+      idleMs: config.worker.idleMs,
+      dailyAt: config.worker.dailyAt,
+      staleYear: config.worker.staleYear,
+      missLimit: config.worker.missLimit,
+      missRetryHours: config.worker.missRetryHours,
+      pending: countMissingBgm(),
+      gaveUp: countGaveUp(),
+    },
+    'worker.start ok',
+  )
+  void (loopDone = loop(log).finally(() => {
+    running = false
+    workerState.running = false
+  }))
+}
+
+/**
+ * 停止守护进程（优雅停机用）
+ * 立刻中断当前休眠，等**手上这一条**处理完就返回 —— 不会让进程卡一个 idleMs
+ * @returns {Promise<void>}
+ */
+export function stopWorker() {
+  stopped = true
+  wake?.()
+  return loopDone ?? Promise.resolve()
+}
+
+async function loop(log) {
+  while (!stopped) {
+    let worked = false
+
+    // ── 触发①：补齐档案（bgm_id IS NULL，不限季）──────────────────────────
+    const missing = claimNextMissingBgm()
+    if (missing) {
+      const outcome = await enrichOne(missing, log)
+      workerState.missing.processed++
+      if (outcome === 'enriched') workerState.missing.enriched++
+      else if (outcome === 'noBgmId') workerState.missing.noBgmId++
+      else workerState.missing.failed++
+      workerState.missing.pending = countMissingBgm()
+      workerState.missing.gaveUp = countGaveUp()
+      worked = true
+      await pause(config.worker.gapMs)
+    }
+
+    // ── 触发②：今年的番剧每日更新（整份档案重刷）─────────────────────────
+    // 两个触发**每轮各推进一条**：若改成「先清空补齐队列再处理每日更新」，
+    // 补齐队列长期非空时每日更新会被饿死 —— 这是刻意避免的调度方式。
+    if (await refreshStaleOne({ log })) {
+      workerState.daily.at = config.worker.dailyAt
+      workerState.daily.year = config.worker.staleYear || new Date().getFullYear()
+      workerState.daily.boundaryAt = lastDailyBoundary()
+      workerState.daily.refreshed++
+      workerState.daily.doneAt = 0
+      worked = true
+      await pause(config.worker.gapMs)
+    } else if (!workerState.daily.doneAt) {
+      workerState.daily.at = config.worker.dailyAt
+      workerState.daily.doneAt = Date.now()
+      log.info(
+        { year: workerState.daily.year || new Date().getFullYear(), dailyAt: config.worker.dailyAt, refreshed: workerState.daily.refreshed },
+        'worker.daily done',
+      )
+    }
+
+    // ── 两个队列都没有任务：休眠一会儿再看 ───────────────────────────────
+    if (!worked) {
+      const year = config.worker.staleYear || new Date().getFullYear()
+      workerState.daily.due = countStale({ year, olderThan: lastDailyBoundary() })
+      workerState.idleCycles++
+      workerState.missing.pending = countMissingBgm()
+      workerState.missing.gaveUp = countGaveUp()
+      await pause(config.worker.idleMs)
+    }
+  }
+
+  running = false
+  workerState.running = false
+  log.info({ processed: workerState.missing.processed, enriched: workerState.missing.enriched }, 'worker.stop ok')
+}
+
+// ── 直接执行时作为独立守护进程运行（npm run worker）────────────────────────
+const isCli = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url
+if (isCli) {
+  // 独立进程也要吃设置页里的覆盖项（worker.* 那几个参数就在那里改）——必须在 startWorker 之前
+  const overridden = loadStoredSettings()
+  if (config.worker.inline) {
+    logger.warn({ inline: true }, 'worker.cli inline-already-on')
+  }
+  logger.info(
+    { pending: countMissingBgm(), gaveUp: countGaveUp(), settingsOverridden: overridden },
+    'worker.cli start',
+  )
+  startWorker()
+  const bye = () => {
+    stopWorker()
+    setTimeout(() => process.exit(0), 200)
+  }
+  process.on('SIGINT', bye)
+  process.on('SIGTERM', bye)
+}

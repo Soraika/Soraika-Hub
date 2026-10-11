@@ -1,0 +1,27 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --watch src/index.js",
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "worker": "node --env-file-if-exists=.env src/jobs/worker.js",
+    "enrich": "node --env-file-if-exists=.env src/jobs/enrich.js",
+    "backfill": "node --env-file-if-exists=.env src/jobs/enrich.js",
+    "verify": "node --env-file-if-exists=.env scripts/verify-home.mjs && node --env-file-if-exists=.env scripts/verify-detail.mjs && node --env-file-if-exists=.env scripts/verify-ai.mjs && node --env-file-if-exists=.env scripts/verify-settings.mjs",
+    "verify:worker": "node --env-file-if-exists=.env scripts/verify-worker.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "all": "^0.0.0",
+    "cheerio": "^1.2.0",
+    "express": "^5.2.1",
+    "pino": "^10.3.1",
+    "pino-http": "^11.0.0",
+    "pino-pretty": "^13.1.3"
+  }
+}

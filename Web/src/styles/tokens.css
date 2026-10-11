@@ -1,0 +1,188 @@
+/* ============================================================================
+ * Soraika's Hub — 设计令牌（Design Tokens）
+ * ----------------------------------------------------------------------------
+ * 来源：旧项目 DESIGN.md（暖色系 + 冷暖点缀，整体柔和、偏纸质质感）
+ * 约定：
+ *   1. 组件内一律使用 var(--*)，禁止硬编码颜色 / 圆角 / 时长 / 缓动
+ *   2. 深浅两套主题必须为「同一个变量」都给出取值 —— 缺失会导致深色下发白
+ *   3. 本文件只放变量，不放任何选择器规则（规则见 base.css）
+ * ========================================================================= */
+
+:root,
+.theme-light {
+  /* ── 原生控件配色（color-scheme） ────────────────────────────────────
+     color-scheme 决定「浏览器自己画的那部分」用哪套配色：滚动条、下拉列表、
+     输入框自动填充、日期选择器等。不写的话，深色页面里会突然冒出一个白底原生控件。 */
+  color-scheme: light;
+
+  /* ── 品牌色（珊瑚 + 金） ─────────────────────────────────────────── */
+  --accent: #e0877a;              /* 主操作色 */
+  --accent-hover: #eb9a8e;        /* 主操作色 hover */
+  --accent-strong: #b55a4e;       /* 主操作色强调（文字/图标用） */
+  --accent-soft: #f2d7d0;         /* 主操作色浅底（选中态背景） */
+  --accent-mist: #fbf1ed;         /* 主操作色极浅底（区块底纹） */
+  --accent-gold: #d9a97c;         /* 金色点缀 */
+
+  /* ── 四个推荐模块：金黄 → 琥珀 → 蜜橙 → 暖红（同色系渐进，不做阵营色） ── */
+  --mod-praise: #ddb25e;
+  --mod-praise-strong: #b78a32;
+  --mod-hot: #e0913f;
+  --mod-hot-strong: #bd6f1f;
+  --mod-try: #e0733f;
+  --mod-try-strong: #c15428;
+  --mod-popular: #d95f4a;
+  --mod-popular-strong: #b94736;
+  --metro-grad: linear-gradient(90deg, #ddb25e, #d95f4a);   /* 地铁图填充轨道 */
+
+  /* ── 背景 ────────────────────────────────────────────────────────── */
+  --bg-main: #fbf7f2;             /* 页面主背景 */
+  --bg-sidebar: #f7f1ea;          /* 侧边栏背景 */
+  --bg-card: #ffffff;             /* 卡片背景 */
+  --bg-input: #f5efe9;            /* 输入框 / 下拉触发器（需与卡片拉开层次） */
+  --bg-hover: rgba(224, 135, 122, 0.10);
+  --bg-dropdown: #ffffff;         /* 浮层 / 下拉面板 */
+  --bg-poster: #e8e0d5;           /* 海报未加载时的占位底色 */
+
+  /* ── 文字 ────────────────────────────────────────────────────────── */
+  --text-primary: #3d3733;
+  --text-secondary: #9a8f87;
+  --text-tertiary: #b3a89f;       /* 三级弱化：占位 / 手柄 / 辅助说明 */
+  /* ◆ 卡片内变量是「成组」的：卡底 --bg-card ↔ 卡内文字 --text-on-card* ↔ 卡内描边
+     --border-on-card ↔ 卡上徽标底 --badge-neutral-bg。两套主题必须都改，
+     只翻底色不翻字色 = 深底深字（改动前深色主题卡片的坑就在这里）。 */
+  --text-on-card: #3d3733;        /* 卡片内的主文字 */
+  --text-on-card-muted: #8a7f76;  /* 卡片内的次要文字 */
+  --border-on-card: #ece2d6;      /* 卡片内部分割线 / 描边 */
+  --badge-neutral-bg: rgba(61, 55, 51, 0.72);  /* 卡片上的中性徽标底色（叠在卡片底之上，随主题翻） */
+  --badge-ink: #ffffff;           /* 徽标里的文字：浅色下彩色底配白字 */
+  --badge-neutral-ink: #ffffff;   /* 中性徽标文字：浅色下是深灰底，得配白字 */
+  --text-invert: #ffffff;         /* 彩色底上的文字（通用，不随主题翻） */
+
+  /* ── 描边 ────────────────────────────────────────────────────────── */
+  --border: #eee6dc;
+  --border-card: #f0e8df;
+  --border-strong: #ddd2c4;
+
+  /* ── 侧边栏导航 ──────────────────────────────────────────────────── */
+  --nav-muted: #7a6f66;
+  --nav-muted-hover: #4a4038;
+  --nav-muted-bg: rgba(61, 55, 51, 0.06);
+
+  /* ── 状态语义色 ──────────────────────────────────────────────────── */
+  --status-success: #22c55e;
+  --status-warning: #e0913f;
+  --status-danger: #d95f4a;
+  --status-info: #5b8ff9;
+
+  /* ── 资源标签配色（照旧版：分辨率蓝 / 编码紫 / 字幕绿 / 片源橙 / 合集青 / 其它灰）──
+     旧版把这几个十六进制直接写在组件里，这里收成令牌：一份定义，主题与组件都读它。 */
+  --tag-res: #3b82f6;
+  --tag-codec: #8b5cf6;
+  --tag-sub: #22c55e;
+  --tag-source: #f97316;
+  --tag-batch: #14b8a6;
+  --tag-version: #6366f1;
+  --tag-other: #6b7280;
+
+  /* ── 阴影 ────────────────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 3px rgba(61, 55, 51, 0.06);
+  --shadow: 0 6px 20px rgba(61, 55, 51, 0.10);
+  --shadow-lg: 0 12px 32px rgba(61, 55, 51, 0.14);
+  --shadow-accent: 0 6px 18px rgba(224, 135, 122, 0.35);
+
+  /* ── 排版 ────────────────────────────────────────────────────────── */
+  --font-ui: "LXGW WenKai", "霞鹜文楷", "KaiTi", "STKaiti", serif;   /* 标题 / 品牌 */
+  --font-body: -apple-system, "PingFang SC", "Microsoft YaHei",
+    "Source Han Sans SC", "Noto Sans SC", "Segoe UI", sans-serif;    /* 正文 */
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+
+  /* ── 形状 / 动效 ─────────────────────────────────────────────────── */
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);   /* 全站统一缓动 */
+  --dur-fast: 0.15s;
+  --dur: 0.25s;
+  --dur-slow: 0.5s;                             /* 地铁图填充 */
+
+  /* ── 布局尺寸 ────────────────────────────────────────────────────── */
+  --sidebar-w: 200px;
+  --panel-w: 340px;               /* 详情面板展开宽度（收起时是 0 的槽位） */
+  --grid-min: 170px;              /* 卡片网格最小列宽 */
+  --grid-gap: 18px;
+  --page-pad-x: 28px;
+  --page-pad-y: 22px;
+}
+
+/* ============================ 深色主题 ============================
+ * 说明：深色下卡片同样是深色面 —— 比页面底亮一级（靠明度差分层，不靠描边），
+ * 所以 --bg-card 一定要和 --text-on-card* / --border-on-card / --badge-neutral-bg
+ * 一起翻。海报图本身仍是任意亮度，卡片只负责给它一个深色的「画框」。
+ * ================================================================= */
+.theme-dark {
+  color-scheme: dark;             /* 原生控件转深色（说明见浅色块） */
+
+  --accent: #e0877a;
+  --accent-hover: #eb9a8e;
+  --accent-strong: #eba49a;
+  --accent-soft: rgba(224, 135, 122, 0.18);
+  --accent-mist: rgba(224, 135, 122, 0.10);
+  --accent-gold: #d9a97c;
+
+  --mod-praise: #ddb25e;
+  --mod-praise-strong: #e7c67f;
+  --mod-hot: #e0913f;
+  --mod-hot-strong: #eaa96b;
+  --mod-try: #e0733f;
+  --mod-try-strong: #e88f65;
+  --mod-popular: #d95f4a;
+  --mod-popular-strong: #e47a65;
+  --metro-grad: linear-gradient(90deg, #ddb25e, #d95f4a);
+
+  --bg-main: #29252b;
+  --bg-sidebar: #302b31;
+  --bg-card: #353038;             /* 卡片：比页面底（#29252b）亮一级 */
+  --bg-input: #38333a;
+  --bg-hover: rgba(224, 135, 122, 0.15);
+  --bg-dropdown: #3a353c;
+  --bg-poster: #413b43;           /* 海报占位底：在卡片之内，需与卡底拉开一点 */
+
+  --text-primary: #f5f0e8;
+  --text-secondary: #b3aaa3;
+  --text-tertiary: #a49ba4;
+  --text-on-card: #f2ece4;        /* 卡片内主文字：卡底已翻深，字必须跟着翻浅 */
+  --text-on-card-muted: #c3bab4;  /* 卡片内次要文字：中性灰（原 #aca39d 偏褐发浑，对比只有 5.2:1） */
+  --border-on-card: #464049;
+  --badge-neutral-bg: rgba(245, 240, 232, 0.16);   /* 深色卡上的中性徽标：浅色薄底 */
+  --badge-ink: #231c19;           /* 徽标文字：深色下改用深字 —— 金/橙底配白字只有 1.98~3.2:1 */
+  --badge-neutral-ink: #f2ece4;   /* 中性徽标文字：深色下那层薄底偏亮，反而要配浅字 */
+  --text-invert: #ffffff;
+
+  --border: #4a444b;
+  --border-card: #4a444c;
+  --border-strong: #57505a;
+
+  --nav-muted: #c8beb4;
+  --nav-muted-hover: #ece4d9;
+  --nav-muted-bg: rgba(245, 240, 232, 0.07);
+
+  --status-success: #34d399;
+  --status-warning: #eaa96b;
+  --status-danger: #e47a65;
+  --status-info: #7aa7ff;
+
+  /* 资源标签配色（深色下整体提亮一档，保持同样的语义顺序） */
+  --tag-res: #60a5fa;
+  --tag-codec: #a78bfa;
+  --tag-sub: #4ade80;
+  --tag-source: #fb923c;
+  --tag-batch: #2dd4bf;
+  --tag-version: #818cf8;
+  --tag-other: #9ca3af;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.28);
+  --shadow: 0 6px 20px rgba(0, 0, 0, 0.38);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.48);
+  --shadow-accent: 0 6px 18px rgba(224, 135, 122, 0.42);
+}

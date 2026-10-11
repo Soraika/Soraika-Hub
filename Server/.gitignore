@@ -1,0 +1,15 @@
+# 依赖与产物
+node_modules/
+
+# 本地配置（含密钥，绝不入库）
+.env
+.env.local
+
+# 运行时数据：SQLite 库文件 + 图片缓存
+data/
+
+# 一次性调试脚本（长期保留的验证脚本叫 verify-*.mjs，要入库）
+scripts/tmp-*
+
+# 日志
+*.log
