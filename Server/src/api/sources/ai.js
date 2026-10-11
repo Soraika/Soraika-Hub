@@ -47,28 +47,54 @@ function extractJson(content, log) {
  * @param {{ system: string, user: string, maxTokens?: number, log?: object }} options
  * @returns {Promise<{ parsed: any, model: string, ms: number, usage: object|null }>}
  */
-export async function chatJson({ system, user, maxTokens, log = logger } = {}) {
-  if (!config.ai.enabled) {
-    throw fail('AI_DISABLED', 'AI 未配置：请在 Server/.env 里填 AI_API_KEY（默认接 DeepSeek 兼容接口）')
+/**
+ * 默认供应商 = `config.ai` —— 不传 provider 时就走它（与以前的行为完全一致）
+ * 想换供应商 / 换模型时，由调用方传一份**快照**覆盖（见下面 chatJson 的说明）。
+ */
+const defaultProvider = () => ({
+  baseUrl: config.ai.baseUrl,
+  apiKey: config.ai.apiKey,
+  model: config.ai.model,
+  timeoutMs: config.ai.timeoutMs,
+  maxTokens: config.ai.maxTokens,
+  enabled: config.ai.enabled,
+  /** 供应商特有参数：原样并入请求体。默认关掉 DeepSeek 的思考模式（很慢，解析类任务用不上） */
+  params: { thinking: { type: 'disabled' } },
+})
+
+/**
+ * 一次对话，返回解析好的 JSON
+ * @param {{ system:string, user:string, maxTokens?:number, provider?:object, log?:object }} options
+ *   `provider` 是**一次调用所需的全部供应商参数（快照）**：
+ *   `{ baseUrl, apiKey, model, timeoutMs, maxTokens, enabled, params }`；不传就用 `config.ai`。
+ *   为什么是快照而不是 config 本身：避免调用中途设置被改；
+ *   而且以后「多提供商 / 按用途选模型 / 用户自定义提示词」只改「谁来提供这个对象」，
+ *   调用点一行都不用动（见 CONVENTIONS.md §9）。
+ * @returns {Promise<{ parsed: any, model: string, ms: number, usage: object|null }>}
+ */
+export async function chatJson({ system, user, maxTokens, provider, log = logger } = {}) {
+  const p = { ...defaultProvider(), ...(provider || {}) }
+  if (!p.enabled) {
+    throw fail('AI_DISABLED', 'AI 未配置：请在设置页填写 API Key（或 Server/.env 的 AI_API_KEY）')
   }
 
   const startedAt = Date.now()
-  const data = await request(`${config.ai.baseUrl}/chat/completions`, {
+  const data = await request(`${p.baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${config.ai.apiKey}` },
+    headers: { Authorization: `Bearer ${p.apiKey}` },
     json: {
-      model: config.ai.model,
+      model: p.model,
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: user },
       ],
       // 解析类任务要的是「同样输入给同样输出」，不是创造力
       temperature: 0.1,
-      max_tokens: maxTokens ?? config.ai.maxTokens,
-      // DeepSeek 的思考模式很慢，解析文件名用不上；别的网关会忽略这个字段
-      thinking: { type: 'disabled' },
+      max_tokens: maxTokens ?? p.maxTokens,
+      // 供应商特有参数（默认只有 DeepSeek 的 thinking）—— 不写死在这里，换网关时覆盖 provider.params
+      ...p.params,
     },
-    timeoutMs: config.ai.timeoutMs,
+    timeoutMs: p.timeoutMs,
     retries: 1,
     expect: 'json',
     tip: 'AI chat',
@@ -77,9 +103,9 @@ export async function chatJson({ system, user, maxTokens, log = logger } = {}) {
   const content = data?.choices?.[0]?.message?.content || ''
   const parsed = extractJson(content, log)
   const ms = Date.now() - startedAt
-  log.debug({ model: data?.model || config.ai.model, chars: content.length, ms }, 'ai.chat ok')
+  log.debug({ model: data?.model || p.model, chars: content.length, ms }, 'ai.chat ok')
 
-  return { parsed, model: data?.model || config.ai.model, ms, usage: data?.usage ?? null }
+  return { parsed, model: data?.model || p.model, ms, usage: data?.usage ?? null }
 }
 
 /** 给路由/看板用的供应商信息（**不含 key**） */

@@ -21,6 +21,7 @@ import { config } from '../../config.js'
 import { fail } from '../../lib/errors.js'
 import { revisionOf } from '../../lib/format.js'
 import { logger } from '../../lib/logger.js'
+import { normalizeSeriesAiOutput } from '../../lib/series.js'
 import { createMemCache } from '../../cache/mem.js'
 import { chatJson } from '../sources/ai.js'
 
@@ -342,6 +343,69 @@ export async function classifyEpisodes(animeTitle, titles, { log = logger } = {}
     'ai.episodes ok',
   )
   return { ...result, cached: false }
+}
+
+/* ── ③ 系列归一（命名风格 / 系列总名 / 番外归类）─────────────────────────────
+   与标签、集数不同：**链序不由 AI 判断**（正传链是代码按「续集/前传」走出来的，作为输入给它），
+   它只决定三件事：`namingStyle`（S01 还是 01 名字）、`rootTitle`（顶层目录名）、番外的归类。
+   结果落在 anime 表（series_* 那几列），所以这里**不需要另设缓存**。
+   改了下面的 prompt 必须同步升 SERIES_PROMPT_VERSION（否则老库里的旧结果看起来「没生效」）。 */
+
+const SERIES_PROMPT_VERSION = 'v1'
+
+const SERIES_SYSTEM_PROMPT = `你在给一个动画系列做归档命名。
+
+只输出 JSON，不要 Markdown、不要解释：
+{ "namingStyle": "season", "rootTitle": "系列总名", "extras": [ { "bgmId": "221781", "relation": "OVA" } ] }
+
+namingStyle（只看【正传播出线】）：
+- "season"：各条其实是同一部作品的不同季（名字剥掉「第二季 / Season 2 / 2期 / ver.N / 裸数字后缀 / R」后基本一致）
+- "volume"：各条是不同标题的独立作品（化物语 / 伪物语 / 猫物语(黑) …）
+
+rootTitle：整个系列的目录名，中文 2~12 字、不带季标记。
+- season → 剥掉季标记后的作品名（如「进击的巨人」）
+- volume → 能概括全部的系列名（如「物语系列」）
+
+extras[].relation 只能取这 5 个值：
+- OVA：OAD / OVA / 番外篇（有正片内容）
+- 剧场版：名字含「剧场版」的（即使接口给的关系是「总集篇」也算剧场版）
+- 总集篇：电视总集篇 / 回顾篇
+- 衍生：Q版剧场 / 4D / 方言版 / 特别节目 / 音乐影像 这类非正片
+- 其他：判断不了
+
+规则：extras 的 bgmId 必须与输入一致、一条不漏；JSON 必须能被直接解析。`
+
+/**
+ * 系列归一 —— 一次调用决定 namingStyle / rootTitle / 番外归类
+ * ---------------------------------------------------------------------------
+ * 输入分两段：正传链（已确定、顺序不许改）+ 其余关联作品（要归类）。
+ * 输出里的 extras 会按「本次给出的 bgmId 集合」过滤（见 normalizeSeriesAiOutput）。
+ * @param {{ chain:Array<{id:string,name:string,nameCn:string,index:number}>,
+ *           extras:Array<{id:string,name:string,nameCn:string,relation:string}>,
+ *           provider?:object, log?:object }} params
+ * @returns {Promise<{ namingStyle:string|null, rootTitle:string,
+ *                     extras:Array<{bgmId:string, relation:string}>, model:string, ms:number }>}
+ */
+export async function classifySeries({ chain, extras = [], provider, log = logger } = {}) {
+  const chainLines = (chain || [])
+    .map((n, i) => `${i + 1}. ${n.nameCn || n.name}${n.nameCn && n.name ? `（${n.name}）` : ''}`)
+    .join('\n')
+  const extraLines = extras.length
+    ? extras.map((e) => `${e.id} | ${e.nameCn || e.name} | 接口给的关系：${e.relation}`).join('\n')
+    : '（无）'
+  const user = `【正传播出线】（按播出顺序，不要改动）
+${chainLines || '（无）'}
+
+【其余关联作品】（需要归类）
+${extraLines}`
+
+  const { parsed, model, ms } = await chatJson({ system: SERIES_SYSTEM_PROMPT, user, provider, log })
+  const out = normalizeSeriesAiOutput(parsed, { extraIds: extras.map((e) => e.id) })
+  log.debug(
+    { version: SERIES_PROMPT_VERSION, chain: (chain || []).length, extras: extras.length, got: out.extras.length, style: out.namingStyle, ms },
+    'ai.series ok',
+  )
+  return { ...out, model, ms }
 }
 
 /** 看板用：两个缓存的当前条目数 */

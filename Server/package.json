@@ -10,6 +10,7 @@
     "enrich": "node --env-file-if-exists=.env src/jobs/enrich.js",
     "backfill": "node --env-file-if-exists=.env src/jobs/enrich.js",
     "sweep": "node --env-file-if-exists=.env src/jobs/sweep-mikan.js",
+    "series": "node --env-file-if-exists=.env src/jobs/series.js",
     "verify": "node --env-file-if-exists=.env scripts/verify-home.mjs && node --env-file-if-exists=.env scripts/verify-detail.mjs && node --env-file-if-exists=.env scripts/verify-ai.mjs && node --env-file-if-exists=.env scripts/verify-settings.mjs",
     "verify:worker": "node --env-file-if-exists=.env scripts/verify-worker.mjs"
   },
