@@ -24,7 +24,7 @@ import { classifySeries } from '../api/pages/ai.js'
 import { loadStoredSettings } from '../api/pages/settings.js'
 import { fetchRelatedSubjects } from '../api/sources/bgm.js'
 import { config } from '../config.js'
-import { db } from '../db/index.js'
+import { db, val } from '../db/index.js'
 import { findByBgmIds, setSeriesMeta } from '../db/anime.js'
 import { logger } from '../lib/logger.js'
 import { pickRepresentative, walkSeries } from '../lib/series.js'
@@ -45,6 +45,14 @@ const stmt = {
   `),
   count: db.prepare('SELECT COUNT(*) AS n FROM anime WHERE bgm_id IS NOT NULL AND series_checked_at IS NULL'),
   clearChecked: db.prepare('UPDATE anime SET series_checked_at = NULL'),
+  /**
+   * 认领（CAS）：只有还是 NULL 才算抢到 —— 与 worker / 另一个回填进程互斥。
+   * 值用 -1（哨兵 = 处理中）而不是另开一列：谓词是 `IS NULL`，-1 天然进不了队列，
+   * 且负的时间戳不可能出现。语义与 db/queue.js 的触发③完全一致。
+   */
+  claim: db.prepare('UPDATE anime SET series_checked_at = -1 WHERE id = ? AND series_checked_at IS NULL'),
+  /** 放回队列（这次没算成）：-1 → NULL，否则它会永远卡在"处理中" */
+  release: db.prepare('UPDATE anime SET series_checked_at = NULL WHERE id = ? AND series_checked_at = -1'),
 }
 
 /**
@@ -121,14 +129,15 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
     if (!libRow) continue
     setSeriesMeta(libRow.id, { seriesId, seriesRelation: extraRelation.get(item.id) || '其他', seriesCheckedAt: now })
   }
+  // 根名兜底：AI 对「单部作品（链上只有它自己）」经常返回空 rootTitle ——
+  // 这时用作品自己的展示名（title_cn 优先），总比顶层目录叫「未归类」强。
+  // 注意：日志里报的必须是**最终落库的那个值**，否则会看到「日志说空、库里其实有」的假象。
+  const rootName = ai.rootTitle || repRow?.series_root_title || repRow?.title_cn || repRow?.title || ''
   if (repRow) {
-    // 根名兜底：AI 对「单部作品（链上只有它自己）」经常返回空 rootTitle
-    // —— 这时用作品自己的展示名（title_cn 优先），总比顶层目录叫「未归类」强
-    const fallbackTitle = repRow.title_cn || repRow.title || ''
     setSeriesMeta(repRow.id, {
       seriesId,
       namingStyle: ai.namingStyle || repRow.naming_style,
-      seriesRootTitle: ai.rootTitle || repRow.series_root_title || fallbackTitle,
+      seriesRootTitle: rootName,
       seriesCheckedAt: now,
     })
   }
@@ -143,7 +152,7 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
       extras: extras.length,
       inLibrary: libMap.size,
       namingStyle: ai.namingStyle || repRow?.naming_style || null,
-      rootTitle: ai.rootTitle || repRow?.series_root_title || '',
+      rootTitle: rootName,
       ms: Date.now() - startedAt,
     },
     'series.fill ok',
@@ -154,8 +163,10 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
 /**
  * 补一批（limit <= 0 = 一直补到没有待算）
  * @param {{ limit?:number, gapMs?:number, conc?:number, force?:boolean, log?:object }} [options]
- *   `conc`：并发条数。首轮全量补齐时有几千条，串行 5s/条要两小时 → 并发 3 约 50 分钟。
- *           **只影响速度，不影响正确性**（一次领 N 条、领完即推进游标，不会重复处理）。
+ *   `conc`：并发条数。首轮全量补齐有几千条，串行太慢 → 并发 4~8（瓶颈是 AI 的响应时间）。
+ *           **只影响速度，不影响正确性**：每条都先 CAS 认领（`series_checked_at` 置 -1）再处理，
+ *           所以多个回填进程 / worker 同时跑也不会重复走链、重复花 AI 的钱。
+ *   算出结果 → `series_checked_at` 写成真实时间（出队）；没算成 → 放回 NULL（下轮重试）。
  */
 export async function runSeries({ limit = 0, gapMs, conc = 1, force = false, log = logger } = {}) {
   if (!config.ai.enabled) {
@@ -175,18 +186,27 @@ export async function runSeries({ limit = 0, gapMs, conc = 1, force = false, log
   const rest = Number(limit) > 0 ? Number(limit) : Infinity
 
   while (result.processed < rest) {
-    const rows = window === 1 ? [stmt.next.get(cursorId)].filter(Boolean) : stmt.batch.all(cursorId, window)
-    if (!rows.length) break
-    cursorId = rows[rows.length - 1].id // 本轮只前进、不回头（失败的下轮再来）
+    const candidates = window === 1 ? [stmt.next.get(cursorId)].filter(Boolean) : stmt.batch.all(cursorId, window)
+    if (!candidates.length) break
+    cursorId = candidates[candidates.length - 1].id // 本轮只前进、不回头（失败的下轮再来）
 
-    const outcomes = await Promise.all(rows.map((row) => fillSeriesFor(row, { log })))
-    for (const outcome of outcomes) {
+    // 认领（CAS）：抢不到说明别的进程（worker / 另一个回填）正在处理它 → 跳过。
+    // 游标已经越过它，所以不会在这里打转。这一步让「多进程同时跑」不重复走链、不重复花 AI 钱。
+    const rows = candidates.filter((row) => stmt.claim.run(val(row.id)).changes === 1)
+    if (!rows.length) continue
+
+    const pairs = await Promise.all(
+      rows.map(async (row) => ({ row, outcome: await fillSeriesFor(row, { log }) })),
+    )
+    for (const { row, outcome } of pairs) {
       result.processed++
-      if (outcome === 'done') result.done++
-      else if (outcome === 'ai-disabled') {
-        result.aiDisabled = true
-        break
-      } else result.skipped++
+      if (outcome === 'done') {
+        result.done++ // fillSeriesFor 已把 series_checked_at 写成真实时间，出了队列
+        continue
+      }
+      if (outcome === 'ai-disabled') result.aiDisabled = true
+      result.skipped++
+      stmt.release.run(val(row.id)) // 没算成就放回，否则这条会一直卡在"处理中"没人管
     }
     if (result.aiDisabled) break
     if (result.processed % 50 === 0) {
