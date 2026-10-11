@@ -281,3 +281,74 @@ export const subgroupStats = () => ({
   entities: subgroupStmt.countEntities.get().n,
   links: subgroupStmt.countLinks.get().n,
 })
+
+// ── 系列链（后台走 BGM 关系算出来的产物；下载归档目录要用）──────────────────
+//
+// 存储口径（与 CONVENTIONS.md §10.2 一致）：
+//   · series_id        = 「代表行」的 id —— 我们自己的主键，同一系列同一个值
+//   · series_index     = 链位（1,2,3…）；番外为 NULL
+//   · series_relation  = **归一后的绝对类别**（不是 BGM 的原始 relation ——
+//                        那个是「相对当前条目」的，实测 LOST GIRLS 在 S1 是番外篇、在 S2/S3 是衍生）
+//   · naming_style / series_root_title 只写在**代表行**上（改根名/改风格只改一行）
+//
+// 这一层只做「存 / 取」：走链、AI 归一、算 naming_style 都在 jobs/ 与 lib/ 里。
+
+const seriesStmt = {
+  /** 写系列字段 —— 参照 updateMeta 的写法：传 null 的字段不会覆盖库里已有的值 */
+  updateMeta: db.prepare(`
+    UPDATE anime SET
+      series_id         = COALESCE(?, series_id),
+      series_index      = COALESCE(?, series_index),
+      series_relation   = COALESCE(?, series_relation),
+      naming_style      = COALESCE(?, naming_style),
+      series_root_title = COALESCE(?, series_root_title),
+      series_checked_at = COALESCE(?, series_checked_at),
+      updated_at        = ?
+    WHERE id = ?
+  `),
+  /** 同系列成员：正传按链位在前，番外（series_index 为 NULL）在后 */
+  bySeries: db.prepare(`
+    SELECT * FROM anime
+    WHERE series_id = ?
+    ORDER BY series_index IS NULL, series_index ASC, id ASC
+  `),
+}
+
+/**
+ * 写一部作品的系列信息（只传要更新的字段；传 null 不覆盖已有值）
+ * @param {number} id 作品主键
+ * @param {{ seriesId?:number, seriesIndex?:number|null, seriesRelation?:string,
+ *           namingStyle?:string, seriesRootTitle?:string, seriesCheckedAt?:number }} [meta]
+ */
+export function setSeriesMeta(id, meta = {}) {
+  const now = Date.now()
+  return seriesStmt.updateMeta.run(
+    val(meta.seriesId),
+    val(meta.seriesIndex),
+    val(meta.seriesRelation),
+    val(meta.namingStyle),
+    val(meta.seriesRootTitle),
+    val(meta.seriesCheckedAt ?? now),
+    now,
+    val(id),
+  )
+}
+
+/** 同系列的全部作品（正传在前、按链位；番外在后） */
+export const listSeriesMembers = (seriesId) => seriesStmt.bySeries.all(val(seriesId))
+
+/**
+ * 按 bgm_id 批量取「库里已有哪些」—— 走链时用它判断链上成员是否已在库
+ * ---------------------------------------------------------------------------
+ * IN 列表长度不固定，所以这条 SQL 是**动态拼**的（与上面那些固定 stmt 不同）；
+ * 调用频率很低（一次算系列调一次），不值得为它引入预处理缓存。
+ * @param {Array<string|number>} bgmIds
+ */
+export function findByBgmIds(bgmIds = []) {
+  const ids = [...new Set(bgmIds.filter((v) => v !== null && v !== undefined && v !== '').map(String))]
+  if (!ids.length) return []
+  const placeholders = ids.map(() => '?').join(',')
+  return db
+    .prepare(`SELECT id, bgm_id, title, title_cn, series_id FROM anime WHERE bgm_id IN (${placeholders})`)
+    .all(...ids.map((v) => val(v)))
+}

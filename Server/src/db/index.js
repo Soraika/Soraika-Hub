@@ -19,6 +19,8 @@ export const db = new DatabaseSync(dbPath)
 // WAL：读写不互相阻塞（爬虫在写、接口在读时很有用）
 db.exec('PRAGMA journal_mode = WAL')
 db.exec('PRAGMA foreign_keys = ON')
+// 多进程写（API + 独立 worker + 一次性任务）时别立刻报 SQLITE_BUSY，等一下锁
+db.exec('PRAGMA busy_timeout = 5000')
 
 /**
  * 结构性迁移（**必须在建表之前跑**，否则会先被建索引/建表语句撞上）
@@ -46,29 +48,36 @@ function normalizeSubgroups() {
 
 normalizeSubgroups()
 
-// 建表（schema.sql 全是 IF NOT EXISTS，重复执行安全）
-const schemaSql = readFileSync(resolve(import.meta.dirname, 'schema.sql'), 'utf8')
-db.exec(schemaSql)
-
 /**
- * 轻量迁移 —— 给**已存在**的库补新列
+ * 轻量迁移 —— 给**已存在**的库补新列（**必须在建表之前跑**，见下方注释）
  * ---------------------------------------------------------------------------
  * schema.sql 里写的是 CREATE TABLE IF NOT EXISTS：表已存在时那句会被跳过，
  * 新加的列不会自动出现（SQLite 也不支持 ADD COLUMN IF NOT EXISTS）。
  * 所以这里按 PRAGMA table_info 对账，缺哪个补哪个 —— 只追加、不修改、不重建，
  * 已有数据（我们库里已经攒了几百条）不会丢。
  * 约定：以后每次给 anime 表加列，① 改 schema.sql ② 在 MIGRATIONS 里加一条。
+ * （加了列还要建索引也直接写进 schema.sql 就行 —— 补列发生在它之前。）
  */
 const MIGRATIONS = {
   anime: [
     { column: 'watching', ddl: 'INTEGER' },
     { column: 'bgm_checked_at', ddl: 'INTEGER' },
     { column: 'bgm_miss_count', ddl: 'INTEGER' },
+    // 系列链（见 CONVENTIONS.md §10.2：只给「已在库」的作品写；series_id 取代表行的 id）
+    { column: 'series_id', ddl: 'INTEGER' },
+    { column: 'series_index', ddl: 'INTEGER' },
+    { column: 'series_relation', ddl: 'TEXT' },
+    { column: 'naming_style', ddl: 'TEXT' },
+    { column: 'series_root_title', ddl: 'TEXT' },
+    { column: 'series_checked_at', ddl: 'INTEGER' },
   ],
 }
 
 function ensureColumns() {
   for (const [table, columns] of Object.entries(MIGRATIONS)) {
+    // 表还不存在（全新库）→ 跳过：schema.sql 会带着全部列把表建出来
+    const exists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table)
+    if (!exists) continue
     const existing = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((col) => col.name))
     for (const { column, ddl } of columns) {
       if (existing.has(column)) continue
@@ -79,6 +88,17 @@ function ensureColumns() {
 }
 
 ensureColumns()
+
+/**
+ * 建表（schema.sql 全是 IF NOT EXISTS，重复执行安全）
+ * ---------------------------------------------------------------------------
+ * **必须放在补列之后**：schema.sql 里除了建表还有「给新列建索引」
+ * （如 `CREATE INDEX idx_anime_series ON anime(series_id)`），老库的 anime 表还没这一列时
+ * `CREATE TABLE IF NOT EXISTS` 会被跳过、索引却照建 → 直接报 `no such column`。
+ * 顺序：normalizeSubgroups → 补列 → schema.sql ✅
+ */
+const schemaSql = readFileSync(resolve(import.meta.dirname, 'schema.sql'), 'utf8')
+db.exec(schemaSql)
 
 export const dbFile = dbPath
 

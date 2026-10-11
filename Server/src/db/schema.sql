@@ -32,6 +32,17 @@ CREATE TABLE IF NOT EXISTS anime (
   source         TEXT,             -- 最近一次写入的来源：mikan / bgm / manual
   bgm_checked_at INTEGER,          -- 最后一次「补齐/刷新档案」的时间（每日更新的分界依据）
   bgm_miss_count INTEGER,          -- 连续几次拿不到 bgmId（Mikan 详情页没挂链接）—— 超限后不再频繁重试
+
+  -- ── 系列链（后台走 BGM 关系算出来的产物；下载归档目录要用，见 CONVENTIONS.md §10.1/§10.2）──
+  series_id         INTEGER,       -- 系列标识 = 代表行的 id（我们自己的主键；同一系列同一个值）
+  series_index      INTEGER,       -- 链位 1,2,3…（正传 = 第几季）；番外为 NULL
+  series_relation   TEXT,          -- 归一后的绝对类别：续集 / OVA / 剧场版 / 总集篇 / 衍生 / 其他
+                                   -- 为什么不存 BGM 的原始 relation：它是「相对当前条目」的
+                                   -- （实测 LOST GIRLS 在 S1 是「番外篇」、在 S2/S3 是「衍生」），直接存会随入口变
+  naming_style      TEXT,          -- season（同名续季 → S01）/ volume（异名平行作 → 01 名字）；只写代表行
+  series_root_title TEXT,          -- 系列总名（顶层目录名）；只写代表行
+  series_checked_at INTEGER,       -- 算过系列信息的时间；NULL = 待算
+
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL  -- 缓存新鲜度判定用它
 );
@@ -42,6 +53,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_anime_bgm   ON anime(bgm_id);
 -- 首页按「年 + 季 + 星期」取整季；发现页/搜索页按评分排序
 CREATE INDEX IF NOT EXISTS idx_anime_season ON anime(year, season, weekday);
 CREATE INDEX IF NOT EXISTS idx_anime_score  ON anime(score);
+-- 系列：查「同系列有哪些作品」
+CREATE INDEX IF NOT EXISTS idx_anime_series ON anime(series_id);
 
 -- ============================================================================
 -- 字幕组：**实体表** + **关联表**（原来是「一部作品一行」的单表）

@@ -273,18 +273,34 @@ function getSubGroupList(AnimeDetailPage) {
   return animeSubGroupList;
 }
 
-function getAnimeBangumiId(AnimeDetailPage) {
+/**
+ * Bangumi 条目 id（老番详情页常常确实没挂链接 —— 那是**正常情况**，不是异常）
+ * @param {string} AnimeDetailPage
+ * @param {{ quiet?: boolean }} [options] quiet：批量扫描时不要为「没挂链接」刷 warn
+ */
+function getAnimeBangumiId(AnimeDetailPage, { quiet = false } = {}) {
   if (!validateParseInput(AnimeDetailPage, 'AnimeDetailPage')) return null;
 
   const $ = cheerio.load(AnimeDetailPage);
   const bangumiUrl = $('p.bangumi-info a[href*=subject]').attr('href');
   const matchBangumiId = bangumiUrl?.match(/\/(\d+)$/);
   if (!matchBangumiId) {
-    logger.warn({ bangumiUrl }, 'mikan.bgm-id missing');
+    if (!quiet) logger.warn({ bangumiUrl }, 'mikan.bgm-id missing');
     return null;
   }
   const bangumiId = matchBangumiId[1];
   return { bangumiId };
+}
+
+/**
+ * 番剧标题（详情页 h2/p.bangumi-title）—— 扫描 mikanId → bgmId 时一并落库用
+ * 只取标题文本；页面结构变了返回空串（调用方用 mikan:<id> 兜底），不抛错。
+ */
+function getAnimeTitle(AnimeDetailPage) {
+  if (!validateParseInput(AnimeDetailPage, 'AnimeDetailPage')) return '';
+
+  const $ = cheerio.load(AnimeDetailPage);
+  return $('p.bangumi-title').first().text().replace(/\s+/g, ' ').trim();
 }
 
 function getAnimeReleaseFromRSS(AnimeRSSPage) {
@@ -351,5 +367,6 @@ export {
   getSeasonAnimeList,
   getSubGroupList,
   getAnimeBangumiId,
+  getAnimeTitle,
   getAnimeReleaseFromRSS,
 };
