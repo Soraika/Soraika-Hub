@@ -23,30 +23,33 @@ db.exec('PRAGMA foreign_keys = ON')
 db.exec('PRAGMA busy_timeout = 5000')
 
 /**
- * 结构性迁移（**必须在建表之前跑**，否则会先被建索引/建表语句撞上）
+ * 删掉废弃的字幕组**关系**表（一次性、可重入）
  * ---------------------------------------------------------------------------
- * 字幕组从「单表」升级为「实体表 + 关联表」：
- * 老结构把字幕组直接挂在作品上（subgroup 一张表带 anime_id），468 部作品攒了 1930 行，
- * 同一个字幕组被重复存几十上百次 —— 库里看上去全是重复名字（新结构见 schema.sql）。
- * 判定依据：旧表有 anime_id 列（新表没有）。
- * 为什么必须先于 schema.sql：schema 里要给新列 mikan_subgroup_id 建唯一索引，
- * 而老表还在的时候 `CREATE TABLE IF NOT EXISTS` 会被跳过、索引却照建 → 直接报「没有这一列」。
- * 数据怎么处理：**直接重建、不迁移**。字幕组只是 Mikan 详情页的镜像，
- * 面板打开时 api/pages/anime.js 会现场抓回来补上，丢了不影响任何功能。
+ * `anime_subgroup`（作品 ↔ 字幕组 + **该作品下的 RSS id**）已废弃：那个映射每次都能现取
+ * —— Mikan 详情页一页就带着「字幕组 + 各自的 RSS id」，前端拿到 id 后取资源时回传即可。
+ * 同时兼容更老的结构（`subgroup` 表自己带 `anime_id`、同一组按作品重复存）→ 一并重建。
+ * `subgroup` **字典**保留：它只有 id → 名字，随面板打开自动重建（丢了也不影响功能）。
  */
-function normalizeSubgroups() {
-  const hasTable = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'subgroup'`).get()
-  if (!hasTable) return
-  const cols = new Set(db.prepare('PRAGMA table_info(subgroup)').all().map((c) => c.name))
-  if (!cols.has('anime_id')) return // 已经是新结构
+function dropLegacySubgroupLinks() {
+  const has = (name) => db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name)
 
-  const dropped = db.prepare('SELECT COUNT(*) AS n FROM subgroup').get().n
-  db.exec('DROP TABLE IF EXISTS subgroup') // 老表的索引会跟着一起没
-  db.exec('DROP TABLE IF EXISTS anime_subgroup')
-  logger.warn({ dropped }, 'db.migrate subgroups-normalized（重建为实体 + 关联，旧行丢弃）')
+  if (has('anime_subgroup')) {
+    const links = db.prepare('SELECT COUNT(*) AS n FROM anime_subgroup').get().n
+    db.exec('DROP TABLE IF EXISTS anime_subgroup')
+    logger.warn({ links }, 'db.migrate drop-anime_subgroup（映射改为每次现取）')
+  }
+
+  if (has('subgroup')) {
+    const cols = new Set(db.prepare('PRAGMA table_info(subgroup)').all().map((c) => c.name))
+    if (cols.has('anime_id')) {
+      const rows = db.prepare('SELECT COUNT(*) AS n FROM subgroup').get().n
+      db.exec('DROP TABLE IF EXISTS subgroup') // 老结构：重建为纯字典（schema.sql 会建回来）
+      logger.warn({ rows }, 'db.migrate rebuild-subgroup-dict（老结构重建为纯字典）')
+    }
+  }
 }
 
-normalizeSubgroups()
+dropLegacySubgroupLinks()
 
 /**
  * 轻量迁移 —— 给**已存在**的库补新列（**必须在建表之前跑**，见下方注释）
@@ -95,7 +98,7 @@ ensureColumns()
  * **必须放在补列之后**：schema.sql 里除了建表还有「给新列建索引」
  * （如 `CREATE INDEX idx_anime_series ON anime(series_id)`），老库的 anime 表还没这一列时
  * `CREATE TABLE IF NOT EXISTS` 会被跳过、索引却照建 → 直接报 `no such column`。
- * 顺序：normalizeSubgroups → 补列 → schema.sql ✅
+ * 顺序：dropLegacySubgroupLinks → 补列 → schema.sql ✅
  */
 const schemaSql = readFileSync(resolve(import.meta.dirname, 'schema.sql'), 'utf8')
 db.exec(schemaSql)

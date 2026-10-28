@@ -19,7 +19,7 @@ import { pathToFileURL } from 'node:url'
 import { fetchSubject } from '../api/sources/bgm.js'
 import { fetchAnimeProfile } from '../api/sources/mikan.js'
 import { config } from '../config.js'
-import { applyBgmMeta, replaceSubgroups, stats } from '../db/anime.js'
+import { applyBgmMeta, rememberSubgroups, stats } from '../db/anime.js'
 import {
   claimNextArchive,
   claimNextMissingBgm,
@@ -52,7 +52,7 @@ export async function enrichOne(row, log = logger) {
 
     // ① Mikan 详情页：权威 bgmId + 字幕组列表
     const profile = await fetchAnimeProfile(row.mikan_id)
-    replaceSubgroups(row.id, profile.subgroups, row.mikan_id)
+    rememberSubgroups(profile.subgroups) // 顺手记进名字字典（不再存「哪个作品有它」）
 
     if (!profile.bangumiId) {
       // Mikan 详情页没挂 Bangumi 链接 —— bgm_id 永远是 NULL，计数 +1；

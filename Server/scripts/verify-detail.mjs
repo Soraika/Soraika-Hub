@@ -164,32 +164,36 @@ try {
   /* 同一个作品下的字幕组不能有重复项（实体表的 id 就是它的身份） */
   check(
     subgroupData.items.every((s, i, arr) => arr.findIndex((x) => x.id === s.id) === i),
-    '同一作品下的字幕组不重复（按实体 id 判重）',
+    '同一作品下的字幕组不重复（按 rss id 判重）',
   )
 
-  /* ── 表结构：字幕组是「实体 + 关系」两张表（老结构把同一组按作品重复存了几十遍）── */
+  /* ── 表结构：只留 `subgroup` 字典；`anime_subgroup` 已删除 ──────────────────
+     「(作品, 字幕组) → 该作品下的 rss id」那个映射**每次现取**就行
+     （Mikan 详情页一页就带着，实测同一个组在不同作品下 rss id 不同：37 / 488 / 422），
+     而且它本来就不是我们的数据 —— 存着没有检索价值。 */
   const schemaSql = readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8')
   const subgroupTable = (schemaSql.match(/CREATE TABLE IF NOT EXISTS subgroup \([\s\S]*?\n\);/) || [''])[0]
   check(
     subgroupTable.includes('mikan_subgroup_id') && !subgroupTable.includes('anime_id'),
-    'subgroup 是实体表：去重键是 mikan_subgroup_id，不再挂 anime_id',
+    'subgroup 只是名字字典（mikan_subgroup_id 唯一），不挂 anime_id',
   )
   check(
     /idx_subgroup_mikan ON subgroup\(mikan_subgroup_id\)/.test(schemaSql),
-    '实体表对 mikan_subgroup_id 建了唯一索引（重复写入会去重，不会堆积成 1900 行）',
+    '字典对 mikan_subgroup_id 建唯一索引（同一个组只留一条）',
   )
-  const linkTable = (schemaSql.match(/CREATE TABLE IF NOT EXISTS anime_subgroup \([\s\S]*?\n\);/) || [''])[0]
   check(
-    /PRIMARY KEY \(anime_id, subgroup_id\)/.test(linkTable) && /WITHOUT ROWID/.test(linkTable),
-    'anime_subgroup 是关联表：复合主键即身份，没有多余自增 id',
+    !/CREATE TABLE IF NOT EXISTS anime_subgroup/.test(schemaSql) &&
+      /DROP TABLE IF EXISTS anime_subgroup/.test(
+        readFileSync(new URL('../src/db/index.js', import.meta.url), 'utf8'),
+      ),
+    'anime_subgroup 已删除（映射改为每次现取），启动时会把旧表 DROP 掉',
   )
-  check(/rss_id\s+TEXT/.test(linkTable), 'RSS id 存在关联表上（同一个组在不同作品下的 RSS id 不同）')
 
-  /* 取资源列表用的是**RSS 字幕组 id**（页面上 div.subgroup-text[id]），不是发布组 id */
+  /* 取资源列表用的是**该作品下的 RSS 字幕组 id**（/subgroups 返回的 id），不再查库 */
   const animePageSource = readFileSync(new URL('../src/api/pages/anime.js', import.meta.url), 'utf8')
   check(
-    /fetchSubgroupReleases\(row\.mikan_id, subgroup\.subgroup_rss_id\)/.test(animePageSource),
-    '取资源用 RSS 字幕组 id（subgroup_rss_id），不是发布组 id',
+    /fetchSubgroupReleases\(row\.mikan_id, rssId\)/.test(animePageSource),
+    '取资源用 RSS 字幕组 id（/subgroups 的 id），不再查库里的映射',
   )
 
   if (subgroupData.items.length) {
@@ -223,9 +227,13 @@ try {
       `资源列表**不缓存**、每次直连上游 → cached=${again2?.cached}（总数稳定=${rel.total}）`,
     )
 
-    // 归属校验：前端传来的 subgroupId 必须先确认属于这部作品
-    const wrongSg = await get(`/api/anime/${card.id}/releases?subgroupId=99999999`)
-    check(wrongSg.res.status === 404 && wrongSg.body?.error?.code === 'NOT_FOUND', '不属于该作品的字幕组 → 404 / NOT_FOUND')
+    // 归属校验：映射不再落库 → 不再伪造 404，而是直接问 Mikan（公开 RSS）。
+    // 传一个不属于该作品的 rss id 最多读到别部作品的公开列表，不泄露我们库里的东西。
+    const oddSg = await get(`/api/anime/${card.id}/releases?subgroupId=99999999`)
+    check(
+      oddSg.res.ok && Array.isArray(oddSg.body?.data?.items),
+      `任意 rss id 都返回结构完整的响应（映射已不落库）→ ${oddSg.res.status} / ${oddSg.body?.data?.total} 条`,
+    )
     const badSgId = await get(`/api/anime/${card.id}/releases?subgroupId=abc`)
     check(badSgId.res.status === 400 && badSgId.body?.error?.code === 'BAD_REQUEST', '非法 subgroupId → 400 / BAD_REQUEST')
   }

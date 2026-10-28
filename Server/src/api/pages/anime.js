@@ -13,7 +13,7 @@
  *   4. 系列：没算过就现场跑一遍走链（用户看了啥、库里没有就补一遍）
  */
 import { warmPoster } from '../../cache/poster.js'
-import { findById, listSeriesMembers, listSubgroups, replaceSubgroups } from '../../db/anime.js'
+import { findById, listSeriesMembers, rememberSubgroups } from '../../db/anime.js'
 import { enrichOne } from '../../jobs/enrich.js'
 import { fillSeriesFor } from '../../jobs/series.js'
 import { fail } from '../../lib/errors.js'
@@ -56,13 +56,14 @@ export async function getAnimeDetail(id, { log = logger } = {}) {
 }
 
 /**
- * 作品下的字幕组列表 —— **每次都直接问 Mikan**（不吃库、不缓存）
+ * 作品下的字幕组列表 —— **每次都直接问 Mikan**（不吃库、不缓存，**也不存映射**）
  * ---------------------------------------------------------------------------
- * 为什么不吃库：新番随时会加字幕组、旧的也可能改名换 RSS id，只有现场取才是最新的。
- * 抓到就 `replaceSubgroups` 落库（下载队列 / 归档要用这些 id），但**不拿库里的当答案**。
- * 上游抓不动时**退化到库里已有的**（有比没有好，面板不至于空着）+ 把失败记进日志 ——
- * 连着失败就是 Mikan 那边的问题，不该让用户看空列表。
- * @returns {Promise<{ items: Array<{id:number,name:string,mikanId:string,rssId:string}>, source: 'mikan'|'db-fallback'|'none' }>}
+ * 一页详情页（`GET /Home/Bangumi/{mikanId}`）就带着「字幕组 + 各自的 RSS id」；
+ * 返回给前端的 `id` 就是**该作品下的 rss id**，取资源时前端回传它即可
+ * （`/releases?subgroupId=<id>`）—— 所以服务端不再存「(作品, 字幕组) → rss id」那张映射表。
+ * 顺手把组名记进字典（`subgroup` 表，纯名字缓存，写失败不影响返回）。
+ * 抓不到 → 空列表（不存关系，也就没有兜底可给），面板显示空态。
+ * @returns {Promise<{ items: Array<{id:number,name:string,mikanId:string,rssId:string}>, source: 'mikan'|'none' }>}
  */
 export async function getAnimeSubgroups(id, { log = logger } = {}) {
   const row = findById(id)
@@ -75,14 +76,25 @@ export async function getAnimeSubgroups(id, { log = logger } = {}) {
 
   try {
     const profile = await fetchAnimeProfile(row.mikan_id)
-    if (profile.subgroups.length) replaceSubgroups(id, profile.subgroups, row.mikan_id)
-    const items = listSubgroups(id).map(toSubgroupItem)
+    // 没有 rss id 的组取不了资源（它连点都点不进去），顺手滤掉；同一个 rss id 只留一条
+    const seen = new Set()
+    const usable = profile.subgroups.filter((sg) => {
+      const key = String(sg?.subgroupRSSId ?? '')
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    try {
+      rememberSubgroups(profile.subgroups) // 只是名字字典
+    } catch (err) {
+      log.warn({ id, err: err.message }, 'anime.subgroups dict-write-fail')
+    }
+    const items = usable.map(toSubgroupItem)
     log.debug({ id, total: items.length, source: 'mikan' }, 'anime.subgroups ok')
     return { items, source: 'mikan' }
   } catch (err) {
-    const items = listSubgroups(id).map(toSubgroupItem)
-    log.warn({ id, mikanId: row.mikan_id, err: err.message, fallback: items.length }, 'anime.subgroups fetch-fail')
-    return { items, source: 'db-fallback' }
+    log.warn({ id, mikanId: row.mikan_id, err: err.message }, 'anime.subgroups fetch-fail')
+    return { items: [], source: 'none' }
   }
 }
 
@@ -139,31 +151,27 @@ export async function getAnimeSeries(id, { log = logger } = {}) {
 /**
  * 某字幕组的资源列表（种子）—— **每次直接问上游，不缓存**
  * ---------------------------------------------------------------------------
- * 为什么去掉缓存：种子上新很频繁，5 分钟缓存经常让用户看到旧列表（"怎么还没有新的"）。
- * 一次 RSS 请求很便宜，直接取最新的。
- * 归属校验不能省：subgroupId 来自前端，必须先确认它**属于这部作品**，
- * 否则改个数字就能读出别部作品的资源（同一字幕组在不同作品下的 RSS id 是不同的）。
+ * `subgroupRssId` 就是 `/subgroups` 返回的那个 `id`（**该作品下的** RSS id）。
+ * 为什么不再做归属校验：那份「(作品, 字幕组) → rss id」的映射已经不存了，而 Mikan 的
+ * RSS 本来就是公开数据 —— 传别部作品的 id 最多读到别部作品的公开列表，
+ * 不会泄露我们库里的任何东西（这正是当初要校验的原因，现在不成立了）。
  * @param {number|string} id 作品主键
- * @param {number|string} subgroupId subgroup 表的行主键
+ * @param {number|string} subgroupRssId 字幕组在该作品下的 RSS id（/subgroups 的 id）
  */
-export async function getSubgroupReleases(id, subgroupId, { log = logger } = {}) {
+export async function getSubgroupReleases(id, subgroupRssId, { log = logger } = {}) {
   const row = findById(id)
   if (!row) throw fail('NOT_FOUND', `没有 id=${id} 的作品记录`)
 
-  const subgroup = listSubgroups(id).find((sg) => String(sg.id) === String(subgroupId))
-  if (!subgroup) throw fail('NOT_FOUND', `作品 ${id} 下没有字幕组 ${subgroupId}`)
+  const rssId = String(subgroupRssId ?? '')
+  const base = { subgroup: { id: Number(rssId) || 0, name: '' }, items: [], total: 0, cached: false }
 
-  // 老数据可能没存 RSS id（那列本来就是可空的）—— 取不到就老实给空列表
-  if (!row.mikan_id || !subgroup.subgroup_rss_id) {
-    log.warn(
-      { id, subgroupId: subgroup.id, mikanId: row.mikan_id, rssId: subgroup.subgroup_rss_id },
-      'anime.releases missing-ids',
-    )
-    return { subgroup: toSubgroupItem(subgroup), items: [], total: 0, cached: false }
+  if (!row.mikan_id || !rssId) {
+    log.warn({ id, rssId, mikanId: row.mikan_id }, 'anime.releases missing-ids')
+    return base
   }
 
-  const items = await fetchSubgroupReleases(row.mikan_id, subgroup.subgroup_rss_id)
+  const items = await fetchSubgroupReleases(row.mikan_id, rssId)
 
-  log.debug({ id, subgroupId: subgroup.id, total: items.length }, 'anime.releases ok')
-  return { subgroup: toSubgroupItem(subgroup), items, total: items.length, cached: false }
+  log.debug({ id, rssId, total: items.length }, 'anime.releases ok')
+  return { ...base, items, total: items.length }
 }

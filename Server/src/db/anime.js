@@ -207,16 +207,15 @@ export const setPosterSource = (id, { src = null, path = null } = {}) =>
 /** 映射/评分覆盖率统计（CLI 与排错用） */
 export const stats = () => stmt.stats.get()
 
-// ── 字幕组（实体表 + 关联表；下载页要「字幕组 → 资源列表」两级入口）────────────
+// ── 字幕组字典（只存 id → 名字；「哪个作品有哪些组」**不存**，每次现取）────────────
 //
-// 为什么是两张表：字幕组本身是全站共用的字典（Kirara Fantasia 出现在 321 部作品下），
-// 老结构把「作品」和「字幕组」塞进同一张表，468 部作品就攒出 1930 行重复名字。
-// 现在：subgroup 存实体（全站唯一）、anime_subgroup 存关系（复合主键，不带自增 id）。
-// 读的时候 JOIN 回「一行一个字幕组」的形状，而且列名沿用老的
-// （subgroup_mikan_id / subgroup_rss_id）—— 上层与前端一行都不用改。
+// 为什么只留字典：Mikan 详情页（`GET /Home/Bangumi/{mikanId}`）一页就带着
+// 「字幕组 + 各自的 RSS id」，面板打开时现取即可。而「(作品, 字幕组) → RSS id」这个映射
+// **本来就不该当长期数据**：同一个组在不同作品下的 RSS id 是不同的（实测 37 / 488 / 422）。
+// 字典的用处：拿到 mikan_subgroup_id 能显示名字，以后按组筛选/排序有个稳定对照。
 
 const subgroupStmt = {
-  /** 实体 upsert：同一个字幕组全站只留一条，改名以最近一次抓取为准 */
+  /** 字典 upsert：同一个字幕组全站只留一条，改名以最近一次抓取为准 */
   upsertEntity: db.prepare(`
     INSERT INTO subgroup (mikan_subgroup_id, name, rss_id, source, created_at, updated_at)
     VALUES (?, ?, ?, 'mikan', ?, ?)
@@ -225,49 +224,22 @@ const subgroupStmt = {
       rss_id = COALESCE(excluded.rss_id, subgroup.rss_id),
       updated_at = excluded.updated_at
   `),
-  entityByMikanId: db.prepare('SELECT id FROM subgroup WHERE mikan_subgroup_id = ?'),
-
-  /** 关系：某作品下有哪些字幕组；rss_id 必须按作品存（同一个组在不同作品下的 RSS id 不同） */
-  clearLinks: db.prepare('DELETE FROM anime_subgroup WHERE anime_id = ?'),
-  insertLink: db.prepare(`
-    INSERT INTO anime_subgroup (anime_id, subgroup_id, mikan_id, rss_id, sort, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(anime_id, subgroup_id) DO UPDATE SET
-      rss_id = COALESCE(excluded.rss_id, anime_subgroup.rss_id),
-      sort = excluded.sort,
-      updated_at = excluded.updated_at
-  `),
-
-  /** 读：JOIN 成上层熟悉的形状（列名与老表一致，调用方无感） */
-  byAnime: db.prepare(`
-    SELECT s.id                 AS id,
-           s.mikan_subgroup_id  AS subgroup_mikan_id,
-           s.name               AS name,
-           s.source             AS source,
-           l.mikan_id           AS mikan_id,
-           l.rss_id             AS subgroup_rss_id
-    FROM anime_subgroup l
-    JOIN subgroup s ON s.id = l.subgroup_id
-    WHERE l.anime_id = ?
-    ORDER BY l.sort ASC, s.name ASC
-  `),
   countEntities: db.prepare('SELECT COUNT(*) AS n FROM subgroup'),
-  countLinks: db.prepare('SELECT COUNT(*) AS n FROM anime_subgroup'),
 }
 
 /**
- * 用最新的字幕组列表覆盖某部作品的字幕组（先清关系再按顺序重建）
- * @param {number} animeId
+ * 把这一批字幕组记进字典（只记身份与名字，**不记**「哪个作品有它」）
+ * ---------------------------------------------------------------------------
+ * 面板每打开一次就会调一次 → 字典自动保持新鲜；它只是名字缓存，写失败也不影响功能。
  * @param {Array<{subgroupName:string, subgroupMikanId:string, subgroupRSSId?:string}>} subgroups
- * @param {string} mikanId
  */
-export function replaceSubgroups(animeId, subgroups = [], mikanId = null) {
+export function rememberSubgroups(subgroups = []) {
+  if (!subgroups.length) return 0
+  const now = Date.now()
   db.exec('BEGIN')
   try {
-    subgroupStmt.clearLinks.run(val(animeId))
-    const now = Date.now()
-    subgroups.forEach((sg, index) => {
-      // ① 先把字幕组本身写进实体表（同一个组被 N 部作品引用时，这一步只会更新名字）
+    for (const sg of subgroups) {
+      if (!sg?.subgroupMikanId) continue
       subgroupStmt.upsertEntity.run(
         val(sg.subgroupMikanId),
         val(sg.subgroupName),
@@ -275,19 +247,7 @@ export function replaceSubgroups(animeId, subgroups = [], mikanId = null) {
         now,
         now,
       )
-      const entity = subgroupStmt.entityByMikanId.get(val(sg.subgroupMikanId))
-      if (!entity) return
-      // ② 再写「这部作品有这个组」的关系（sort 记上游顺序）
-      subgroupStmt.insertLink.run(
-        val(animeId),
-        val(entity.id),
-        val(mikanId),
-        val(sg.subgroupRSSId),
-        val(index),
-        now,
-        now,
-      )
-    })
+    }
     db.exec('COMMIT')
   } catch (err) {
     db.exec('ROLLBACK')
@@ -296,13 +256,8 @@ export function replaceSubgroups(animeId, subgroups = [], mikanId = null) {
   return subgroups.length
 }
 
-export const listSubgroups = (animeId) => subgroupStmt.byAnime.all(val(animeId))
-
-/** 排错/统计用：字幕组实体数（去重后）与关系数 —— 一眼看出有没有重复堆积 */
-export const subgroupStats = () => ({
-  entities: subgroupStmt.countEntities.get().n,
-  links: subgroupStmt.countLinks.get().n,
-})
+/** 字典里有多少个字幕组（排错用） */
+export const countSubgroupDict = () => subgroupStmt.countEntities.get()?.n ?? 0
 
 // ── 系列链（后台走 BGM 关系算出来的产物；下载归档目录要用）──────────────────
 //

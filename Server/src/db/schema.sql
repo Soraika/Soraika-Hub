@@ -57,40 +57,29 @@ CREATE INDEX IF NOT EXISTS idx_anime_score  ON anime(score);
 CREATE INDEX IF NOT EXISTS idx_anime_series ON anime(series_id);
 
 -- ============================================================================
--- 字幕组：**实体表** + **关联表**（原来是「一部作品一行」的单表）
+-- ============================================================================
+-- 字幕组字典（**只存身份，不存"哪个作品有它"**）
 -- ----------------------------------------------------------------------------
--- 为什么必须拆（实测数据）：老结构下 468 部作品攒出 1930 行，同一个字幕组被重复存
--- 几十上百次（Kirara Fantasia 321 行、LoliHouse 249 行…），库里看上去全是重复名字。
---   · 字幕组本身是全站共用的**字典**：同一个组会出现在几十部作品下
---   · 「哪些作品有这个组」才是**关系**，天然是多对多
--- 拆开后：实体 139 行（全站唯一），关系 1930 行 —— 关系行数不会少（它就是这么多关系），
--- 但名字/来源只维护一份，改名时全站一致。
+-- 变更：原先还有一张 `anime_subgroup`（作品 ↔ 字幕组 + **该作品下的 RSS id**），已删除。
+-- 理由：那个映射**每次都能现取** —— 面板打开时抓一次 Mikan 详情页
+-- `GET /Home/Bangumi/{mikanId}` 就带着「字幕组 + 各自的 RSS id」；前端拿到 id 后
+-- 取资源时回传即可（`/api/anime/:id/releases?subgroupId=<该作品下的 rssId>`），
+-- 服务端不必再存一份（实测同一个组在不同作品下 rss_id 不同：千夏 37 / 488 / 422）。
+-- 留这张表只为一件事：**名字字典** —— 有了 mikan_subgroup_id 就能显示名字，
+-- 以后要按字幕组筛选/排序也有个稳定的 id → 名字对照。因为不存关系，不会有旧结构的重复。
+-- 数据可重建：面板每打开一次，就把见到的组 upsert 回来。
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS subgroup (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   mikan_subgroup_id TEXT NOT NULL,   -- 字幕组在 Mikan 的 id（全站唯一，去重键）
   name              TEXT NOT NULL,   -- 最新名字（上游改名以最近一次抓取为准）
-  rss_id            TEXT,            -- 最新 RSS id（兜底；某作品下用哪个见关联表）
+  rss_id            TEXT,            -- 最近一次见到的 RSS id（仅供参考；取资源以现取的为准）
   source            TEXT DEFAULT 'mikan',
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_subgroup_mikan ON subgroup(mikan_subgroup_id);
 
--- 作品 ↔ 字幕组：**复合主键就是它自己的身份**，不额外搞一个自增 id。
--- rss_id 必须放在这里：同一个组在不同作品下的 RSS id 并不相同（取资源列表要用它）。
-CREATE TABLE IF NOT EXISTS anime_subgroup (
-  anime_id    INTEGER NOT NULL,      -- → anime.id
-  subgroup_id INTEGER NOT NULL,      -- → subgroup.id
-  mikan_id    TEXT,                  -- 所属作品（Mikan），排错用
-  rss_id      TEXT,                  -- 该作品下这个组的 RSS id
-  sort        INTEGER DEFAULT 0,     -- 上游给的顺序（字幕组列表的展示顺序）
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL,
-  PRIMARY KEY (anime_id, subgroup_id)
-) WITHOUT ROWID;
--- 反查「哪些作品有这个字幕组」（以后做字幕组优先级 / 追某组要用）
-CREATE INDEX IF NOT EXISTS idx_anime_subgroup_sub ON anime_subgroup(subgroup_id);
 
 -- ============================================================================
 -- 设置表：设置页改过的配置项（key → JSON 值）

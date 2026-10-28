@@ -55,7 +55,8 @@ animeRouter.get('/anime/:id/subgroups', async (req, res, next) => {
 
 /**
  * GET /api/anime/:id/releases?subgroupId=123
- * 第二级：某字幕组的资源列表。subgroupId 是 subgroup 表主键（第一级接口给的 id）
+ * 第二级：某字幕组的资源列表。subgroupId 就是 `/subgroups` 返回的那个 id
+ * （= 该作品下的 RSS id；映射不再落库，服务端直接拿它去问 Mikan）
  */
 animeRouter.get('/anime/:id/releases', async (req, res, next) => {
   try {

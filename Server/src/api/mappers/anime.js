@@ -50,14 +50,17 @@ export function toAnimeDetail(row) {
 }
 
 /**
- * subgroup 行 → 字幕组条目
- * 只暴露前端要用的：库内主键（点它取资源列表）、名字、两个来源 id（排错/外链用）。
+ * Mikan 详情页解析出来的字幕组 → 前端条目
+ * ---------------------------------------------------------------------------
+ * `id` 直接用**该作品下的 RSS id**：它就是「这部作品里的这个组」的稳定身份，
+ * 也是取资源列表唯一需要的参数 —— 前端回传它即可，服务端不再存那份映射。
  */
-export function toSubgroupItem(row) {
+export function toSubgroupItem(sg) {
+  const rssId = sg?.subgroupRSSId == null ? '' : String(sg.subgroupRSSId)
   return {
-    id: row.id,
-    name: row.name,
-    mikanId: row.subgroup_mikan_id,
-    rssId: row.subgroup_rss_id,
+    id: Number(rssId) || 0,
+    name: sg?.subgroupName || '',
+    mikanId: sg?.subgroupMikanId == null ? '' : String(sg.subgroupMikanId),
+    rssId,
   }
 }
