@@ -20,13 +20,13 @@ import {
   currentValues,
   fieldsForUi,
   parseImport,
-  resetToEnv,
+  resetToDefaults,
   validateValue,
 } from '../../lib/settings.js'
 
-/** 回落 .env → 套用库里的覆盖项（读库/重置/导入后都走这条路径，保证内存与库一致） */
+/** 回落代码默认值 → 套用库里的覆盖项（读库/重置/导入后都走这条路径，保证内存与库一致） */
 function applyStored() {
-  resetToEnv()
+  resetToDefaults()
   return applyValues(listSettings())
 }
 
@@ -62,7 +62,7 @@ export function fillMissingSettings({ log = logger } = {}) {
 /** 启动时调用：把库里存过的覆盖项应用上，再静默补齐缺的项 */
 export function loadStoredSettings({ log = logger } = {}) {
   const stored = listSettings()
-  resetToEnv()
+  resetToDefaults()
   const count = applyValues(stored)
   if (count) log.info({ count, keys: Object.keys(stored) }, 'settings.load ok')
   fillMissingSettings({ log })

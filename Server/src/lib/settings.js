@@ -3,14 +3,14 @@
  * ---------------------------------------------------------------------------
  * 一份清单三处复用：设置页渲染表单、PUT 时校验、导出/导入时校验格式 —— 不三处各写一遍。
  *
- * 覆盖模型：**只存改过的项**。没改过的项继续吃 .env（进程启动时的快照 envConfig）或代码默认值；
- * 某项传 `null` 就删掉覆盖、回落到 env —— 这就是「重置为默认」的实现。
+ * 覆盖模型：**只存改过的项**。没改过的项继续用代码默认值（`config.js` 的 `defaultConfig` 快照）；
+ * 某项传 `null` 就删掉覆盖、回落到默认值 —— 这就是「重置为默认」的实现。
  * 存库/路由分别在 db/settings.js 与 api/pages/settings.js，这里只做纯逻辑（不碰 SQL、不发请求）。
  *
  * restart=true 的含义：那几项是**启动时读进局部变量**的（端口、落盘目录、缓存实例的 TTL…），
  * 改了要重启对应进程才生效 —— 设置页会显式提示，别让人以为保存了没用。
  */
-import { config, envConfig } from '../config.js'
+import { config, defaultConfig } from '../config.js'
 import { fail } from './errors.js'
 
 /**
@@ -187,13 +187,13 @@ export function validateValue(field, raw) {
 /* ── 应用 ────────────────────────────────────────────────────────────────── */
 
 /**
- * 把 `{ path: value }` 写进运行时 config（`null` = 删掉覆盖、回落到 .env 快照）
+ * 把 `{ path: value }` 写进运行时 config（`null` = 删掉覆盖、回落到代码默认值）
  * 只改内存；落库在 api/pages/settings.js —— 本层不碰 SQL（分层：lib 不依赖 db）
  */
 export function applyValues(values = {}) {
   for (const [path, value] of Object.entries(values)) {
     if (!FIELD_BY_PATH.has(path)) continue
-    setAtPath(config, path, value === null ? getAtPath(envConfig, path) : value)
+    setAtPath(config, path, value === null ? getAtPath(defaultConfig, path) : value)
   }
   // 派生项：AI 是否可用只看有没有 key —— 改完 key 要立刻反映到 /api/health 与设置页
   config.ai.enabled = Boolean(config.ai.apiKey)
@@ -201,13 +201,13 @@ export function applyValues(values = {}) {
 }
 
 /**
- * 全部字段回落到 .env 快照
+ * 全部字段回落到代码默认值
  * 「应用库里的覆盖项」之前先调它一次，保证重置真的干净 ——
  * 否则删掉某行覆盖后，内存里还留着上一次的值（库里已经没有它了）。
  */
-export function resetToEnv() {
+export function resetToDefaults() {
   for (const field of SETTINGS_FIELDS) {
-    setAtPath(config, field.path, getAtPath(envConfig, field.path))
+    setAtPath(config, field.path, getAtPath(defaultConfig, field.path))
   }
   config.ai.enabled = Boolean(config.ai.apiKey)
 }
@@ -257,8 +257,8 @@ export function fieldsForUi(overridden = []) {
     const base = {
       ...field,
       overridden: overridden.includes(field.path),
-      /** .env / 代码默认值 —— 输入框空着时用它当 placeholder（「默认值优先，能测不猜」） */
-      default: getAtPath(envConfig, field.path) ?? null,
+      /** 代码默认值 —— 输入框空着时用它当 placeholder（「默认值优先，能测不猜」） */
+      default: getAtPath(defaultConfig, field.path) ?? null,
     }
     if (field.type === 'secret') return { ...base, value: null, ...secretState(field.path) }
     return { ...base, value: getAtPath(config, field.path) ?? null }

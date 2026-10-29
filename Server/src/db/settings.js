@@ -34,7 +34,7 @@ export function listSettings() {
 }
 
 /**
- * 批量写入（一个事务）：`{ path: value }`；value 为 null 表示**删除覆盖**（回落到 .env / 默认值）
+ * 批量写入（一个事务）：`{ path: value }`；value 为 null 表示**删除覆盖**（回落到代码默认值）
  * @param {Record<string, any>} patch
  */
 export function setSettings(patch) {

@@ -53,7 +53,7 @@ await server.connect(new StdioServerTransport())
 
 ## 约定（照服务端 CONVENTIONS 来）
 
-- **未配置 AI**（`Server/.env` 没填 `AI_API_KEY`）：清单照常返回（`enabled: false`），
+- **未配置 AI**（设置页没填 AI key）：清单照常返回（`enabled: false`），
   调用得到 `AI_DISABLED`（HTTP 501）。MCP 层应转成 `isError: true` 并把 message 原样透出，
   别吞成「未知错误」——这句话会告诉使用者去填 key
 - **参数错误**（`titles` 不是非空字符串数组）：`BAD_REQUEST`（400），`detail.available` 会列出正确工具名

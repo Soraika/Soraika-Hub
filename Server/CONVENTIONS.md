@@ -135,12 +135,15 @@ log.info?.(`✓ ${row.title}｜bgmId=${x}｜字幕组 ${n} 个｜评分 ${s}（$
 
 ## 6. 配置规范
 
-**两级来源，优先级从低到高**：代码默认值 → `.env` → 设置页（存 `settings` 表）。
+**两层来源，优先级从低到高**：**代码默认值（`config.js`）→ 设置页（存 `settings` 表）**。
+**不读 `.env`** —— 只有三个启动参数走环境变量（进程起来之前就得知道、界面上改不了）：
+`PORT` / `DB_FILE` / `LOG_LEVEL`。
+
 只有**设置页改过的项**才进库（不是全量快照）—— 这样以后新增配置项，老库不会因为「缺这个键」而出错。
 
 - **字段清单是唯一来源**：`lib/settings.js` 的 `SETTINGS_FIELDS` 决定「能改什么、怎么校验、设置页长什么样」；
   加一个配置项 = 改这一处 + `config.js` 的默认值，**前端不用动**（表单由后端清单驱动）
-- **启动时先回落 .env、再套用库里的覆盖项**（`api/pages/settings.js` 的 `loadStoredSettings()`）：
+- **启动时先回落代码默认值、再套用库里的覆盖项**（`api/pages/settings.js` 的 `loadStoredSettings()`）：
   API 进程与独立 worker 进程都要在开工前调一次，否则两边读到的配置会不一致
 - **校验一律走 `validateValue`**：非法值整批拒绝（400 + `detail.errors` 指出哪一项），不做「改一半」
 - **`restart=true` 的项**（端口、落盘目录、缓存实例 TTL、`worker.inline`）是启动时读进局部变量的，
