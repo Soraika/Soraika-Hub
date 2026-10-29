@@ -58,7 +58,21 @@ export async function enrichOne(row, log = logger) {
     }
 
     // ① Mikan 详情页：权威 bgmId + 字幕组列表
-    const profile = await fetchAnimeProfile(row.mikan_id)
+    let profile
+    try {
+      profile = await fetchAnimeProfile(row.mikan_id)
+    } catch (err) {
+      // Mikan 明确 404（这个 mikanId 的页面根本不存在）→ **上游确实没有**，按"放弃"处理：
+      // 失败计数 +1，超 `missLimit` 后退出队列、隔 `missRetryHours` 再试一次。
+      // 不这么做的话它会永远留在待补队列里 —— 实测 3 条死 mikanId（624 / 547 / 2547）
+      // 每分钟白打一次上游，把 worker 的失败计数刷满。
+      if (/HTTP 404/.test(String(err?.message || '')) || err?.detail?.status === 404) {
+        markBgmMiss(row.id)
+        log.warn({ id: row.id, mikanId: row.mikan_id }, 'worker.enrich mikan-not-found（放弃重试）')
+        return 'noBgmId'
+      }
+      throw err
+    }
     rememberSubgroups(profile.subgroups) // 顺手记进名字字典（不再存「哪个作品有它」）
 
     if (!profile.bangumiId) {

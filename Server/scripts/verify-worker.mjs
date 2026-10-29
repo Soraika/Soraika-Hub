@@ -93,6 +93,10 @@ check(
   '档案补齐的快路径会顺手抓一次 Mikan 详情页 → rememberSubgroups（失败只 warn，不影响档案）',
 )
 check(typeof countSubgroupDict() === 'number', `字幕组名字字典可观测 → ${countSubgroupDict()} 条`)
+check(
+  /mikan-not-found/.test(enrichSource),
+  'Mikan 详情页 404 = 上游确实没有 → 计入放弃（否则死 mikanId 会永远每分钟重试一次）',
+)
 
 console.log(failed ? `\n✗ 失败 ${failed} 项` : '\n✓ 全部通过')
 process.exitCode = failed ? 1 : 0
