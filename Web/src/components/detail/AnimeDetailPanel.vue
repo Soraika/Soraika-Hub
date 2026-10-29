@@ -5,22 +5,25 @@
         <IconX :size="18" />
       </button>
 
-      <!-- ── 三态：out-in 淡出淡入（loading → 详情 → 换作品都不硬切） ─────
-           每个分支都带 key：loading 与 error 是同一个组件，不给 key 的话
-           Vue 会当「同一个节点原地改 props」，过渡不会触发 -->
-      <Transition name="phase" mode="out-in">
-        <StateBlock v-if="uiState === 'loading'" key="loading" state="loading" text="正在读取档案…" />
-        <StateBlock
-          v-else-if="uiState === 'error'"
-          key="error"
-          state="error"
-          :text="errorText || '读取失败，请稍后重试'"
-          retry-text="重试"
-          @retry="$emit('retry')"
-        />
+      <!-- ── 三态：loading / error **不进过渡** ─────────────────────────────
+           点新海报时，`useAnimeDetail` 会立刻把 data 清空、loading 置 true；
+           如果 loading 也放在 <Transition mode="out-in"> 里，Vue 必须先等上一部作品
+           **淡出完**（120ms，这段时间屏幕上还是旧数据）才轮到 loading —— 用户看到的就是
+           "点了还显示之前的数据"。所以这两个状态直接渲染，点下去立刻就是刷新动画。 -->
+      <StateBlock v-if="uiState === 'loading'" key="loading" state="loading" text="正在读取档案…" />
+      <StateBlock
+        v-else-if="uiState === 'error'"
+        key="error"
+        state="error"
+        :text="errorText || '读取失败，请稍后重试'"
+        retry-text="重试"
+        @retry="$emit('retry')"
+      />
 
-        <!-- ── 详情：key 带上作品主键，换一部就走一次切换动画 ───────────── -->
-        <div v-else-if="data" :key="'detail-' + data.id" class="detail">
+      <!-- ── 详情：只有它走淡入淡出；key 带上作品主键，换一部就重新进场 ─────
+           （从 loading 进详情时也是这条过渡 —— 数据到了才淡入，不硬切） -->
+      <Transition v-else name="phase" mode="out-in">
+        <div v-if="data" :key="'detail-' + data.id" class="detail">
           <header class="detail-header">
             <PosterImage
               class="detail-poster"

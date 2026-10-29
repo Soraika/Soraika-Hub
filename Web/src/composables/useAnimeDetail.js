@@ -24,6 +24,18 @@ export function useAnimeDetail() {
   // 快速连点两张海报时，旧响应可能后到 —— 用序号作废它
   let requestSeq = 0
 
+  /**
+   * loading 至少显示这么久（毫秒）
+   * ---------------------------------------------------------------------------
+   * 本地接口 20~50ms 就回来了 → 不兜一下的话 loading 只渲染一帧，用户看到的是
+   * "点了没反应、然后内容直接变了"。180ms 既看不出来慢、又能让刷新动画真的露出来。
+   */
+  const MIN_LOADING_MS = 180
+  const waitRest = async (startedAt) => {
+    const rest = MIN_LOADING_MS - (Date.now() - startedAt)
+    if (rest > 0) await new Promise((resolve) => setTimeout(resolve, rest))
+  }
+
   /** 面板是否可见（宽度展开动画由组件负责，这里只管「该不该开」） */
   const visible = computed(() => animeId.value !== null)
 
@@ -37,13 +49,18 @@ export function useAnimeDetail() {
 
   async function load(id) {
     const seq = ++requestSeq
+    const startedAt = Date.now()
     loading.value = true
     error.value = null
     try {
       const res = await fetchAnimeDetail(id)
       if (seq !== requestSeq) return // 已有更新的请求（换了作品或已关闭），丢弃本次结果
+      await waitRest(startedAt) // 别让 loading 只闪一帧（见 MIN_LOADING_MS）
+      if (seq !== requestSeq) return
       data.value = res
     } catch (err) {
+      if (seq !== requestSeq) return
+      await waitRest(startedAt)
       if (seq !== requestSeq) return
       error.value = err
     } finally {

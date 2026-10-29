@@ -149,9 +149,14 @@ try {
   const panelError = await renderPanel({ uiState: 'error', errorText: '读不到这一条' })
   check(panelError.includes('读不到这一条') && panelError.includes('重试'), '面板 error 态：具体文案 + 重试按钮')
 
-  /* ── ④b 切换动画：三态与换作品都包在 out-in 过渡里（UI 契约，别被顺手删掉） ── */
+  /* ── ④b 切换动画：loading/error **不进过渡**（点海报立刻看到刷新动画），
+     只有「详情」走 out-in 淡入淡出（换作品不硬切）。这是 UI 契约，别被顺手改回去。 ── */
   const panelSource = readFileSync(new URL('../src/components/detail/AnimeDetailPanel.vue', import.meta.url), 'utf8')
-  check(panelSource.includes('<Transition name="phase" mode="out-in">'), '面板三态包在 <Transition name="phase" mode="out-in"> 里（不硬切）')
+  check(
+    /<StateBlock v-if="uiState === 'loading'"/.test(panelSource) &&
+      /<Transition v-else name="phase" mode="out-in">/.test(panelSource),
+    '点海报立刻进 loading（loading/error 不进过渡）；只有详情走 <Transition name="phase" mode="out-in">',
+  )
 
   /* ── 系列 chip（标题区）：一拍即开、点某部就换作品 ────────────────────── */
   check(
