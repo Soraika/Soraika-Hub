@@ -22,6 +22,7 @@ import { fail } from '../../lib/errors.js'
 import { revisionOf } from '../../lib/format.js'
 import { logger } from '../../lib/logger.js'
 import { normalizeSeriesAiOutput } from '../../lib/series.js'
+import { normalizeSignature } from '../../lib/release-match.js'
 import { createMemCache } from '../../cache/mem.js'
 import { chatJson } from '../sources/ai.js'
 
@@ -408,5 +409,79 @@ ${extraLines}`
   return { ...out, model, ms }
 }
 
-/** 看板用：两个缓存的当前条目数 */
-export const aiCacheStats = () => ({ tagCache: tagCache.size(), episodeCache: episodeCache.size() })
+/* ── ④ 资源格式特征（从某个字幕组的样本里抽出「格式」）──────────────────────
+   注意分工：**抽取**在这里（AI），**判断某条资源属于谁**在 lib/release-match.js
+   （确定性匹配，免费且可测）。为什么这样分：几百条资源逐条问模型又慢又贵，
+   而"这批名字的共有格式"问一次就够了。
+   改了下面的 prompt 必须同步升 FORMAT_PROMPT_VERSION（缓存 key 带版本号）。 */
+
+const FORMAT_PROMPT_VERSION = 'v2'
+
+const FORMAT_SYSTEM_PROMPT = `你在看一批**来自同一个字幕组**的动画资源文件名（同一部番）。
+任务：抽出这批名字共有的「格式特征」—— 用来在**全部字幕组**的资源里认出这个组的条目。
+
+只输出 JSON，不要 Markdown、不要解释：
+{ "prefix": "【DMHY】【黑色五叶草/Black_Clover】[", "literals": ["【DMHY】"] }
+
+- prefix：这批文件名**从第一个字符起完全相同的那一段**。可以停在半个分段里（如末尾是「[」）。
+  拿不准就省略这个字段。
+- literals：这批文件名**每一条都包含**的字面片段 —— **只放"这个组的身份特征"**：
+  字幕组标记（如「【DMHY】」）、番名的固定写法（如「Black_Clover」）。最多 3 个，越短越稳。
+- 抽不出共同特征时输出：{ "prefix": "", "literals": [] }
+
+**绝对不要**把会随单条资源变化的字段放进 literals：分辨率（720P / 1080P）、编码（x264 / HEVC）、
+语言标记（[简体] / [繁体] / [简繁]）、媒体格式（MP4 / MKV）、集数、日期、番号 ——
+同一个组会同时发这些不同版本，写死就等于把它们全漏掉。
+
+硬性要求：输出会被直接用于 \`title.startsWith(prefix)\` 和 \`title.includes(literal)\`，
+所以**只能给字面串** —— 不许给通配符、占位符（如 {ep}）、正则、省略号。`
+
+/** 特征缓存：同一批样本 6 小时内不重复问（key = 样本内容哈希） */
+const formatCache = createMemCache({ ttlMs: () => 6 * 60 * 60 * 1000, max: 200 })
+
+/**
+ * 从「某个字幕组自己的资源文件名」抽出格式特征
+ * ---------------------------------------------------------------------------
+ * 用途：Mikan 的单字幕组 feed 只给最近 100 条，要靠这个特征去**全量 feed** 里
+ * 把该组的其它条目认领回来（认领逻辑见 lib/release-match.js）。
+ * 没配 AI / 样本太少 / 抽不出来 → 返回 null，调用方用 `signatureFromSamples` 确定性兜底。
+ * @param {string[]} samples 同一个字幕组的资源文件名（取前 20 条足够）
+ * @returns {Promise<{prefix?:string, literals?:string[], source:'ai', cached:boolean}|null>}
+ */
+export async function classifyReleaseFormat(samples = [], { provider, log = logger } = {}) {
+  const list = uniqueTitles(samples).slice(0, 20)
+  if (list.length < 3) return null
+  if (!config.ai.enabled) return null
+
+  const key = `format:${FORMAT_PROMPT_VERSION}:${hashOf(list)}`
+  const cached = formatCache.get(key)
+  if (cached) return { ...cached, cached: true }
+
+  try {
+    const { parsed, model, ms } = await chatJson({
+      system: FORMAT_SYSTEM_PROMPT,
+      user: JSON.stringify({ samples: list }),
+      provider,
+      log,
+    })
+    const sig = normalizeSignature(parsed, list)
+    if (!sig) {
+      log.debug({ samples: list.length, ms }, 'ai.format no-signature')
+      return null
+    }
+    formatCache.set(key, { ...sig, model })
+    log.info({ samples: list.length, prefix: sig.prefix, literals: sig.literals, model, ms }, 'ai.format ok')
+    return { ...sig, cached: false }
+  } catch (err) {
+    // 抽不出来不当错误：调用方会退回确定性特征
+    log.warn({ samples: list.length, err: err.message }, 'ai.format fail')
+    return null
+  }
+}
+
+/** 看板用：各缓存的当前条目数 */
+export const aiCacheStats = () => ({
+  tagCache: tagCache.size(),
+  episodeCache: episodeCache.size(),
+  formatCache: formatCache.size(),
+})

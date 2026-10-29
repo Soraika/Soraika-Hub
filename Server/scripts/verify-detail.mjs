@@ -189,11 +189,13 @@ try {
     'anime_subgroup 已删除（映射改为每次现取），启动时会把旧表 DROP 掉',
   )
 
-  /* 取资源列表用的是**该作品下的 RSS 字幕组 id**（/subgroups 返回的 id），不再查库 */
+  /* 取资源列表用的是**该作品下的 RSS 字幕组 id**（/subgroups 返回的 id），不再查库；
+     不传第二个参数 = 不带 subgroupid 的**全量 feed**（单组 feed 只给最近 100 条）。 */
   const animePageSource = readFileSync(new URL('../src/api/pages/anime.js', import.meta.url), 'utf8')
   check(
-    /fetchSubgroupReleases\(row\.mikan_id, rssId\)/.test(animePageSource),
-    '取资源用 RSS 字幕组 id（/subgroups 的 id），不再查库里的映射',
+    /fetchSubgroupReleases\(row\.mikan_id, want\)/.test(animePageSource) &&
+      /fetchSubgroupReleases\(row\.mikan_id\)/.test(animePageSource),
+    '取资源用 RSS 字幕组 id（/subgroups 的 id）；不传参数即全量 feed',
   )
 
   if (subgroupData.items.length) {
@@ -225,6 +227,14 @@ try {
     check(
       again2?.cached === false && again2.total === rel.total,
       `资源列表**不缓存**、每次直连上游 → cached=${again2?.cached}（总数稳定=${rel.total}）`,
+    )
+
+    /* 单组 feed 到 100 条 = 可能被截断 → 用「这个组自己的格式特征」去全量 feed 里认领。
+       这里只钉契约：`subgroupId=all` 能拿全量，且两种来源都带 source 字段。 */
+    const allRel = (await get(`/api/anime/${card.id}/releases?subgroupId=all`)).body?.data
+    check(
+      allRel?.source === 'all' && allRel.total >= rel.total,
+      `「全部字幕组」可用 → total=${allRel?.total}（单组 ${rel.total}；单组 100 条时会用特征认领补全）`,
     )
 
     // 归属校验：映射不再落库 → 不再伪造 404，而是直接问 Mikan（公开 RSS）。

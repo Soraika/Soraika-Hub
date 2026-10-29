@@ -14,6 +14,8 @@
  */
 import { warmPoster } from '../../cache/poster.js'
 import { findById, listSeriesMembers, rememberSubgroups } from '../../db/anime.js'
+import { claimBySignature, signatureFromSamples } from '../../lib/release-match.js'
+import { classifyReleaseFormat } from './ai.js'
 import { enrichOne } from '../../jobs/enrich.js'
 import { fillSeriesFor } from '../../jobs/series.js'
 import { fail } from '../../lib/errors.js'
@@ -24,6 +26,13 @@ import { fetchAnimeProfile, fetchSubgroupReleases } from '../sources/mikan.js'
 /** 现场补档的防抖窗口：同一条作品 5 分钟内只补一次（连点 / 来回切换不重复打上游） */
 const ENRICH_DEBOUNCE_MS = 5 * 60 * 1000
 const enrichedAt = new Map()
+
+/** 单组 feed 的「可能被截断」阈值：Mikan 对带 subgroupid 的 feed 只给最近 100 条 */
+const TRUNCATE_HINT = 100
+
+/** 格式特征缓存（按 作品+组）：样本短期不会变，6 小时内不重复问 AI */
+const SIGNATURE_TTL_MS = 6 * 60 * 60 * 1000
+const signatureCache = new Map()
 
 /** 档案字段缺了就该现取：有 bgm_id 才可能补到东西（评分 / 标签 / 简介任一为空） */
 const needsEnrich = (row) =>
@@ -151,27 +160,81 @@ export async function getAnimeSeries(id, { log = logger } = {}) {
 /**
  * 某字幕组的资源列表（种子）—— **每次直接问上游，不缓存**
  * ---------------------------------------------------------------------------
- * `subgroupRssId` 就是 `/subgroups` 返回的那个 `id`（**该作品下的** RSS id）。
- * 为什么不再做归属校验：那份「(作品, 字幕组) → rss id」的映射已经不存了，而 Mikan 的
- * RSS 本来就是公开数据 —— 传别部作品的 id 最多读到别部作品的公开列表，
- * 不会泄露我们库里的任何东西（这正是当初要校验的原因，现在不成立了）。
+ * `subgroupRssId` 就是 `/subgroups` 返回的那个 `id`（**该作品下的** RSS id）；
+ * 传 `'all'` = 全部字幕组（不带 subgroupid 的**全量 feed**）。
+ *
+ * 为什么不能只用单组 feed：Mikan 对它只给**最近 100 条**（实测黑叶草 168 集只回 77~161 集），
+ * 而不带 subgroupid 的全量 feed 是完整历史（369 条 / 1~169 集）。所以：
+ *   · 单组 feed **没到 100 条** → 本来就是全的，直接用
+ *   · 到了 100 条 → 判定「可能被截断」→ 拉全量，再用**这个组自己的格式特征**认领回来
+ *     （特征：AI 从样本里抽，抽不出来用确定性推导；匹配是纯函数，见 lib/release-match.js）
+ * 认领结果比样本还少 → 判定特征不可靠，退回样本（最坏也就是原来的 100 条，不会更差）。
  * @param {number|string} id 作品主键
- * @param {number|string} subgroupRssId 字幕组在该作品下的 RSS id（/subgroups 的 id）
+ * @param {number|string} subgroupRssId 字幕组在该作品下的 RSS id（/subgroups 的 id），或 'all'
  */
 export async function getSubgroupReleases(id, subgroupRssId, { log = logger } = {}) {
   const row = findById(id)
   if (!row) throw fail('NOT_FOUND', `没有 id=${id} 的作品记录`)
 
-  const rssId = String(subgroupRssId ?? '')
-  const base = { subgroup: { id: Number(rssId) || 0, name: '' }, items: [], total: 0, cached: false }
+  const want = String(subgroupRssId ?? '')
+  const base = { subgroup: { id: Number(want) || 0, name: '' }, items: [], total: 0, cached: false }
 
-  if (!row.mikan_id || !rssId) {
-    log.warn({ id, rssId, mikanId: row.mikan_id }, 'anime.releases missing-ids')
+  if (!row.mikan_id) {
+    log.warn({ id, want, mikanId: row.mikan_id }, 'anime.releases missing-ids')
     return base
   }
 
-  const items = await fetchSubgroupReleases(row.mikan_id, rssId)
+  // 「全部字幕组」：直接拉全量（完整历史，不分字幕组）
+  if (want === 'all') {
+    const items = await fetchSubgroupReleases(row.mikan_id)
+    log.debug({ id, total: items.length, source: 'all' }, 'anime.releases ok')
+    return { ...base, items, total: items.length, source: 'all' }
+  }
 
-  log.debug({ id, rssId, total: items.length }, 'anime.releases ok')
-  return { ...base, items, total: items.length }
+  if (!want) {
+    log.warn({ id, want, mikanId: row.mikan_id }, 'anime.releases missing-ids')
+    return base
+  }
+
+  const own = await fetchSubgroupReleases(row.mikan_id, want)
+  if (own.length < TRUNCATE_HINT) {
+    log.debug({ id, rssId: want, total: own.length, source: 'subgroup' }, 'anime.releases ok')
+    return { ...base, items: own, total: own.length, source: 'subgroup' }
+  }
+
+  // 正好 100 条 = 可能被截断 → 拉全量 + 按格式特征认领
+  try {
+    const all = await fetchSubgroupReleases(row.mikan_id)
+    const signature = await resolveSignature(row.id, want, own, { log })
+    const { items, matched, reliable } = claimBySignature(all, signature, own)
+    log.info(
+      { id, rssId: want, own: own.length, all: all.length, matched, reliable, source: reliable ? 'all-matched' : 'subgroup', signature },
+      'anime.releases claim',
+    )
+    return {
+      ...base,
+      items,
+      total: items.length,
+      source: reliable ? 'all-matched' : 'subgroup',
+      signature: signature || null,
+    }
+  } catch (err) {
+    log.warn({ id, rssId: want, err: err.message }, 'anime.releases claim-fail（退回单组 feed）')
+    return { ...base, items: own, total: own.length, source: 'subgroup' }
+  }
+}
+
+/**
+ * 取这个字幕组的**格式特征**：先让 AI 从样本里抽，抽不出来用确定性推导兜底
+ * 按 (作品, 组) 缓存 6 小时 —— 样本短期内不会变，别反复问模型。
+ */
+async function resolveSignature(animeId, rssId, samples, { log }) {
+  const key = `${animeId}:${rssId}`
+  const hit = signatureCache.get(key)
+  if (hit && Date.now() - hit.at < SIGNATURE_TTL_MS) return hit.sig
+
+  const titles = samples.map((s) => s.title)
+  const sig = (await classifyReleaseFormat(titles, { log })) || signatureFromSamples(titles)
+  if (sig) signatureCache.set(key, { sig, at: Date.now() })
+  return sig
 }

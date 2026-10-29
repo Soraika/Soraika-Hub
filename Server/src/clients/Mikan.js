@@ -131,7 +131,7 @@ async function getAnimeDetailPage(baseUrl, mikanid, retries = 3) {
 }
 
 async function getAnimeRSSPage(baseUrl, mikanid, subgroupRSSId, retries = 3) {
-  if (!(baseUrl && mikanid && subgroupRSSId)) {
+  if (!(baseUrl && mikanid)) {
     logger.error({ baseUrl, mikanId: mikanid, subgroupRSSId }, 'mikan.rss invalid-params');
     throw new Error('请求 AnimeRSSPage 失败：传入参数缺少或为空');
   }
@@ -145,9 +145,12 @@ async function getAnimeRSSPage(baseUrl, mikanid, subgroupRSSId, retries = 3) {
     throw new Error(`请求 AnimeRSSPage 失败：baseUrl 格式非法`);
   }
   finalUrl.searchParams.set('bangumiId', mikanid);
-  finalUrl.searchParams.set('subgroupid', subgroupRSSId);
+  // subgroupid **为空就不带** —— 这是「全量」的关键：
+  //   带 subgroupid → Mikan 只给该组最近 100 条（实测黑叶草 77~161 集）
+  //   不带           → 给全部字幕组的完整历史（实测 369 条 / 1~169 集）
+  if (subgroupRSSId) finalUrl.searchParams.set('subgroupid', subgroupRSSId);
 
-  return await fetchWithTimeOut(finalUrl.href, 'AnimeRSSPage', retries);
+  return await fetchWithTimeOut(finalUrl.href, subgroupRSSId ? 'AnimeRSSPage' : 'AnimeRSSPage(all)', retries);
 }
 
 // 解析函数入参校验：内容为空或非法时记录日志并返回 false

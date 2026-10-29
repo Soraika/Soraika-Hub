@@ -100,17 +100,17 @@ export async function fetchBgmIdByMikan(mikanId) {
 }
 
 /**
- * 某字幕组在某作品下的资源列表（种子）
+ * 某部作品的资源列表（种子）
  * ---------------------------------------------------------------------------
- * 上游是 Mikan 的 RSS（`/RSS/Bangumi?bangumiId=&subgroupid=`），一次请求拿全量，
- * 所以**不需要翻页**；「新番刚开播还没有资源」会解析出空数组 —— 那是正常情况，不是错误，
- * 照常返回空列表（前端显示空态），不要把面板整块搞成报错。
+ * 上游是 Mikan 的 RSS（`/RSS/Bangumi?bangumiId=&subgroupid=`），一次请求拿全量，不需要翻页。
+ * **`subgroupRssId` 传 null = 拉全量**（不带 subgroupid）：Mikan 对「单字幕组」那条 feed
+ * 只给最近 100 条，而**不带 subgroupid 才是完整历史**（实测黑叶草：100 条 vs 369 条 / 1~169 集）。
+ * 「新番刚开播还没有资源」会解析出空数组 —— 那是正常情况，不是错误。
  * @param {string|number} mikanId  作品在 Mikan 的 id
- * @param {string|number} subgroupRssId 字幕组的 RSS id（subgroup.subgroup_rss_id）
- * @returns {Promise<Array<{title:string, magnet:string|null, magnetHash:string|null,
- *   torrentUrl:string|null, sizeText:string, publishedText:string}>>}
+ * @param {string|number|null} [subgroupRssId] 字幕组在该作品下的 RSS id；`null` = 全部字幕组
+ * @returns {Promise<Array<object>>}
  */
-export async function fetchSubgroupReleases(mikanId, subgroupRssId) {
+export async function fetchSubgroupReleases(mikanId, subgroupRssId = null) {
   const xml = await getAnimeRSSPage(config.mikan.base, mikanId, subgroupRssId)
   const list = getAnimeReleaseFromRSS(xml)
   if (!Array.isArray(list)) return []

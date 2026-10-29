@@ -61,9 +61,11 @@ animeRouter.get('/anime/:id/subgroups', async (req, res, next) => {
 animeRouter.get('/anime/:id/releases', async (req, res, next) => {
   try {
     const id = animeIdOf(req)
-    const subgroupId = Number(req.query.subgroupId)
-    if (!Number.isInteger(subgroupId) || subgroupId <= 0) {
-      throw fail('BAD_REQUEST', 'subgroupId 需要是正整数（用 /subgroups 接口返回的 id）')
+    const raw = String(req.query.subgroupId ?? '')
+    // 'all' = 全部字幕组（不带 subgroupid 的全量 feed）；其余必须是正整数（/subgroups 返回的那个 id）
+    const subgroupId = raw === 'all' ? 'all' : Number(raw)
+    if (subgroupId !== 'all' && (!Number.isInteger(subgroupId) || subgroupId <= 0)) {
+      throw fail('BAD_REQUEST', 'subgroupId 需要是正整数（用 /subgroups 返回的 id），或 all 表示全部')
     }
     res.json({ ok: true, data: await getSubgroupReleases(id, subgroupId, { log: req.log }) })
   } catch (err) {
