@@ -865,10 +865,21 @@ try {
     '解析批次与展示同步：一屏 120 = 一批 120（PAGE_SIZE 与 AI_BATCH 必须一致）',
   )
   check(
-    /watch\(limit, \(value\) => emit\('more', value\)\)/.test(listSource) &&
+    /watch\(limit, \(value, oldValue\) => \{[\s\S]{0,80}?if \(value > oldValue\) emit\('more', value\)/.test(listSource) &&
       /ensureParsed\(AI_BATCH\)/.test(panelSource) &&
       /merge: !first/.test(panelSource),
-    '「显示更多」→ more 事件 → 面板增量解析（首批重置、后续 merge 累加）',
+    '「显示更多」→ more 事件 → 面板增量解析（首批重置、后续 merge 累加；**只在变多时**通知，重置不花钱）',
+  )
+  check(
+    /watch\(\s*\(\) => props\.items,/.test(listSource) && !/props\.activeTags, props\.batchFilter\]/.test(listSource),
+    '点标签筛选不会把「显示更多」打回 120 条（只有换字幕组才重置）',
+  )
+  /* 排序口径：总是按集号（新的在上）+ 同集按命中数；认不出集号的沉底 */
+  check(
+    /list = \[\.\.\.list\]\.sort\(/.test(listSource) &&
+      /episodeNumber\(item\)/.test(listSource) &&
+      /if \(!ea\) return 1/.test(listSource),
+    '资源列表排序：集号大的在前、同集按命中数、认不出集号/合集沉底（不再"没筛就没序"）',
   )
   check(
     readFileSync(new URL('../src/composables/useAiTags.js', import.meta.url), 'utf8').includes('mergeTags') &&

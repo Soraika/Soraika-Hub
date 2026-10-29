@@ -201,6 +201,14 @@ let copyTimer = null
  */
 const epOf = (item) => String(props.episodes?.[item.title] ?? '').trim() || episodeOf(item.title)
 
+/** 集号数字（排序用）：认不出集号 / 合集 / 特典 → 0（沉底） */
+function episodeNumber(item) {
+  const ep = epOf(item)
+  if (!ep || isBatchEpisode(ep)) return 0
+  const m = String(ep).match(/^\d+/)
+  return m ? Number(m[0]) : 0
+}
+
 /**
  * 筛选口径（与 AiSlot 画出来的 AND/OR 完全一致）：
  *   · 同类型的标签之间是 OR（分辨率的「1080P 或 720P」）
@@ -241,13 +249,29 @@ const filtered = computed(() => {
     })
   }
 
-  // 命中越多排越前（照旧版的 matchScore）：同时命中 1080P 与「简繁内封」的排最上面。
-  // 分数先算一遍再排 —— 直接写在比较函数里，同一条标题的正则会跑 O(n log n) 次（几百条就明显卡）
-  if (props.activeTags.length) {
-    const scores = new Map()
-    for (const item of list) scores.set(item, scoreOf(item))
-    list = [...list].sort((a, b) => (scores.get(b) || 0) - (scores.get(a) || 0))
+  // ── 排序（**总是**排，顺序必须可预期）──────────────────────────────────
+  // 旧实现只在选了标签时才按「命中数」排：没筛时是上游乱序（同一集的 720P/1080P 隔了很远），
+  // 一筛又整块重排 —— 看着就像列表在跳。现在统一三条：
+  //   ① 集号大的在前（新集先看）；认不出集号 / 合集 / 特典 → 沉底
+  //   ② 同一集：命中已选标签多的在前（筛的时候「最符合」的那条就在最上面）
+  //   ③ 再相同：保持上游顺序（RSS 本来就按发布时间倒序给）
+  // 分数/集号先行算进 Map：直接写在比较函数里会让同一套正则跑 O(n log n) 次（几百条就卡）。
+  const epNums = new Map()
+  const scores = new Map()
+  for (const item of list) {
+    epNums.set(item, episodeNumber(item))
+    if (props.activeTags.length) scores.set(item, scoreOf(item))
   }
+  list = [...list].sort((a, b) => {
+    const ea = epNums.get(a) || 0
+    const eb = epNums.get(b) || 0
+    if (ea !== eb) {
+      if (!ea) return 1
+      if (!eb) return -1
+      return eb - ea
+    }
+    return (scores.get(b) || 0) - (scores.get(a) || 0)
+  })
 
   return list
 })
@@ -308,9 +332,11 @@ const visibleItems = computed(() =>
   }),
 )
 
-// 换字幕组或换筛选条件时，把「显示更多」收回初始值，避免新列表一进来就是几百条
+// 换字幕组（items 换了一份）时把「显示更多」收回初始值、清掉勾选。
+// **不要**把 activeTags / batchFilter 也算进依赖 —— 用户点个标签筛选就把"显示更多"的结果
+// 打回 120 条（等于白点），而且会顺带触发一次多余的 AI 解析。
 watch(
-  () => [props.items, props.activeTags, props.batchFilter],
+  () => props.items,
   () => {
     limit.value = PAGE_SIZE
     // 换字幕组后之前勾的种子已经不在列表里了 —— 清掉，免得顶部显示「已选 3」却找不到是哪三条
@@ -320,9 +346,11 @@ watch(
 
 /**
  * 「显示更多」把新的一批暴露出来 → 通知面板去解析这一批（面板按 120 分批、累加结果）。
- * 只在 limit 变大时才需要解析，面板自己会按「已解析到第几条」判断要不要真发请求。
+ * **只在 limit 变大时通知**：上面那个 watch 把 limit 重置回 PAGE_SIZE 时不该再花一次 AI 钱。
  */
-watch(limit, (value) => emit('more', value))
+watch(limit, (value, oldValue) => {
+  if (value > oldValue) emit('more', value)
+})
 
 async function copyMagnet(item) {
   try {
