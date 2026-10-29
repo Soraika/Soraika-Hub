@@ -138,7 +138,10 @@
 - 两个 id 别混：
   - `div.subgroup-text[id]` = **RSS 分组 id** → **请求资源列表用它**（实测：用它 5 条、用发布组 id 0 条）；
   - `/Home/PublishGroup/{id}` = **发布组 id** → 全站身份，**用来去重**；
-- 库里不许堆重复行：`subgroup`（实体，按发布组去重）+ `anime_subgroup`（作品×组，复合主键，**不带多余自增 id**）。
+- **字幕组不落库**（2026-10 变更）：`/subgroups` **每次直接问 Mikan 详情页**，返回的 `id` 就是
+  **该作品下的 rss id**，取资源时原样回传（`/releases?subgroupId=<id>`）。
+  库里只保留一张 `subgroup` **名字字典**（`mikan_subgroup_id` 唯一）；**`anime_subgroup` 已删除**
+  —— 原因见 `Server/docs/ARCHITECTURE.md` §7-14。
 
 ## 10. 尺寸与配色（旧版基准）
 
