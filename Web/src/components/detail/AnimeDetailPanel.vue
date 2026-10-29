@@ -5,25 +5,22 @@
         <IconX :size="18" />
       </button>
 
-      <!-- ── 三态：loading / error **不进过渡** ─────────────────────────────
-           点新海报时，`useAnimeDetail` 会立刻把 data 清空、loading 置 true；
-           如果 loading 也放在 <Transition mode="out-in"> 里，Vue 必须先等上一部作品
-           **淡出完**（120ms，这段时间屏幕上还是旧数据）才轮到 loading —— 用户看到的就是
-           "点了还显示之前的数据"。所以这两个状态直接渲染，点下去立刻就是刷新动画。 -->
-      <StateBlock v-if="uiState === 'loading'" key="loading" state="loading" text="正在读取档案…" />
+      <!-- ── 三态：loading 用**骨架屏**（结构占位），error 用状态块 ─────────────
+           点新海报时 `useAnimeDetail` 会立刻清空 data、置 loading —— 这时
+           **不整块转圈、也不残留上一部的内容**，而是就地铺骨架：
+           动的只有「海报 / 标题 / 标签 / 简介 / 资源」这些位置，版面不跳。
+           详情也不做整块淡入淡出 —— 要的是"局部在动"，不是整块进场。 -->
+      <DetailSkeleton v-if="uiState === 'loading'" />
       <StateBlock
         v-else-if="uiState === 'error'"
-        key="error"
         state="error"
         :text="errorText || '读取失败，请稍后重试'"
         retry-text="重试"
         @retry="$emit('retry')"
       />
 
-      <!-- ── 详情：只有它走淡入淡出；key 带上作品主键，换一部就重新进场 ─────
-           （从 loading 进详情时也是这条过渡 —— 数据到了才淡入，不硬切） -->
-      <Transition v-else name="phase" mode="out-in">
-        <div v-if="data" :key="'detail-' + data.id" class="detail">
+      <!-- ── 详情：key 带上作品主键（换一部就重新挂载，组件内的局部状态跟着归零） -->
+      <div v-else-if="data" :key="'detail-' + data.id" class="detail">
           <header class="detail-header">
             <PosterImage
               class="detail-poster"
@@ -177,7 +174,6 @@
             />
           </section>
         </div>
-      </Transition>
     </div>
   </aside>
 </template>
@@ -187,6 +183,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { IconChevronDown, IconExternalLink, IconStarFilled, IconX } from '@tabler/icons-vue'
 import PosterImage from '@/components/common/PosterImage.vue'
 import StateBlock from '@/components/ui/StateBlock.vue'
+import DetailSkeleton from './DetailSkeleton.vue'
 import SubgroupBar from './SubgroupBar.vue'
 import ReleaseList from './ReleaseList.vue'
 import AiSlot from './AiSlot.vue'
@@ -461,22 +458,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   gap: 16px;
 }
 
-/* ── 面板内切换动画：三态之间（loading → 详情 → 错误）与「换一部作品」都走
-      out-in 淡出淡入（旧版面板同款做法）—— 直接 v-if 硬切会显得很生硬 ────── */
-.phase-enter-active {
-  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
-}
-.phase-leave-active {
-  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
-}
-.phase-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
-}
-.phase-leave-to {
-  opacity: 0;
-  transform: translateY(-6px);
-}
+/* ── 面板内的「换作品」不再有整块过渡 ─────────────────────────────────────
+   旧版是把三态（loading → 详情 → 错误）全包在 <Transition mode="out-in"> 里做淡入淡出，
+   换作品时先整块淡出、再整块淡入 —— 用户看到的是"整页在进"。
+   现在改成**骨架屏就地替换**（DetailSkeleton）：结构位置不动，只有占位块在扫光，
+   数据到了原处换成内容。所以 .phase-* 这套过渡类已经删掉了。 */
 
 /* ── 头部：海报 + 标题 ────────────────────────────────────────────────── */
 .detail-header {

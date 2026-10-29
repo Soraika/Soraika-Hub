@@ -145,17 +145,31 @@ try {
   check(!detail.bgmUrl || panel.includes(`href="${detail.bgmUrl}"`), `面板外链指向 Bangumi → ${detail.bgmUrl}`)
   check(panel.includes('关闭（Esc）'), '面板有关闭按钮（含 Esc 提示）')
 
-  check((await renderPanel({ uiState: 'loading' })).includes('正在读取档案'), '面板 loading 态正常')
+  const panelLoading = await renderPanel({ uiState: 'loading' })
+  check(
+    panelLoading.includes('skeleton') && panelLoading.includes('sk-poster') && !panelLoading.includes('detail-title'),
+    '面板 loading 态 = 骨架屏（结构占位，不是整块转圈、也不残留旧内容）',
+  )
   const panelError = await renderPanel({ uiState: 'error', errorText: '读不到这一条' })
   check(panelError.includes('读不到这一条') && panelError.includes('重试'), '面板 error 态：具体文案 + 重试按钮')
 
-  /* ── ④b 切换动画：loading/error **不进过渡**（点海报立刻看到刷新动画），
-     只有「详情」走 out-in 淡入淡出（换作品不硬切）。这是 UI 契约，别被顺手改回去。 ── */
+  /* ── ④b 换作品的动效：**骨架屏就地替换**（不是整块转圈、也不是整块淡入淡出）
+     —— 点海报 → 立刻铺骨架（海报/标题/标签/简介/资源区都占住位）→ 数据到了原处换内容。
+     这是 UI 契约：动的是"那些位置"，版面不跳。 ── */
   const panelSource = readFileSync(new URL('../src/components/detail/AnimeDetailPanel.vue', import.meta.url), 'utf8')
+  const skeletonSource = readFileSync(new URL('../src/components/detail/DetailSkeleton.vue', import.meta.url), 'utf8')
   check(
-    /<StateBlock v-if="uiState === 'loading'"/.test(panelSource) &&
-      /<Transition v-else name="phase" mode="out-in">/.test(panelSource),
-    '点海报立刻进 loading（loading/error 不进过渡）；只有详情走 <Transition name="phase" mode="out-in">',
+    /<DetailSkeleton v-if="uiState === 'loading'" \/>/.test(panelSource) &&
+      /<StateBlock\s+v-else-if="uiState === 'error'"/.test(panelSource),
+    '换作品时立刻铺骨架屏（loading → DetailSkeleton），不是整块转圈',
+  )
+  check(
+    !panelSource.includes('<Transition name="phase"') && !panelSource.includes('.phase-enter-active'),
+    '换作品不再整块淡入淡出（骨架屏就地替换，只有局部位置在动）',
+  )
+  check(
+    skeletonSource.includes('sk-poster') && skeletonSource.includes('sk-sweep') && skeletonSource.includes('sk-card'),
+    '骨架屏照着详情的位置铺块（海报 / 标题 / 卡片 / 扫光动效）',
   )
 
   /* ── 系列 chip（标题区）：一拍即开、点某部就换作品 ────────────────────── */
@@ -185,11 +199,19 @@ try {
     readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8').includes('@open="openAnime"'),
     '容器把面板的 open 事件接到 openAnime（全站一个面板，切换 = 改 activeAnimeId）',
   )
+  /* 换成骨架屏之后：loading/error 不再需要 key（没有分支之间的过渡了），
+     详情仍带 :key 让"换作品"重新挂载；整块过渡样式已删除，动效只剩骨架扫光。 */
   check(
-    panelSource.includes('key="loading"') && panelSource.includes('key="error"') && panelSource.includes("key=\"'detail-' + data.id\""),
-    '三个分支各带 key（否则同组件间不触发过渡）',
+    !panelSource.includes('key="loading"') &&
+      !panelSource.includes('key="error"') &&
+      panelSource.includes(":key=\"'detail-' + data.id\""),
+    'loading/error 不再需要 key（无分支过渡）；详情仍带 :key 让换作品重新挂载',
   )
-  check(panelSource.includes('.phase-enter-active'), '面板过渡样式存在（淡出淡入 + 轻微位移）')
+  check(
+    !/\.phase-(enter|leave)/.test(panelSource) &&
+      skeletonSource.includes('@keyframes sk-sweep'),
+    '不再有整块过渡样式；动效只剩骨架屏扫光（局部位置在动）',
+  )
 
   /* ── ④c 资源区：字幕组 → AI 位 → 资源列表 ──────────────────────────── */
   const { default: SubgroupBar } = await vite.ssrLoadModule('/src/components/detail/SubgroupBar.vue')
