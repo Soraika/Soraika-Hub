@@ -114,7 +114,7 @@ Mikan 额外一层 **解析级重试**：200 但连标题都解析不出来 = �
 | # | 队列 | 谓词 | 处理 | 退出 / 退避 |
 |---|---|---|---|---|
 | ①a | 补齐（缺 bgmId） | `mikan_id IS NOT NULL AND bgm_id IS NULL` | Mikan 详情页 → BGM 条目 | 没链接/404 → `bgm_miss_count++`；超 `missLimit` 后隔 `missRetryHours`(7d) 再试 |
-| ①b | **档案补齐** | `bgm_id IS NOT NULL AND (score/tags/summary 任一为空)` | **跳过 Mikan**，只打 BGM 一次 | 补过仍缺 → 隔 7d 再试 |
+| ①b | **档案补齐** | `bgm_id IS NOT NULL AND (score/tags/summary 任一为空)` | 打 BGM 一次；`worker.fetchSubgroups`（**默认开**）时**顺带抓一次 Mikan 详情页**，把字幕组记进名字字典（老番的资源区靠它） | 补过仍缺 → 隔 7d 再试；字幕组抓失败只 warn，不影响档案 |
 | ② | 每日更新 | `bgm_id IS NOT NULL AND year = 当年 AND bgm_checked_at < 最近一次到点时刻` | 重刷整份档案 | 固定时刻（默认 04:00）；不设配额（公式自带限流） |
 | ③ | 系列补齐 | `bgm_id IS NOT NULL AND series_checked_at IS NULL` | 走链 + AI 归一 + 落库 | 失败/未配 AI → 放回 `NULL`；worker 侧连续失败指数冷却（≤10min） |
 
@@ -241,8 +241,8 @@ Mikan 额外一层 **解析级重试**：200 但连标题都解析不出来 = �
 **P0 · 数据完整性**
 - [x] Mikan↔BGM 映射全量（3233 / 3237）
 - [x] 档案补齐（评分/标签/简介）—— `needArchive 2769 → 860`（后台在跑）
-- [ ] **老番字幕组补齐**：档案补齐对「已有 bgmId」的行跳过 Mikan → 老番资源区仍是空的 ⚠️
-      （方案：给 ①b 加一个「顺便抓字幕组」开关，或单开一条只补字幕组的队列）
+- [x] **老番字幕组补齐**：①b 加 `worker.fetchSubgroups`（默认开）→ 顺带抓一次 Mikan 详情页
+      把字幕组记进名字字典（实测字典 37 → 62 条）
 
 **P1 · AI v9（一次调用三类产物）**
 - [ ] 标签 + 集数 + **格式特征**合并成一次调用（省一半调用量）

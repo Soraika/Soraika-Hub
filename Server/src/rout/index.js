@@ -3,7 +3,7 @@
  * 业务逻辑一律在 api/ 层，这里只负责拼装（为以后 MCP 复用 api/ 留好边界）
  */
 import { Router } from 'express'
-import { countAll, stats } from '../db/anime.js'
+import { countAll, countSubgroupDict, stats } from '../db/anime.js'
 import { dbFile } from '../db/index.js'
 import { countGaveUp, countMissingBgm } from '../db/queue.js'
 import { getWorkerState } from '../jobs/worker.js'
@@ -29,7 +29,13 @@ apiRouter.get('/health', (req, res) => {
       db: dbFile,
       animeCount: countAll(),
       /** 映射/评分覆盖率 + 补齐队列还剩多少 / 有多少是上游确实没有（拿不到 bgmId 已放弃重试） */
-      coverage: { ...stats(), missingDue: countMissingBgm(), gaveUp: countGaveUp() },
+      coverage: {
+        ...stats(),
+        missingDue: countMissingBgm(),
+        gaveUp: countGaveUp(),
+        /** 字幕组名字字典的条目数（随补齐/打开面板增长；用来确认"顺手抓字幕组"在工作） */
+        subgroupDict: countSubgroupDict(),
+      },
       /** 后台守护进程状态快照（未启动时 running=false） */
       worker: getWorkerState(),
       /** AI 是否可用（配了 key 才算可用）+ 两个解析缓存的条目数；**不含 key** */

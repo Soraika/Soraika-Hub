@@ -48,7 +48,14 @@ export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 export async function enrichOne(row, log = logger) {
   const startedAt = Date.now()
   try {
-    if (row.bgm_id) return await applySubject(row.bgm_id, row, log, startedAt)
+    if (row.bgm_id) {
+      // ①b 的另一半：顺手抓一次 Mikan 详情页，把「这部作品有哪些字幕组」记进名字字典。
+      // 为什么必须在这里补：这条快路径**跳过了 Mikan**（省一次请求），而字幕组只存在于
+      // Mikan 详情页 —— 不补的话，扫描进来的老番点开面板「资源」区永远是空的。
+      // 默认开，可在设置页关掉（`worker.fetchSubgroups`）；失败只 warn，不影响档案补齐。
+      if (config.worker.fetchSubgroups && row.mikan_id) await rememberSubgroupsByMikan(row, log)
+      return await applySubject(row.bgm_id, row, log, startedAt)
+    }
 
     // ① Mikan 详情页：权威 bgmId + 字幕组列表
     const profile = await fetchAnimeProfile(row.mikan_id)
@@ -71,6 +78,22 @@ export async function enrichOne(row, log = logger) {
   } catch (err) {
     log.warn({ id: row.id, mikanId: row.mikan_id, err: err.message, ms: Date.now() - startedAt }, 'worker.enrich fail')
     return 'failed'
+  }
+}
+
+/**
+ * 顺手把这部作品的字幕组记进**名字字典**（Mikan 详情页）
+ * ---------------------------------------------------------------------------
+ * 只做「记字典」这一件事：`anime_subgroup` 那张关系表已经不存了，
+ * 面板打开时 `/subgroups` 会现取「组 + 各自的 rss id」。这里补的是**组名**，
+ * 失败只 warn —— 字幕组抓不到不该让档案补齐失败（评分/标签更重要）。
+ */
+async function rememberSubgroupsByMikan(row, log) {
+  try {
+    const profile = await fetchAnimeProfile(row.mikan_id)
+    if (profile.subgroups?.length) rememberSubgroups(profile.subgroups)
+  } catch (err) {
+    log.warn({ id: row.id, mikanId: row.mikan_id, err: err.message }, 'worker.enrich subgroups fail')
   }
 }
 

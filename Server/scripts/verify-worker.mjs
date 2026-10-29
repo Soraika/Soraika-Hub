@@ -7,6 +7,7 @@
  *   ② 队列谓词与计数口径一致：还能补 0 条时，认领必须也拿不到（否则循环空转）
  *   ③ 退避口径：拿不到 bgmId 的那批必须落在「已放弃」里，而不是留在待补队列
  */
+import { readFileSync } from 'node:fs'
 import {
   claimNextSeriesPending,
   countGaveUp,
@@ -18,7 +19,7 @@ import {
   resetStaleSeriesClaims,
   takeNextStale,
 } from '../src/db/queue.js'
-import { stats } from '../src/db/anime.js'
+import { countSubgroupDict, stats } from '../src/db/anime.js'
 import { lastDailyBoundary } from '../src/jobs/enrich.js'
 
 let failed = 0
@@ -80,6 +81,18 @@ if (seriesPending === 0) {
 // 启动清理：正常情况应为 0；有 worker 正在处理时可能非 0（那正是它要清的东西），所以只上报不判失败
 const stale = resetStaleSeriesClaims()
 console.log(`  └ 残留"处理中"标记：${stale} 条（有 worker 在跑时可能非 0，属正常）`)
+
+/* ── ⑤ 补档案时顺手抓字幕组（老番的「资源」区靠它）─────────────────────────
+   档案补齐的快路径是「已有 bgm_id → 只打 Bangumi」，而字幕组只存在于 Mikan 详情页；
+   不顺手补的话，扫描进来的老番点开面板资源区永远是空的。 */
+const { config } = await import('../src/config.js')
+check(config.worker.fetchSubgroups === true, 'worker.fetchSubgroups 默认开（否则老番资源区永远空）')
+const enrichSource = readFileSync(new URL('../src/jobs/enrich.js', import.meta.url), 'utf8')
+check(
+  /rememberSubgroupsByMikan\(row, log\)/.test(enrichSource) && /fetchAnimeProfile\(row\.mikan_id\)/.test(enrichSource),
+  '档案补齐的快路径会顺手抓一次 Mikan 详情页 → rememberSubgroups（失败只 warn，不影响档案）',
+)
+check(typeof countSubgroupDict() === 'number', `字幕组名字字典可观测 → ${countSubgroupDict()} 条`)
 
 console.log(failed ? `\n✗ 失败 ${failed} 项` : '\n✓ 全部通过')
 process.exitCode = failed ? 1 : 0

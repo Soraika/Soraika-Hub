@@ -69,6 +69,7 @@ export const SETTINGS_FIELDS = [
   { path: 'worker.gapMs', env: 'WORKER_GAP_MS', group: 'worker', section: '调度', label: '每条间隔', type: 'number', unit: 'ms', format: 'duration', min: 0, advanced: true, hint: '间隔过小可能被上游限流' },
   { path: 'worker.idleMs', env: 'WORKER_IDLE_MS', group: 'worker', section: '调度', label: '空闲休眠', type: 'number', unit: 'ms', format: 'duration', min: 100, advanced: true },
   { path: 'worker.staleYear', env: 'WORKER_STALE_YEAR', group: 'worker', section: '调度', label: '覆盖年份', type: 'number', unit: '年', allowNull: true, advanced: true, hint: '留空表示仅当年，0 表示全部年份' },
+  { path: 'worker.fetchSubgroups', env: 'WORKER_FETCH_SUBGROUPS', group: 'worker', section: '调度', label: '顺手抓字幕组', type: 'boolean', hint: '补档案时多抓一次 Mikan 详情页；老番的「资源」区要靠它（关掉则只在打开面板时现取）' },
 
   { path: 'worker.missLimit', env: 'WORKER_MISS_LIMIT', group: 'worker', section: '失败退避', label: 'bgmId 重试上限', type: 'number', unit: '次', min: 1, advanced: true },
   /* 注意单位：这一项的值是**小时**，不是毫秒 —— 不能挂 `format: 'duration'`（那是「值是毫秒」的意思），

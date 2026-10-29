@@ -6,24 +6,9 @@
 
 ## P0 · 数据完整性
 
-### P0-1 老番字幕组补齐（当前唯一"数据看着齐、实际空着"的地方）
-
-**现状**：档案补齐（触发 ①b）对「已经有 `bgm_id`」的行**跳过 Mikan 详情页**（为了省一次请求/条），
-所以扫描进来的老番**从来没抓过字幕组** —— 面板「资源」区对这些作品是空的。
-
-**影响**：老番无法通过面板取资源（下载闭环做不了）。
-
-**方案（二选一，选定后写进 ARCHITECTURE §4）**
-- **A. 给 ①b 加开关**：`worker.fetchSubgroups`（默认开）→ 补档案时顺带 `rememberSubgroups(profile.subgroups)`。
-  代价：每条多一次 Mikan 请求（当前 ~860 条待补，约多 15 分钟）。
-- **B. 单开一条「只补字幕组」的队列**：与 ①b 解耦，谓词自己定（比如按 `bgm_checked_at` 退避）。
-
-**验收**
-- `verify-worker.mjs` 加断言：补齐跑过之后 `countSubgroupDict()` 会增长
-- 手动：拿一部老番（如 mikan 1433 黑叶草）点开面板，「字幕组」区不再是空态
-
-### P0-2 确认档案补齐跑完
-`needArchive` 归零后：`curl /api/health` 看 `withScore` 占比，并抽查 3 部老番的评分/标签/简介。
+### P0-1 确认档案补齐跑完
+`needArchive` 归零后：`curl /api/health` 看 `withScore` 占比，并抽查 3 部老番的评分/标签/简介；
+顺便确认 `coverage.subgroupDict` 在涨（= 「顺手抓字幕组」在工作）。
 
 ---
 
