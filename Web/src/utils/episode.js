@@ -16,6 +16,8 @@ const RANGE_RE = [/[[(](\d{1,4})\s*[-~]\s*(\d{1,4})(?:end)?[\])]/i, /(\d{1,4})\s
 /**
  * 单集：按「越明确越优先」排列。位数放到 4 位 —— 长篇（海贼王 1180 集）就是 4 位数，
  * 之前写死 1-3 位，直接把 `- 1180` 漏掉了。
+ * **但要排除年份**：`[2022]` / `2023` 这种 4 位数在 Mikan 文件名里是**年份**（见下面 isYearLike），
+ * 不排除的话，剧场版会被显示成"第 2022 集"。
  */
 const SINGLE_RES = [
   /[Ss]\d{1,2}\s?[Ee]\s?(\d{1,4})(?!\d)/, // S01E12 / S1E2（欧美源、CR/CATCHPLAY 这类常见）
@@ -26,6 +28,18 @@ const SINGLE_RES = [
   /[-–—]\s*(\d{1,4})\s*(?:v\d)?(?:[^\d]|$)/, // 番名 - 04 / - 1180
   /(\d{1,4})\s?[vV]\d(?!\d)/, // 04v2（没方括号也没前缀时的裸写法）
 ]
+
+/**
+ * 4 位数在 1900–2099 之间 = **年份**，不是集数
+ * ---------------------------------------------------------------------------
+ * Mikan 的文件名常带 `[2022]`（发行年），剧场版尤其如此：
+ * `[天月搬运组][2022][日本][动画][纯净版][镜之孤城…]` —— 不排除就会被当成"第 2022 集"。
+ * 上限取 2099：长篇动画最多一千多集（海贼王 1180），1900+ 只可能是年份。
+ */
+const isYearLike = (n) => {
+  const v = Number(n)
+  return Number.isFinite(v) && v >= 1900 && v <= 2099
+}
 
 export function episodeOf(title) {
   const text = String(title || '')
@@ -48,11 +62,14 @@ const episodeCache = new Map()
 function matchEpisode(text) {
   for (const re of RANGE_RE) {
     const hit = text.match(re)
-    if (hit) return `${pad(hit[1])}-${pad(hit[2])}`
+    // 年份区间（`[2022-2023]`）不是合集范围
+    if (hit && !isYearLike(hit[1]) && !isYearLike(hit[2])) return `${pad(hit[1])}-${pad(hit[2])}`
   }
   for (const re of SINGLE_RES) {
-    const hit = text.match(re)
-    if (hit) return pad(hit[1])
+    // 每个模式都可能只命中"年份"，所以用 matchAll 找**第一个不是年份**的
+    for (const hit of text.matchAll(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`))) {
+      if (!isYearLike(hit[1])) return pad(hit[1])
+    }
   }
   return ''
 }

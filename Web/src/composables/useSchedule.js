@@ -47,6 +47,14 @@ export function useSchedule() {
   /** 后端返回的整包数据：{ season, years, days, meta } */
   const data = ref(null)
   const loading = ref(false)
+  /**
+   * 正在**请求中**的那一季（用户刚点下去、数据还没回来）
+   * ---------------------------------------------------------------------------
+   * 为什么需要：季选的标签取的是「服务端返回的季」，请求要 0.3~3 秒 ——
+   * 这期间标签还停在上一个季，用户会以为"点了没反应 / 打不开"。
+   * 点下去就先把标签换成他要的那一季，回来后再以服务端为准。
+   */
+  const pending = ref(null)
   /** @type {import('vue').Ref<import('@/api/http').ApiError | null>} */
   const error = ref(null)
 
@@ -75,15 +83,20 @@ export function useSchedule() {
     const seq = ++requestSeq
     loading.value = true
     error.value = null
+    const asking = stored ? { ...params, ...stored } : params
+    pending.value = asking.year && asking.season ? { ...asking, label: `${asking.year} ${asking.season}` } : null
     try {
-      const res = await fetchHomeSchedule(stored ? { ...params, ...stored } : params)
+      const res = await fetchHomeSchedule(asking)
       if (seq !== requestSeq) return // 已有更新的请求，丢弃本次结果
       data.value = res
     } catch (err) {
       if (seq !== requestSeq) return
       error.value = err
     } finally {
-      if (seq === requestSeq) loading.value = false
+      if (seq === requestSeq) {
+        loading.value = false
+        pending.value = null
+      }
     }
   }
 
@@ -102,5 +115,5 @@ export function useSchedule() {
     return load({ year, season })
   }
 
-  return { data, loading, error, uiState, load, reload, selectSeason, storedSeason }
+  return { data, loading, error, uiState, load, reload, selectSeason, storedSeason, pending }
 }

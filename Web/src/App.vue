@@ -105,6 +105,8 @@ const pageProps = computed(() => {
       days: schedule.data.value?.days ?? [],
       years: schedule.data.value?.years ?? [],
       season: schedule.data.value?.season ?? fallbackSeason.value,
+      /** 刚点下去、还没回来的那一季（标签要立刻跟着变，否则看着像"点了没反应"） */
+      pendingSeasonLabel: schedule.pending.value?.label ?? '',
       uiState: schedule.uiState.value,
       // 详情面板：卡片把整条 item 抛上来，容器只取主键（面板自己去要详情）
       activeAnimeId: activeAnimeId.value,

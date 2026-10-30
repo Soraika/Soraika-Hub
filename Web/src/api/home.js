@@ -19,7 +19,8 @@ import { apiGet } from './http'
 export function fetchHomeSchedule({ year, season, force } = {}) {
   return apiGet('/api/home/schedule', {
     params: { year, season, force: force ? 1 : undefined },
-    // 首屏可能触发一次上游抓取（Mikan + Bangumi），给宽一点
-    timeout: 25000,
+    // 首屏 / 冷门季可能触发一次上游抓取（Mikan + Bangumi）—— 给宽一点，
+    // 别让"切季"因为上游慢而被前端判超时（那看着就是"点了没反应"）
+    timeout: 40000,
   })
 }

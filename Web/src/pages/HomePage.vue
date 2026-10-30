@@ -5,7 +5,7 @@
       <header class="topbar topbar-surface">
         <div class="topbar-inner">
           <SeasonPicker
-            :label="season.label"
+            :label="pendingSeasonLabel || season.label"
             :years="years"
             :active-year="season.year"
             :active-season="season.season"
@@ -108,6 +108,8 @@ const props = defineProps({
   years: { type: Array, default: () => [] },
   /** 当前季：{ year, season, label }，label 是成品字符串（如「2026 秋」） */
   season: { type: Object, default: () => ({ year: 0, season: '', label: '' }) },
+  /** 刚点下去、还在请求中的那一季的标签（有值时季选先显示它，避免"点了没反应"的错觉） */
+  pendingSeasonLabel: { type: String, default: '' },
   /** 三态：ready | loading | error | empty（由请求状态驱动） */
   uiState: { type: String, default: 'loading' },
   /** 当前详情面板里那部作品的主键（卡片选中态用；null = 面板关着） */
