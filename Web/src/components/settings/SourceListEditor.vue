@@ -179,6 +179,7 @@ function reset() {
 .src-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap; /* 窄格子里按钮换行，而不是把输入框挤没 */
   gap: 4px;
   padding: 3px 4px;
   border-radius: var(--radius-sm);
@@ -203,7 +204,7 @@ function reset() {
   cursor: grabbing;
 }
 .src-input {
-  flex: 1;
+  flex: 1 1 140px;
   min-width: 0;
   padding: 5px 6px;
   border: 0;

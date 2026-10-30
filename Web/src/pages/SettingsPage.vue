@@ -493,6 +493,10 @@ onMounted(load)
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 16px 20px;
+  /* 用**容器查询**决定"能不能占两格"：按栅格自己的宽度判断，而不是按窗口宽度。
+     之前用 `span 2` + 窗口断点，侧栏一展开、卡片一窄，格子只有 1 列却仍要 span 2 →
+     多出来的隐式列直接把内容顶出卡片（就是"被挡住"）。 */
+  container-type: inline-size;
 }
 .field {
   display: flex;
@@ -500,9 +504,11 @@ onMounted(load)
   gap: 6px;
   min-width: 0;
 }
-/* 地址/文本类字段内容长，给两格宽；窄屏自然退成一格 */
-.field.wide {
-  grid-column: span 2;
+/* 地址 / 多源列表这类内容长的项：**只有在真有第二列时才占两格**（≥ 520px） */
+@container (min-width: 520px) {
+  .field.wide {
+    grid-column: span 2;
+  }
 }
 .field-label {
   color: var(--text-secondary);
@@ -755,9 +761,6 @@ onMounted(load)
   }
   .head-actions {
     margin-left: 0;
-  }
-  .field.wide {
-    grid-column: auto;
   }
 }
 </style>

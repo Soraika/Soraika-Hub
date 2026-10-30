@@ -637,8 +637,9 @@ try {
   )
   check(
     controlSource.includes('width="anchor"') &&
-      readFileSync(new URL('../src/components/ui/PopoverPanel.vue', import.meta.url), 'utf8').includes("'width-anchor'"),
-    '弹层与输入框同宽（width="anchor"）',
+      /position:\s*fixed/.test(readFileSync(new URL('../src/components/ui/PopoverPanel.vue', import.meta.url), 'utf8')) &&
+      readFileSync(new URL('../src/components/ui/PopoverPanel.vue', import.meta.url), 'utf8').includes('getBoundingClientRect'),
+    '弹层与字段同宽，且用 fixed + 锚点坐标定位（不会被滚动容器的 overflow 裁掉）',
   )
   check(
     !controlSource.includes('常用时长') && !/pop-hint[^>]*>[\s\S]{0,80}单位 \{/.test(controlSource),
@@ -653,12 +654,13 @@ try {
     controlSource.includes("field.type === 'provider'") &&
       controlSource.includes('providerMatches') &&
       controlSource.includes('pop-search') &&
-      controlSource.includes('新建自定义'),
-    'AI 提供商是「选提供商」：带搜索的目录 + 可新建自定义（把当前地址起个名字）',
+      controlSource.includes('添加自定义'),
+    'AI 提供商是「选提供商」：带搜索的目录 + 列表末尾「添加自定义」（点开才输入名称）',
   )
   check(
-    controlSource.includes("emit('pick-provider'") && controlSource.includes("emit('save-custom-provider'"),
-    '选中提供商同时写「提供商名 + 接口地址」；自定义只要求输入名称',
+    controlSource.includes("emit('pick-provider'") && controlSource.includes("emit('save-custom-provider'") &&
+      controlSource.includes('models: item.models'),
+    '选中提供商时把该家的模型名一起带过去（下面的参数自动补齐）',
   )
   check(controlSource.includes('field.models') && controlSource.includes('可用模型'), '模型：从接口读取候选列表')
   check(

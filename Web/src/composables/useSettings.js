@@ -182,10 +182,24 @@ export function useSettings() {
     return []
   })
 
-  /** 选提供商 = **同时**写「提供商名」（界面显示）与「接口地址」（真正生效） */
-  function pickProvider({ name, baseUrl }) {
+  /**
+   * 选提供商 = **同时**写「提供商名」（界面显示）与「接口地址」（真正生效），
+   * 并把**下面的参数一起补齐**：模型不在这一家的列表里就换成它推荐的那个
+   * （优先 `chat` / `flash` / `mini` 这类适合批量分类的；否则取第一个）。
+   */
+  function pickProvider({ name, baseUrl, models: modelList }) {
     setValue('ai.provider', name || '')
     if (baseUrl) setValue('ai.baseUrl', baseUrl)
+
+    const list = Array.isArray(modelList) ? modelList : []
+    const current = String(
+      'ai.model' in draft.value ? draft.value['ai.model'] : fieldByPath.value.get('ai.model')?.value || '',
+    ).trim()
+    if (list.length && !list.includes(current)) {
+      const preferred =
+        list.find((m) => /chat/i.test(m)) || list.find((m) => /flash|mini|turbo/i.test(m)) || list[0]
+      setValue('ai.model', preferred)
+    }
   }
 
   /**
