@@ -35,3 +35,24 @@
 
 - [ ] 搜索页（复用 `useAnimeDetail` 打开面板）
 - [ ] 接 `vue-router` 替换现在「侧栏 key → 页面组件」的临时映射
+
+---
+
+## P4 · 设置页二级页面：事件 × AI 提供商 的画板（**先不做**，已排期）
+
+> 目标：把业务抽象出来，做成「画布 + 连线」的形状 —— 左侧是**事件**（解析资源标签、解析集数、
+> 系列归一、生成合集名…），右侧是**AI 提供商/模型**，连线表示「这个事件用哪家的哪个模型」。
+> 设置页只保留入口（「高级配置 → 编排」），真正的画板放在二级页面。
+
+前置条件（这些已经在这次改造里铺好了）：
+- 供应商目录可枚举（`GET /api/ai/providers`，models.dev，带模型名）
+- 每个 AI 能力有独立的入口与缓存 key（`classifyReleaseTags` / `classifyEpisodes` /
+  `classifyGroupTags` / `classifyReleaseFormat` / `classifySeries`）
+- 配置支持整份导出/导入（画板内容可以直接落到 `ai.bindings` 这样的一个配置项里）
+
+落地顺序建议：
+1. 配置层：`ai.bindings = { [事件]: { baseUrl, apiKey?, model, maxTokens? } }`（缺省回落 `ai.*`）
+2. 调用层：`chatJson` 取 provider 时先查 `bindings[事件]`，没有再用全局
+3. UI：二级页面画布（节点 = 事件/供应商，连线 = 绑定）；先做「列表 + 下拉」的过渡版
+4. 验收：`verify-ai` 增加「同一事件按绑定选不同模型」的断言
+
