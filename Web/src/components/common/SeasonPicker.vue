@@ -1,5 +1,5 @@
 <template>
-  <div ref="rootEl" class="season-picker" :class="{ open, disabled }" @keydown="onKeydown" @wheel="onWheel">
+  <div ref="rootEl" class="season-picker" :class="{ open, disabled }" @keydown="onKeydown">
     <!-- 触发器：与搜索框、地铁图同栏，固定高度不换行 -->
     <button
       ref="triggerEl"
@@ -16,9 +16,10 @@
       <IconChevronDown class="caret" :class="{ rotated: open }" :size="15" :stroke-width="2.4" />
     </button>
 
-    <!-- 下拉面板：年份可折叠，季度为胶囊；禁用项由数据决定（不在这里判断日期） -->
-    <Transition name="dropdown">
-      <div v-if="open" :id="panelId" ref="panelEl" class="panel">
+    <!-- 下拉面板：交给统一的 PopoverPanel（**Teleport 到 body**）。
+         它自己实现 absolute 面板时，会被吸顶栏/滚动容器的层叠与裁剪吃掉 —— 箭头转了却看不到内容。 -->
+    <PopoverPanel :open="open" :anchor="triggerEl" align="left" label="选择季度" @close="close()">
+      <div :id="panelId" ref="panelEl" class="season-panel">
         <p v-if="!years.length" class="panel-empty">暂无可选季度</p>
 
         <div v-for="item in years" :key="item.year" class="year-block">
@@ -65,7 +66,7 @@
           </div>
         </div>
       </div>
-    </Transition>
+    </PopoverPanel>
   </div>
 </template>
 
@@ -79,6 +80,7 @@ import {
   IconLeaf,
   IconSnowflake,
 } from '@tabler/icons-vue'
+import PopoverPanel from '@/components/ui/PopoverPanel.vue'
 
 /**
  * 季度选择器（纯 UI，受控）
@@ -237,30 +239,23 @@ function onKeydown(e) {
   }
 }
 
-// ── 滚轮隔离：面板滚到顶/底后不再把滚动「传」给页面 ─────────────────────
-// 之前的问题是面板滚到底继续滚 → 整个页面跟着动；现在鼠标在季选框内时
-// 只有面板自己滚（没得滚就直接吃掉事件），页面纹丝不动。
-// 触屏/触控板的链式滚动由 .panel 的 overscroll-behavior: contain 兜住。
-function onWheel(e) {
-  if (!open.value) return // 收起时它就是个普通按钮，不该影响页面滚动
-  const el = panelEl.value
-  if (!el) return
-  const canScroll = el.scrollHeight - el.clientHeight > 1
-  if (!canScroll) {
-    e.preventDefault() // 年份少、面板没得滚：框内直接吃掉
-    return
-  }
-  const atTop = el.scrollTop <= 0
-  const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1
-  if ((e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBottom)) e.preventDefault()
-}
+/* 滚轮隔离交给面板自己：`overscroll-behavior: contain` 让滚到顶/底后不把滚动传给页面；
+   鼠标滚轮也由浏览器原生滚动（弹层已经不在页面滚动条里了，不需要再手动 preventDefault）。 */
 
-// 点击外部关闭
-function onDocClick(e) {
-  if (open.value && rootEl.value && !rootEl.value.contains(e.target)) close()
+// 点击外部关闭：**交给 PopoverPanel**（它会同时判断"锚点"和"弹层"，
+// 弹层已经 Teleport 到 body，本组件再也 contains 不到它 —— 自己再判一次会误关）。
+
+/* 键盘：弹层挂在 body 上，焦点可能不在本组件里 —— 监听 document，
+   只在打开时生效（↑↓ 换年 / → 进季度 / ← 退回 / Esc 关闭）。 */
+onMounted(() => {
+  document.addEventListener('keydown', onDocKeydown)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onDocKeydown)
+})
+function onDocKeydown(e) {
+  if (open.value) onKeydown(e)
 }
-onMounted(() => document.addEventListener('click', onDocClick))
-onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 </script>
 
 <style scoped>
@@ -308,27 +303,10 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
   transform: rotate(180deg);
 }
 
-/* ── 下拉面板 ─────────────────────────────────────────────────────────── */
-.panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  z-index: 60;
+/* ── 下拉面板（外观/定位/滚动都由 PopoverPanel 负责，这里只管宽度与滚动链）── */
+.season-panel {
   width: 232px;
-  max-width: calc(100vw - 32px);
-  max-height: 62vh;
-  overflow-y: auto;
-  /* 年份多（2012~今年）时必然出现滚动条：预留槽位，
-     避免滚动条出现/消失时挤动内容宽度、胶囊跟着重排 */
-  scrollbar-gutter: stable;
-  /* 滚到顶/底后不要把滚动链传给页面（触屏 / 触控板）；鼠标滚轮由 onWheel 兜底 */
   overscroll-behavior: contain;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-dropdown);
-  box-shadow: var(--shadow-lg);
-  transform-origin: top left;
 }
 .panel-empty {
   padding: 10px;
@@ -432,16 +410,5 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
   cursor: not-allowed;
 }
 
-/* ── 下拉动效 ───────────────────────────────────────────────────────────
- * 只做「轻微位移 + 淡入」，不带 scale：
- * 从中心缩放会被读成「先把容器撑开、内容再弹出」，也就是之前那种弹跳感。 */
-.dropdown-enter-active,
-.dropdown-leave-active {
-  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
-}
-.dropdown-enter-from,
-.dropdown-leave-to {
-  opacity: 0;
-  transform: translateY(-6px);
-}
+/* 打开/关闭的动效由 PopoverPanel 统一提供（淡入 + 轻微上移），这里不再重复定义 */
 </style>

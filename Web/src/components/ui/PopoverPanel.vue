@@ -75,7 +75,9 @@ function onKeydown(event) {
 }
 
 function bind(on) {
-  if (typeof window === 'undefined') return
+  // SSR / 测试环境里没有真正的 window（Node 里 typeof window 可能不是 undefined）——
+  // 用能力检测，别只看 typeof，否则 `window[method] is not a function` 会把整页 SSR 打断。
+  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
   const method = on ? 'addEventListener' : 'removeEventListener'
   // capture=true：内层滚动容器滚动时也要跟着挪
   window[method]('pointerdown', onPointerDown)
