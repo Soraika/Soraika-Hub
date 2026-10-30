@@ -126,15 +126,16 @@ try {
   )
   check(
     /const batches = chunk\(list, batchSize\)/.test(aiPageSource) &&
-      /mapLimit\(batches, 3/.test(aiPageSource) &&
+      /mapLimit\(batches, limit/.test(aiPageSource) &&
+      /config\.ai\.concurrency/.test(aiPageSource) &&
       !/list\.slice\(0, config\.ai\.maxTitles\)/.test(aiPageSource),
-    '标签解析**全量分批**（批间并发 3）—— 不再截断成"只分析前 maxTitles 条"',
+    '标签解析**全量分批**，批间并发按「并发上限」配置 —— 不再截断成"只分析前 N 条"',
   )
   check(
     /const batches = chunk\(list, EPISODE_BATCH\)/.test(aiPageSource) &&
       !/pickTitles/.test(aiPageSource) &&
-      /mapLimit\(batches, 3/.test(aiPageSource),
-    '集数解析同样**全量分批**（旧版 pickTitles 会截断成前 120 条）',
+      /mapLimit\(batches, limit/.test(aiPageSource),
+    '集数解析同样**全量分批**，批间并发按「并发上限」配置（旧版 pickTitles 会截断成前 120 条）',
   )
   /* 缓存 TTL 要跟着配置走：传**函数**而不是死值 ——
      缓存实例是模块加载时建的，传死值的话设置页改完不生效（要重启进程）。 */

@@ -36,6 +36,7 @@ aiRouter.get('/ai/tools', (req, res) => {
       // 没配 key 时不暴露 baseUrl（没必要，也少一处信息面）
       baseUrl: info.enabled ? info.baseUrl : '',
       maxTitles: info.maxTitles,
+      concurrency: info.concurrency,
       tools: AI_TOOLS,
       caches: aiCacheStats(),
     },

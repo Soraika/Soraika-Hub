@@ -9,7 +9,7 @@ import { apiGet, apiPost } from './http'
 
 /**
  * AI 能力清单（含是否已配置）
- * @returns {Promise<{ enabled:boolean, model:string, maxTitles:number,
+ * @returns {Promise<{ enabled:boolean, model:string, concurrency:number,
  *   tools:Array<{name:string,description:string,inputSchema:object}> }>}
  */
 export function fetchAiTools() {

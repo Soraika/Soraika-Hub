@@ -92,8 +92,8 @@ async function mapLimit(items, limit, fn) {
 const hashOf = (list) => createHash('sha1').update(list.join('\n')).digest('hex').slice(0, 16)
 
 /* ── 标签解析 ──────────────────────────────────────────────────────────────
-   **全量**：有多少条文件名就分析多少条。按 `ai.maxTitles`（单批上限，默认 120）
-   切批、批间并发 3 跑完，结果合并去重 —— 绝不"只分析前 N 条"。 */
+   **全量**：有多少条文件名就分析多少条。单批大小是内部常数（`ai.maxTitles`，默认 120），
+   切批后**批间并发**按 `ai.concurrency`（并发上限，默认 3）跑完，结果合并去重 —— 绝不"只分析前 N 条"。 */
 
 /** 拼一次请求的 user prompt：带作品上下文（番名 / 季），让模型知道自己在分析什么 */
 const tagUserPrompt = (batch, context) =>
@@ -155,8 +155,8 @@ type 取值：
 /**
  * 资源文件名 → 筛选标签
  * ---------------------------------------------------------------------------
- * · **全量分析**：有多少条文件名就分析多少条 —— 按 `ai.maxTitles`（单批上限）切批、
- *   批间并发 3 跑完，各批结果合并去重（同名标签的 `match` 取并集，筛得更全）
+ * · **全量分析**：有多少条文件名就分析多少条 —— 切批（单批内部常数）、
+ *   批间按 `ai.concurrency` 并发跑完，各批结果合并去重（同名标签的 `match` 取并集，筛得更全）
  * · **带作品上下文**：把番剧名 / 季一起给模型（它得知道在分析什么，才分得清"这是字幕组名"
  *   还是"这是片源"）
  * · `all`（整批一致）由**后端按全量数据重算**：单批模型的判断覆盖不了全量，
@@ -180,14 +180,15 @@ export async function classifyReleaseTags(titles, { log = logger, animeTitle = '
     return { ...cached, cached: true }
   }
 
-  /* 全量分批：`ai.maxTitles` 是**单批上限**（默认 120，一次 prompt 别太大），
-     超过就切多批、批间并发 3 跑完。
+  /* 全量分批：单批大小是内部常数（默认 120，一次 prompt 别太大），
+     超过就切多批、批间按 `ai.concurrency` 并发跑完（**并发上限**是设置页里那个旋钮）。
      旧实现是 `list.slice(0, maxTitles)` —— 只分析前 120 条，几百条资源的后半截
      直接没进过模型，用户看到的就是"怎么就这么点标签"。 */
   const batchSize = Math.max(1, config.ai.maxTitles || 40)
   const batches = chunk(list, batchSize)
+  const limit = Math.min(Math.max(1, Number(config.ai.concurrency) || 1), 8)
 
-  const runs = await mapLimit(batches, 3, async (batch) => {
+  const runs = await mapLimit(batches, limit, async (batch) => {
     const { parsed, model, ms } = await chatJson({
       system: TAG_SYSTEM_PROMPT,
       user: tagUserPrompt(batch, context),
@@ -280,7 +281,7 @@ const EPISODE_BATCH = 20
  * 资源文件名 → 纯番名 / 季 / 每条资源的集数
  * ---------------------------------------------------------------------------
  * · **全量**：有多少条文件名就解析多少条（不再 `slice(0, maxTitles)` 截断），
- *   按 `EPISODE_BATCH` 条一批、批间并发 3 跑完
+ *   按 `EPISODE_BATCH` 条一批、批间按 `ai.concurrency` 并发跑完
  * · 番名 / 季以**第一批**的结果为准（同一部作品的资源不会各有各的季）
  * @param {string} animeTitle 作品标题（帮模型认清季数）
  * @param {string[]} titles 资源文件名列表
@@ -302,8 +303,9 @@ export async function classifyEpisodes(animeTitle, titles, { log = logger } = {}
   const startedAt = Date.now()
   const batches = chunk(list, EPISODE_BATCH)
 
-  // 批间并发 3：串行（旧实现）在几百条资源时要等几十个来回，太慢；无脑并发又会被限流
-  const runs = await mapLimit(batches, 3, (batch) =>
+  // 批间并发可配（默认 3）：串行在几百条资源时要等几十个来回，太慢；无脑并发又会被限流
+  const limit = Math.min(Math.max(1, Number(config.ai.concurrency) || 1), 8)
+  const runs = await mapLimit(batches, limit, (batch) =>
     chatJson({
       system: EPISODE_SYSTEM_PROMPT,
       user: `作品标题：${title || '（无）'}\n\n文件名：\n${batch.map((t, n) => `${n + 1}. ${t}`).join('\n')}`,

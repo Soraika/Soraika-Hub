@@ -68,7 +68,7 @@ export const SETTINGS_FIELDS = [
   { path: 'ai.maxTokens', env: 'AI_MAX_TOKENS', group: 'ai', section: '接口地址', label: '最大输出', type: 'number', unit: 'token', min: 64, advanced: true },
 
   { path: 'ai.timeoutMs', env: 'AI_TIMEOUT_MS', group: 'ai', section: '解析参数', label: '单次超时', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true },
-  { path: 'ai.maxTitles', env: 'AI_MAX_TITLES', group: 'ai', section: '解析参数', label: '单批上限', type: 'number', unit: '条', min: 1, advanced: true, hint: '超出会切多批跑完，不丢数据' },
+  { path: 'ai.concurrency', env: 'AI_CONCURRENCY', group: 'ai', section: '解析参数', label: '并发上限', type: 'number', unit: '个', min: 1, max: 8, advanced: true, hint: '同时最多几个请求' },
   { path: 'ai.tagCacheTtlMs', env: 'AI_TAG_CACHE_TTL_MS', group: 'ai', section: '解析参数', label: '标签缓存', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true, hint: '相同资源的解析结果复用时长' },
   { path: 'ai.episodeCacheTtlMs', env: 'AI_EPISODE_CACHE_TTL_MS', group: 'ai', section: '解析参数', label: '集数缓存', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true, hint: '改完立即生效，不用重启' },
 

@@ -113,7 +113,9 @@ export const aiProviderInfo = () => ({
   enabled: config.ai.enabled,
   model: config.ai.model,
   baseUrl: config.ai.baseUrl,
+  /** 单批上限（内部常数，只做可观测性展示） */
   maxTitles: config.ai.maxTitles,
+  concurrency: config.ai.concurrency,
 })
 
 /**

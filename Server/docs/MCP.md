@@ -5,7 +5,7 @@
 
 | MCP | 对应 HTTP |
 |---|---|
-| `tools/list` | `GET /api/ai/tools` → `{ enabled, model, maxTitles, tools: [{ name, description, inputSchema }] }` |
+| `tools/list` | `GET /api/ai/tools` → `{ enabled, model, concurrency, tools: [{ name, description, inputSchema }] }` |
 | `tools/call` | `POST /api/ai/call`，body `{ name, arguments }` → `{ content: [{ type: 'text', text }], structured, isError }` |
 
 前端的便利直连（不是给 MCP 用的，但同一套实现）：
