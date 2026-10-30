@@ -332,7 +332,7 @@ export async function testEndpoint(path, value, { log = logger } = {}) {
         ? `${bases.length} 个地址都不可用：${sources.map((s) => `${s.base}（${s.reason}）`).join('；')}`
         : first.reason,
     detail: usable.length
-      ? [bases.length > 1 ? `${usable.length}/${bases.length} 可用` : '', first.detail].filter(Boolean).join(' · ')
+      ? [bases.length > 1 ? `${usable.length}/${bases.length} 通过` : '', first.detail].filter(Boolean).join(' · ')
       : '',
     sources: sources.map((s) => ({ base: s.base, ok: s.ok, status: s.status, ms: s.ms, reason: s.reason })),
   }

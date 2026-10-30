@@ -90,17 +90,17 @@
           @test-all="$emit('test')"
         />
 
-        <!-- 时刻：原生 input[type=time]。图标已隐藏（所有行统一不带图标），
-             入口是**点这个框**——直接调浏览器原生的 showPicker()。
-             不支持 showPicker 的浏览器会退化成普通聚焦，输入框本身照样能键盘改。 -->
-        <input
-          v-else-if="field.type === 'time'"
-          :id="inputId"
-          type="time"
-          :value="value || ''"
-          @click="openTimePicker"
-          @change="$emit('update', $event.target.value)"
-        />
+        <!-- 时刻：点开是两列滚轮（时 / 分），和「时长」同一套手感 -->
+        <button
+          v-if="field.type === 'time'"
+          class="time-btn"
+          type="button"
+          data-popover-anchor
+          @click="togglePanel"
+        >
+          <IconClock :size="14" />
+          <span>{{ value || '04:00' }}</span>
+        </button>
 
         <!-- 密钥：已配置时显示掩码，聚焦后变为可编辑 -->
         <template v-else-if="field.type === 'secret'">
@@ -179,7 +179,63 @@
       </button>
     </div>
 
-    <!-- 时刻不再有弹层：改用原生 input[type=time]（滚轮/键盘/鼠标都是浏览器原生的） -->
+    <!-- 弹层①：时刻 —— 两列滚轮（时 / 分），拖拽 + 滚轮都能选 -->
+    <PopoverPanel
+      :open="panel === 'time'"
+      width="anchor"
+      align="right"
+      :label="`${field.label} 选择`"
+      @close="close"
+    >
+      <div class="wheels">
+        <div
+          ref="hourWheel"
+          class="wheel"
+          @scroll="onWheelScroll"
+          @wheel.prevent="wheelBy($event, 'h')"
+          @pointerdown="startWheelDrag($event, 'h')"
+          @pointermove="moveWheelDrag"
+          @pointerup="endWheelDrag"
+          @pointercancel="endWheelDrag"
+        >
+          <span class="wheel-pad" />
+          <span
+            v-for="h in 24"
+            :key="h"
+            class="wheel-item"
+            :class="{ on: timeH === h - 1 }"
+            @click="pickHour(h - 1)"
+          >
+            {{ pad2(h - 1) }}
+          </span>
+          <span class="wheel-pad" />
+        </div>
+        <span class="wheel-colon">:</span>
+        <div
+          ref="minuteWheel"
+          class="wheel"
+          @scroll="onWheelScroll"
+          @wheel.prevent="wheelBy($event, 'm')"
+          @pointerdown="startWheelDrag($event, 'm')"
+          @pointermove="moveWheelDrag"
+          @pointerup="endWheelDrag"
+          @pointercancel="endWheelDrag"
+        >
+          <span class="wheel-pad" />
+          <span
+            v-for="m in 60"
+            :key="m"
+            class="wheel-item"
+            :class="{ on: timeM === m - 1 }"
+            @click="pickMinute(m - 1)"
+          >
+            {{ pad2(m - 1) }}
+          </span>
+          <span class="wheel-pad" />
+        </div>
+      </div>
+      <p class="pop-hint">当前 {{ value || '04:00' }}</p>
+    </PopoverPanel>
 
     <!-- 弹层②：数值 / 时长的交互界面
          · **时长 = 多列滚轮**（按量级自动选列）：`xx s xx ms` / `xx m xx s` / `xx h xx m` / `xx d xx h xx m`
@@ -326,7 +382,7 @@ import { formatDuration, unitForMs } from '@/utils/duration'
  *   · secret      已配置时显示掩码，聚焦后转为可编辑；后缀带「显示 / 隐藏」
  *   · number      行内显示完整写法（时长 `1m 30s`、其它 `350` + 单位）；
  *                 点开是 [−] 输入 [＋]，**输入框和行外同一套写法**（`7d` / `1m 30s` / `350ms`）
- *   · time        原生 input[type=time]（滚轮/键盘/鼠标/触屏都归浏览器）
+ *   · time        两列滚轮（时 / 分），点开选择
  *   · models / providers  后缀按钮弹出候选列表（模型实时取自接口或供应商目录）
  *
  * 时长**显示什么样就能照着填什么样**：让人先换算成 90000 再填，是把机器该干的活推给人。
@@ -792,21 +848,7 @@ const valueText = computed(() => {
 /** 单位胶囊：时长已经写在值里（`7d`），再挂个胶囊就是重复，所以只有非时长才有 */
 const unitOf = computed(() => (isDuration.value ? '' : props.field.unit || ''))
 
-/**
- * 打开浏览器的时刻选择面板
- * ---------------------------------------------------------------------------
- * 原生 `input[type=time]` 默认只把时钟图标当入口，而我们已经把图标隐藏了
- * （**所有行统一不带图标** —— 只给一行配图标、其余行就得留白占位，整列就不齐了）。
- * 所以入口改成"点输入框就弹"：`showPicker()` 需要在用户手势里调用，click 正好满足。
- * 浏览器不支持时抛错，这里吞掉即可 —— 退化成普通聚焦，键盘依然能改时间。
- */
-function openTimePicker(event) {
-  try {
-    event.target.showPicker?.()
-  } catch {
-    /* 不支持 / 手势不符：不影响输入 */
-  }
-}
+/* 时刻滚轮的定位由 syncWheels / onWheelScroll 管（见上） */
 
 /**
  * 加减的步长

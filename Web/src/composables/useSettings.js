@@ -432,9 +432,25 @@ export function useSettings() {
     try {
       const res = await testSetting(path, value)
       testStates.value = { ...testStates.value, [path]: res.ok ? 'success' : 'error' }
-      // 成功就说「成功 + 可用数 + 耗时」（绿），别把 200 这种状态码甩给使用者看；
+      // 成功就说「成功 + 通过条数 + 耗时」（绿），别把 200 这种状态码甩给使用者看；
       // 失败才需要具体原因（带上状态码，方便排错）。耗时统一成 `1s 234ms` 这种写法。
       testDetails.value = { ...testDetails.value, [path]: describeTest(res) }
+
+      /* 「测试全部」也要把**每条的结果落到行上**（图标 + ms），
+         否则用户只看到底下一句「1/2 通过」，不知道是哪条挂了。 */
+      if (Array.isArray(res.sources) && res.sources.length) {
+        const rows = {}
+        for (const item of res.sources) {
+          rows[item.base] = {
+            state: item.ok ? 'success' : 'error',
+            detail: item.ok
+              ? `成功 · ${formatDuration(item.ms)}`
+              : `失败：${item.reason || `HTTP ${item.status}`}（${formatDuration(item.ms)}）`,
+            ms: item.ms ?? null,
+          }
+        }
+        rowTests.value = { ...rowTests.value, [path]: { ...(rowTests.value[path] || {}), ...rows } }
+      }
       return res
     } catch (err) {
       testStates.value = { ...testStates.value, [path]: 'error' }

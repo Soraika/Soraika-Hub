@@ -599,13 +599,19 @@ try {
     /\.wheel-item/.test(controlSource) && controlSource.includes('onWheelScroll') && controlSource.includes('scroll-snap-type'),
     '时刻：滚轮选择（时 / 分两列，scroll-snap 吸附，中间那格即选中值）',
   )
+  /* 时刻：**两列滚轮**（时 / 分），和「时长」同一套手感（滚一下一格、可拖、中间格高亮） */
   check(
-    /* 之前为了修"滚一下跳四个"去接管滚轮、又自己实现拖拽，代码越堆越多；
-       正解是**不自己造**：原生 input[type=time] 的滚轮 / 键盘 / 鼠标行为都是浏览器管。 */
-    /type="time"/.test(controlSource) && !controlSource.includes('@wheel.prevent="wheelBy'),
-    '时刻改用原生 input[type=time]（滚轮/键盘/鼠标/触屏都归浏览器）—— 不再自己接管滚轮与拖拽',
+    controlSource.includes("panel === 'time'") &&
+      controlSource.includes('hourWheel') &&
+      controlSource.includes('minuteWheel') &&
+      controlSource.includes('pickHour') &&
+      !/type="time"/.test(controlSource),
+    '时刻是时 / 分两列滚轮（原生 input[type=time] 已移除）',
   )
-  check(/type="time"/.test(controlSource), '时刻用**原生 input[type=time]** —— 键盘/滚轮/鼠标/触屏都归浏览器管，不再自绘滚轮列')
+  check(
+    controlSource.includes('@wheel.prevent="wheelBy') && controlSource.includes('startWheelDrag'),
+    '时刻滚轮自己接管滚轮（一格一格）与拖拽（原生滚动区鼠标拖不动）',
+  )
   /* 交互"渲染出来了吗"这类断言要用 SSR 真渲染，e2e 这里的作用域拿不到 vite 实例，
      硬塞进去会把整份验收弄崩（踩过）。验证放在人工过一遍 + 下面的 class/属性断言里。 */
   /* 时长可以直接写单位：10s / 1.5m / 2h —— 不让人先把 10 秒换算成 10000 */
@@ -791,7 +797,7 @@ try {
   )
   check(/\.shell input\.num\s*\{[^}]*text-align:\s*right/s.test(controlSource), '数值右对齐（一列数字在同一基线上）')
   check(
-    /type="time"/.test(controlSource) && !settingsSource.includes('type="time"'),
+    controlSource.includes('hourWheel') && !settingsSource.includes('hourWheel'),
     '时刻控件实现在 FieldControl 里（页面只摆结构，不碰控件）',
   )
   check(!/#[0-9a-f]{6}/i.test(settingsSource) && !/rgba\(0, 0, 0/.test(settingsSource), '颜色与阴影都走令牌')

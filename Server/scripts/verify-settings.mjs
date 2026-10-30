@@ -285,8 +285,8 @@ try {
   })
   const mixed = await call('POST', '/api/settings/test', { path: 'mikan.bases' })
   check(
-    mixed.body?.data?.ok === true && /1\/2 可用/.test(String(mixed.body?.data?.detail)),
-    `多地址里有能用的就算通 → ${mixed.body?.data?.detail}`,
+    mixed.body?.data?.ok === true && /1\/2 通过/.test(String(mixed.body?.data?.detail)),
+    `多地址里有能用的就算通，并回报通过条数 → ${mixed.body?.data?.detail}`,
   )
   check(
     mixed.body?.data?.sources?.filter((s) => !s.ok).length === 1,
