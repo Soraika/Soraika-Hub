@@ -479,9 +479,83 @@ export async function classifyReleaseFormat(samples = [], { provider, log = logg
   }
 }
 
+/* ── ⑤ 资源按字幕组归类（「全部字幕组」视图用）────────────────────────────
+   为什么要它：全量 feed 是**完整历史**（黑叶草 369 条 / 1~169 集），但没有「这条属于哪个组」；
+   而按组视图要靠它才能筛。这里把**官方组名表**发给模型，让它逐条归类 —— 「废点 token」是
+   用户明确接受的代价（比逐条问便宜得多：按 120 条/批、批间并发 3）。
+   改 prompt 必须同步升 GROUP_PROMPT_VERSION（缓存 key 带版本号）。 */
+
+const GROUP_PROMPT_VERSION = 'v1'
+
+const GROUP_SYSTEM_PROMPT = `你在给一批动画资源文件名按**字幕组/发布组**归类。
+
+【可选字幕组】（只能从这里选；对不上就输出 null）
+{{GROUPS}}
+
+只输出 JSON，不要 Markdown、不要解释：
+{ "labels": { "完整文件名": "字幕组名" } }
+
+规则：
+- 文件名里通常带组名标记：\`【组名】\`、\`[组名]\`、开头或结尾；**缩写要能对上**（如 \`DMHY\` = 动漫花园）
+- 键必须是**输入里的完整文件名**，一字不改
+- 认不出 / 这批里没出现过的组 → 该条给 null，**不要猜**
+- 一条只能属于一个组`
+
+/** 归类缓存：同一部番同一批文件名 24 小时内不重复问（样本基本不变） */
+const groupCache = createMemCache({ ttlMs: () => 24 * 60 * 60 * 1000, max: 100 })
+
+/**
+ * 把一批资源文件名按字幕组归类
+ * ---------------------------------------------------------------------------
+ * @param {string[]} titles 资源文件名（会按 `ai.maxTitles` 切批、批间并发 3）
+ * @param {Array<{name:string, rssId?:string|number}>} groups 官方组名表（来自 /subgroups）
+ * @returns {Promise<Record<string,string|null>|null>} 标题 → 组名（null = 认不出）；AI 不可用/失败返回 null
+ */
+export async function classifyReleaseGroups(titles = [], groups = [], { provider, log = logger } = {}) {
+  const list = uniqueTitles(titles)
+  const names = [...new Set((groups || []).map((g) => String(g?.name || '').trim()).filter(Boolean))]
+  if (!list.length || !names.length) return null
+  if (!config.ai.enabled) return null
+
+  const key = `groups:${GROUP_PROMPT_VERSION}:${hashOf([...names, ...list])}`
+  const cached = groupCache.get(key)
+  if (cached) return { ...cached }
+
+  const nameList = names.map((n, i) => `${i + 1}. ${n}`).join('\n')
+  const batches = chunk(list, Math.max(1, config.ai.maxTitles || 120))
+  try {
+    const runs = await mapLimit(batches, 3, async (part) => {
+      const { parsed } = await chatJson({
+        system: GROUP_SYSTEM_PROMPT.replace('{{GROUPS}}', nameList),
+        user: JSON.stringify({ titles: part }),
+        provider,
+        log,
+      })
+      return parsed?.labels && typeof parsed.labels === 'object' ? parsed.labels : {}
+    })
+
+    // 收敛：只认「输入里真有的标题」+「官方组名表里真有的组名」，其余一律 null
+    const allowed = new Set(names)
+    const labels = {}
+    for (const title of list) {
+      const hit = runs.map((r) => r?.[title]).find((v) => typeof v === 'string' && allowed.has(v.trim()))
+      labels[title] = hit ? hit.trim() : null
+    }
+    groupCache.set(key, labels)
+    const labelled = Object.values(labels).filter(Boolean).length
+    log.info({ titles: list.length, groups: names.length, labelled, batches: batches.length }, 'ai.groups ok')
+    return labels
+  } catch (err) {
+    // 归类失败不影响列表展示（前端照旧显示全部），所以只记日志、返 null
+    log.warn({ titles: list.length, groups: names.length, err: err.message }, 'ai.groups fail')
+    return null
+  }
+}
+
 /** 看板用：各缓存的当前条目数 */
 export const aiCacheStats = () => ({
   tagCache: tagCache.size(),
   episodeCache: episodeCache.size(),
   formatCache: formatCache.size(),
+  groupCache: groupCache.size(),
 })

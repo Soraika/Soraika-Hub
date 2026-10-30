@@ -15,7 +15,7 @@
 import { warmPoster } from '../../cache/poster.js'
 import { findById, listSeriesMembers, rememberSubgroups } from '../../db/anime.js'
 import { claimBySignature, signatureFromSamples } from '../../lib/release-match.js'
-import { classifyReleaseFormat } from './ai.js'
+import { classifyReleaseFormat, classifyReleaseGroups } from './ai.js'
 import { enrichOne } from '../../jobs/enrich.js'
 import { fillSeriesFor } from '../../jobs/series.js'
 import { fail } from '../../lib/errors.js'
@@ -166,6 +166,36 @@ export async function getAnimeSeries(id, { log = logger } = {}) {
 }
 
 /**
+ * 给资源条目补上「所属字幕组」（只用于「全部字幕组」视图）
+ * ---------------------------------------------------------------------------
+ * 组名表来自 Mikan 详情页（和 `/subgroups` 同一份）；归类交给 `classifyReleaseGroups`（AI + 24h 缓存）。
+ * AI 没配 / 归类失败 → 所有条目的 `subgroup` 都是 null，**不影响列表本身**（前端只当它没有标签）。
+ * @returns {Promise<number>} 成功标上的条数
+ */
+async function labelReleases(row, items, { log }) {
+  try {
+    const profile = await fetchAnimeProfile(row.mikan_id)
+    const groups = (profile.subgroups || []).map((sg) => ({ name: sg.subgroupName, rssId: sg.subgroupRSSId }))
+    const labels = await classifyReleaseGroups(
+      items.map((it) => it.title),
+      groups,
+      { log },
+    )
+    if (!labels) return 0
+    let labelled = 0
+    for (const item of items) {
+      const name = labels[item.title] || null
+      item.subgroup = name
+      if (name) labelled++
+    }
+    return labelled
+  } catch (err) {
+    log.warn({ id: row.id, err: err.message }, 'anime.releases label fail')
+    return 0
+  }
+}
+
+/**
  * 某字幕组的资源列表（种子）—— **每次直接问上游，不缓存**
  * ---------------------------------------------------------------------------
  * `subgroupRssId` 就是 `/subgroups` 返回的那个 `id`（**该作品下的** RSS id）；
@@ -195,7 +225,10 @@ export async function getSubgroupReleases(id, subgroupRssId, { log = logger } = 
   // 「全部字幕组」：直接拉全量（完整历史，不分字幕组）
   if (want === 'all') {
     const items = await fetchSubgroupReleases(row.mikan_id)
-    log.debug({ id, total: items.length, source: 'all' }, 'anime.releases ok')
+    // 额外做一件事：**给每条标出所属字幕组**（把官方组名表发给 AI 逐条归类，缓存 24h）。
+    // 这一步失败不影响列表（label 全是 null，前端照旧只显示文件名）。
+    const labelled = await labelReleases(row, items, { log })
+    log.debug({ id, total: items.length, source: 'all', labelled }, 'anime.releases ok')
     return { ...base, items, total: items.length, source: 'all' }
   }
 

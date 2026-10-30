@@ -92,6 +92,7 @@
               <!-- 元信息一行（用 `·` 分隔）。修订版不再在每条上标 v2 —— 
                    那属于"筛选条件"层面的信息（已选区画了 PREFER 修订版），逐条重复标注是噪音 -->
               <p class="meta">
+                <span v-if="item.subgroup" class="num sub" :title="`所属字幕组：${item.subgroup}`">{{ item.subgroup }}</span>
                 <span v-if="item.sizeText" class="num">{{ item.sizeText }}</span>
                 <span v-if="item.publishedText" class="num">{{ item.publishedText }}</span>
               </p>
@@ -167,6 +168,7 @@ import { dedupeLatestRevisions, episodeOf, isBatchEpisode } from '@/utils/episod
  *   3. 复制磁力 + 长列表分批渲染（首次 40 条）
  *   4. 多选 + 下载入口：下载本身还没接（要等 qBittorrent 那部分），
  *      先把按钮与「已选 N」的位置定下来，接上时把 downloadReady 置 true 就能用
+ * 条目里可选带 `subgroup`（「全部字幕组」视图由后端用 AI 归类补上），有就显示在元信息行。
  */
 const props = defineProps({
   /** [{ title, magnet, magnetHash, torrentUrl, sizeText, publishedText }] */

@@ -197,6 +197,11 @@ try {
       /fetchSubgroupReleases\(row\.mikan_id\)/.test(animePageSource),
     '取资源用 RSS 字幕组 id（/subgroups 的 id）；不传参数即全量 feed',
   )
+  /* 「全部」视图要能筛组：后端把**官方组名表**发给模型逐条归类（AI 失败则只显示文件名） */
+  check(
+    /classifyReleaseGroups/.test(animePageSource) && /labelReleases\(row, items/.test(animePageSource),
+    '「全部」视图给每条标所属字幕组（AI 按官方组名表归类，失败则降级为不标）',
+  )
   /* 老番的详情页可能被 Mikan 拿掉（实测 龙珠超 547 / 怪物弹珠 624 / 幻境 2547 全 404），
      但资源 feed 还活着 → 退化成一个「全部字幕组」，照样能取资源。 */
   check(
@@ -241,6 +246,10 @@ try {
     check(
       allRel?.source === 'all' && allRel.total >= rel.total,
       `「全部字幕组」可用 → total=${allRel?.total}（单组 ${rel.total}；单组 100 条时会用特征认领补全）`,
+    )
+    check(
+      allRel?.items?.every((it) => 'subgroup' in it),
+      '「全部」视图每条都带 subgroup 字段（可为 null；有 AI 时是归类结果）',
     )
 
     // 归属校验：映射不再落库 → 不再伪造 404，而是直接问 Mikan（公开 RSS）。
