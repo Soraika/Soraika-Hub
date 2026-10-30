@@ -8,7 +8,7 @@
  *     （不做「前端猜后端」那套，免得两边状态慢慢对不上）
  */
 import { computed, ref, watch } from 'vue'
-import { fetchAiModels } from '@/api/ai'
+import { fetchAiModels, fetchAiProviders } from '@/api/ai'
 import { formatDuration } from '@/utils/duration'
 import {
   exportUrl,
@@ -144,22 +144,38 @@ export function useSettings() {
     if ('ai.baseUrl' in draft.value) return String(draft.value['ai.baseUrl'] || '')
     return String(fieldByPath.value.get('ai.baseUrl')?.value || '')
   })
+  /** 供应商清单：走社区维护的目录（models.dev，200+ 家），取不到就用后端内置的那份 */
+  const providers = ref([])
+  async function loadProviders() {
+    try {
+      const res = await fetchAiProviders()
+      providers.value = res?.providers ?? []
+    } catch {
+      // 目录站不可达：退回内置清单（界面照常可用）
+      providers.value = []
+    }
+    if (!providers.value.length) providers.value = data.value?.aiProviders ?? []
+  }
+
+  const normalizeBase = (url) => String(url || '').trim().toLowerCase().replace(/\/+$/, '')
+  /** 当前地址命中的供应商预设（拿它自带的模型名当"还没填 Key 时的候选"） */
+  const matchedProvider = computed(() => providers.value.find((p) => normalizeBase(p.baseUrl) === normalizeBase(aiBaseUrl.value)))
+  const providerModels = computed(() => matchedProvider.value?.models ?? [])
+
   async function loadModels() {
     if (modelsLoading.value) return
     modelsLoading.value = true
+    // 先用目录里的候选（不需要 Key 也能看到模型名），再用接口实时结果覆盖
+    models.value = providerModels.value
     try {
       const res = await fetchAiModels(aiBaseUrl.value)
-      models.value = res?.models ?? []
+      if (res?.models?.length) models.value = res.models
     } catch {
-      // 未配置、或上游取不到：回落成纯手动输入，不打扰填写
-      models.value = []
+      // 未配置 / 上游取不到：保留目录候选（或空），回落成纯手动输入
     } finally {
       modelsLoading.value = false
     }
   }
-
-  /** 供应商预设（后端下发，选了就填好接口地址） */
-  const providers = computed(() => data.value?.aiProviders ?? [])
 
   const dirtyPaths = computed(() => Object.keys(draft.value))
   const dirtyCount = computed(() => dirtyPaths.value.length)
@@ -198,6 +214,8 @@ export function useSettings() {
     error.value = null
     try {
       data.value = await fetchSettings()
+      // 供应商目录单独拉（200+ 家，不能拖慢设置页首屏）
+      loadProviders()
     } catch (err) {
       error.value = err
     } finally {
@@ -343,6 +361,42 @@ export function useSettings() {
   }
 
   /**
+   * 「一行测试」的结果文案（成功 / 失败都写成一整句，耗时统一 `1s 234ms`）
+   */
+  function describeTest(res) {
+    return res.ok
+      ? `成功 · ${res.detail ? `${res.detail} · ` : ''}${formatDuration(res.ms)}`
+      : `失败：${res.reason || `HTTP ${res.status}`}（${formatDuration(res.ms)}）`
+  }
+
+  /**
+   * 多源列表里**单独测某一条**（Mikan / Bangumi 的某个地址）
+   * -----------------------------------------------------------------------
+   * 为什么需要：一键全测只会说"1/2 可用"，而到底是哪条坏、坏在哪，得逐条看。
+   * 结果按 `path + url` 记，切走再回来还在。
+   * @param {string} path 字段路径
+   * @param {string} url 该行的地址
+   */
+  const rowTests = ref({})
+  async function testRow(path, url) {
+    const key = String(url || '').trim()
+    if (!key) return
+    const put = (state, detail) => {
+      rowTests.value = {
+        ...rowTests.value,
+        [path]: { ...(rowTests.value[path] || {}), [key]: { state, detail } },
+      }
+    }
+    put('testing', '正在连接…')
+    try {
+      const res = await testSetting(path, key)
+      put(res.ok ? 'success' : 'error', describeTest(res))
+    } catch (err) {
+      put('error', err.message)
+    }
+  }
+
+  /**
    * 测试某个地址通不通（设置页每行右边的插头按钮）
    * 用「输入框里的值」测（还没保存也能先试）；结果状态供按钮显示插头/转圈/对勾/叉
    * @param {string} path
@@ -357,12 +411,7 @@ export function useSettings() {
       testStates.value = { ...testStates.value, [path]: res.ok ? 'success' : 'error' }
       // 成功就说「成功 + 可用数 + 耗时」（绿），别把 200 这种状态码甩给使用者看；
       // 失败才需要具体原因（带上状态码，方便排错）。耗时统一成 `1s 234ms` 这种写法。
-      testDetails.value = {
-        ...testDetails.value,
-        [path]: res.ok
-          ? `成功 · ${res.detail ? `${res.detail} · ` : ''}${formatDuration(res.ms)}`
-          : `失败：${res.reason || `HTTP ${res.status}`}（${formatDuration(res.ms)}）`,
-      }
+      testDetails.value = { ...testDetails.value, [path]: describeTest(res) }
       return res
     } catch (err) {
       testStates.value = { ...testStates.value, [path]: 'error' }
@@ -396,6 +445,10 @@ export function useSettings() {
     modelsLoading,
     loadModels,
     providers,
+    loadProviders,
+    providerModels,
+    rowTests,
+    testRow,
     loading,
     saving,
     savingKey,

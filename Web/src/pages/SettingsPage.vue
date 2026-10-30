@@ -112,8 +112,10 @@
                 :models="models"
                 :models-loading="modelsLoading"
                 :providers="providers"
+                :row-tests="rowTests[field.path] || {}"
                 @update="setValue(field.path, $event)"
                 @test="testField(field.path, valueOf(field))"
+                @test-row="testRow(field.path, $event)"
                 @load-models="loadModels"
               />
 
@@ -256,6 +258,8 @@ const {
   testStates,
   testDetails,
   testField,
+  rowTests,
+  testRow,
   setValue,
   revert,
   load,

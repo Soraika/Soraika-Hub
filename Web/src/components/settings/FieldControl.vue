@@ -49,17 +49,15 @@
 
       <!-- 其余类型走「直接输入」（数值类不在这里 —— 它们是前面的按钮 + 点开的交互界面） -->
       <template v-else>
-        <!-- 多值地址（Mikan / BGM 的多源）：一行一个。存库是数组，界面是换行文本 ——
-             填第二个地址时不用学新语法（逗号 / 空格 / 换行都认，见 lib/settings.js）。 -->
-        <textarea
+        <!-- 多源地址（Mikan / BGM 的多个入口）：可拖拽排序 + 可增删 + 每条单独测。
+             顺序是配置的一部分（排在前面的先用），所以不能用一个多行文本框糊过去。 -->
+        <SourceListEditor
           v-if="field.type === 'list'"
-          :id="inputId"
-          class="list-input"
-          rows="3"
-          spellcheck="false"
-          :value="value ?? ''"
-          :placeholder="placeholder"
-          @input="$emit('update', $event.target.value)"
+          :items="listItems"
+          :tests="rowTests"
+          @update="onListUpdate"
+          @test-row="$emit('test-row', $event)"
+          @test-all="$emit('test')"
         />
 
         <!-- 时刻：原生 input[type=time]。图标已隐藏（所有行统一不带图标），
@@ -152,7 +150,8 @@
     <!-- 时刻不再有弹层：改用原生 input[type=time]（滚轮/键盘/鼠标都是浏览器原生的） -->
 
     <!-- 弹层②：数值 / 时长的交互界面
-         · 两段式：数值 + 单位下拉（改哪个都行，换算由程序做，总量不变）
+         · **输入框和行外是同一套写法**：显示 `1m 30s` 就照着写 `1m 30s`
+           （旧版是「数字 + 单位下拉」，等于让人自己换算，还容易出现"显示 7d、输入框里是 604800000"）
          · 支持鼠标滚轮与左右拖动微调（调超时不该"输入—回车"来回折腾） -->
     <PopoverPanel
       :open="panel === 'number'"
@@ -174,20 +173,12 @@
           class="step-input"
           type="text"
           spellcheck="false"
+          :placeholder="isDuration ? '7d / 1m 30s / 350ms' : ''"
           :value="editText"
           @input="onEdit"
           @blur="commitEdit"
           @keyup.enter="commitEdit"
         />
-        <select
-          v-if="isDuration"
-          class="step-unit"
-          :value="displayUnit"
-          aria-label="单位"
-          @change="onUnitChange"
-        >
-          <option v-for="unit in UNITS" :key="unit.value" :value="unit.value">{{ unit.label }}</option>
-        </select>
         <button class="step-btn" type="button" :disabled="!canStepUp" aria-label="加" @click="step(1)">＋</button>
       </div>
     </PopoverPanel>
@@ -244,22 +235,22 @@ import {
   IconPlugConnected,
 } from '@tabler/icons-vue'
 import PopoverPanel from '@/components/ui/PopoverPanel.vue'
-import { formatDuration, parseDuration, toDisplayText, unitForMs } from '@/utils/duration'
+import SourceListEditor from './SourceListEditor.vue'
+import { formatDuration, parseDuration, unitForMs } from '@/utils/duration'
 
 /**
  * 字段控件：输入 + 可视化选择
  * ---------------------------------------------------------------------------
  * 目标是「能用点就别让人打字」，同一套外壳承载几种交互：
  *   · text / url  直接输入；url 后缀带「测试连接」
+ *   · list        多源地址：可拖拽排序 / 增删 / 每条单独测（SourceListEditor）
  *   · secret      已配置时显示掩码，聚焦后转为可编辑；后缀带「显示 / 隐藏」
- *   · number      行内是一个按钮（显示人话值 `30s` / `1s 500ms`）+ 单位气泡；
- *                 点它才展开交互界面：[−] 输入 [＋]，输入可直接写单位（`10s` / `1.5m`）
- *   · time        滚轮选择（时 / 分两列，像时钟那样滑），不依赖原生控件
- *   · models / providers  后缀按钮弹出候选列表（模型实时取自接口，供应商取预设）
+ *   · number      行内显示完整写法（时长 `1m 30s`、其它 `350` + 单位）；
+ *                 点开是 [−] 输入 [＋]，**输入框和行外同一套写法**（`7d` / `1m 30s` / `350ms`）
+ *   · time        原生 input[type=time]（滚轮/键盘/鼠标/触屏都归浏览器）
+ *   · models / providers  后缀按钮弹出候选列表（模型实时取自接口或供应商目录）
  *
- * 时长可以**直接写单位**：`10s` / `1.5m` / `2h` / `500ms` / `10分钟`（见 utils/duration.js）——
- * 让人先换算成 10000 再填，是把机器该干的活推给人。
- * 单位不做「可点切换」：那会产生「显示值 vs 保存值」的歧义，换算只用于展示（见 utils/duration.js）。
+ * 时长**显示什么样就能照着填什么样**：让人先换算成 90000 再填，是把机器该干的活推给人。
  */
 const props = defineProps({
   /** 后端下发的字段定义 */
@@ -272,13 +263,23 @@ const props = defineProps({
   testState: { type: String, default: 'idle' },
   /** 测试按钮的悬浮说明（含耗时或失败原因） */
   testTitle: { type: String, default: '' },
-  /** 可选模型列表（来自 /api/ai/models） */
+  /** 可选模型列表（来自 /api/ai/models 或供应商目录） */
   models: { type: Array, default: () => [] },
   modelsLoading: { type: Boolean, default: false },
-  /** 供应商预设（来自 /api/settings 的 aiProviders） */
+  /** 供应商清单（来自 /api/ai/providers；取不到时是内置清单） */
   providers: { type: Array, default: () => [] },
+  /** 多源列表里每一行的测试结果：url → { state, detail } */
+  rowTests: { type: Object, default: () => ({}) },
 })
-const emit = defineEmits(['update', 'test', 'load-models'])
+const emit = defineEmits(['update', 'test', 'test-row', 'load-models'])
+
+/**
+ * 多源地址：界面是数组、存库是换行文本（`mikan.bases` 的线上格式没变）
+ * 空行保留在界面上（刚点「添加一行」时就是空的），提交时后端会滤掉空项。
+ */
+const listItems = computed(() => String(props.value ?? '').split('\n'))
+const onListUpdate = (items) => emit('update', items.join('\n'))
+
 
 const MASK = '••••••••••••'
 const inputId = computed(() => `f-${props.field.path}`)
@@ -457,13 +458,13 @@ const unitFactor = computed(() => UNITS.find((u) => u.value === displayUnit.valu
 const editText = ref('')
 const editingNum = ref(false)
 
-/** 把当前值按**显示单位**写进输入框（换算只有 utils/duration.js 那一份） */
+/** 把当前值写进输入框（**和行外同一套写法**：`7d` / `1m 30s` / `350ms`） */
 function syncEditText() {
   if (!isDuration.value) {
     editText.value = props.value === null || props.value === undefined ? '' : String(props.value)
     return
   }
-  editText.value = toDisplayText(props.value, displayUnit.value)
+  editText.value = formatDuration(props.value) || ''
 }
 
 /* 换单位 / 换字段 → **无条件**重算：点开弹层看到的第一眼必须和行外一致 */
@@ -490,32 +491,25 @@ function onEdit(event) {
   editText.value = event.target.value
 }
 
-/** 失焦/回车提交；解析不了就回滚（不把垃圾发给后端，也不静默改成别的数） */
+/**
+ * 失焦/回车提交
+ * ---------------------------------------------------------------------------
+ * 时长：直接按**写出来的单位**解析（`7d` / `1m 30s` / `350ms`）；写不出单位的纯数字按
+ * 当前显示单位理解（`90` 在显示为 `s` 时 = 90 秒）。解析不了就回滚 ——
+ * 不把垃圾发给后端，也不静默改成别的数。
+ */
 function commitEdit() {
   editingNum.value = false
   if (!isDuration.value) {
     emit('update', editText.value)
     return
   }
-  const n = Number(editText.value)
-  if (!Number.isFinite(n) || n < 0) {
-    const ms = Number(props.value) || 0
-    editText.value = String(Number((ms / unitFactor.value).toFixed(3)))
+  const parsed = parseDuration(editText.value, unitFactor.value)
+  if (parsed === null) {
+    syncEditText()
     return
   }
-  emit('update', Math.round(n * unitFactor.value))
-}
-
-/**
- * 换单位 = 同一个时长换种写法（总量不变）
- * 立刻按新单位把数字重算出来，**不等** watch —— 用户此刻很可能正把光标放在输入框里
- * （`editingNum` 为真），旧代码那种情况下会跳过重算 → 单位变了数字没变，
- * 这就是「改了单位、输入框里的数值却没跟着改」的 bug。
- */
-function onUnitChange(event) {
-  displayUnit.value = event.target.value
-  editingNum.value = false
-  syncEditText()
+  emit('update', parsed)
 }
 
 /* 弹层里的滚轮 / 拖动微调：调一个超时不值得「点开—输入—回车」走一遍 */

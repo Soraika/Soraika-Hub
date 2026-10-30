@@ -21,6 +21,9 @@ export function fetchAiTools() {
 export const fetchAiModels = (baseUrl = '') =>
   apiGet('/api/ai/models', { params: baseUrl ? { baseUrl } : {}, timeout: 15000 })
 
+/** 读取 AI 供应商目录（社区维护的 models.dev；后端取不到会退回内置清单） */
+export const fetchAiProviders = () => apiGet('/api/ai/providers', { timeout: 20000 })
+
 /**
  * 资源文件名 → 筛选标签
  * @param {string[]} titles 资源文件名列表

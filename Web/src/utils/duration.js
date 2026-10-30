@@ -97,22 +97,43 @@ const UNIT_ALIAS = [
 
 /**
  * 带单位的时长输入 → 毫秒
- * @param {string|number} text 如 '10s' / '1.5m' / '2h' / '500ms' / '10分钟' / '1500'
- * @param {number} [base] 不带单位时的基准倍数（默认 1 = 按毫秒）
+ * ---------------------------------------------------------------------------
+ * **界面显示成什么样，输入框就能照着填什么样**（这条是刻意的：显示 `1m 30s`、
+ * 输入却要求换算成 `90000`，是把机器该干的活推给人）。
+ * 支持：
+ *   · 单个单位：`10s` / `1.5m` / `2h` / `500ms` / `10分钟`
+ *   · 复合写法：`1d 12h` / `1m 30s` / `1h 30m 5s`
+ *   · 不带单位：按 `base` 换算（默认 1 = 毫秒）
+ * @param {string|number} text
+ * @param {number} [base] 不带单位时的基准倍数
  * @returns {number|null} 解析失败返回 null（界面据此回滚，不发非法值给后端）
  */
 export function parseDuration(text, base = 1) {
   const raw = String(text ?? '').trim()
   if (!raw) return null
-  const hit = raw.match(/^(-?\d+(?:\.\d+)?)\s*([a-zA-Z\u4e00-\u9fa5]*)$/)
-  if (!hit) return null
-  const value = Number(hit[1])
-  if (!Number.isFinite(value) || value < 0) return null
 
-  const unitText = hit[2]
-  if (!unitText) return Math.round(value * base)
-  const unit = UNIT_ALIAS.find(([re]) => re.test(unitText))
-  return unit ? Math.round(value * unit[1]) : null
+  // 纯数字：按基准倍数理解
+  if (/^-?\d+(?:\.\d+)?$/.test(raw)) {
+    const value = Number(raw)
+    if (!Number.isFinite(value) || value < 0) return null
+    return Math.round(value * base)
+  }
+
+  // 一个或多个「数字 + 单位」片段，全部必须是合法单位
+  const parts = raw.match(/\d+(?:\.\d+)?\s*[a-zA-Z\u4e00-\u9fa5]+/g)
+  if (!parts || parts.join('').replace(/\s/g, '').length !== raw.replace(/\s/g, '').length) return null
+
+  let total = 0
+  for (const part of parts) {
+    const hit = part.match(/^(\d+(?:\.\d+)?)\s*([a-zA-Z\u4e00-\u9fa5]+)$/)
+    if (!hit) return null
+    const value = Number(hit[1])
+    if (!Number.isFinite(value) || value < 0) return null
+    const unit = UNIT_ALIAS.find(([re]) => re.test(hit[2]))
+    if (!unit) return null
+    total += value * unit[1]
+  }
+  return Math.round(total)
 }
 
 /**

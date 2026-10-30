@@ -11,7 +11,7 @@
  * 任一项失败 → 非 0 退出。
  */
 import { spawn } from 'node:child_process'
-import { unitForMs, toDisplayText, toMilliseconds } from '../src/utils/duration.js'
+import { parseDuration, unitForMs, toDisplayText, toMilliseconds } from '../src/utils/duration.js'
 import { once } from 'node:events'
 import { readFileSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -542,11 +542,13 @@ try {
     settingsSource.includes('field.hint') && /:title="field\.hint/.test(settingsSource),
     '字段说明改成鼠标悬浮显示（行脚只留测试结果，表单不再像说明书）',
   )
+  /* 时长的**输入框与行外同一套写法**：显示 `1m 30s` 就照着填 `1m 30s`。
+     旧版是「数字 + 单位下拉」，等于逼人自己换算，还会出现"外面 7d、输入框里 604800000"。 */
   check(
-    /const displayUnit = ref\('ms'\)/.test(controlSource) &&
-      /displayUnit\.value = unitForMs\(props\.value, props\.field\.unit \|\| 'ms'\)/.test(controlSource) &&
-      controlSource.includes('toDisplayText'),
-    '显示单位**跟着值**推导（65000→s、60000→m），且行外/弹层用同一个 displayUnit —— 里外不会再打架',
+    /function syncEditText[\s\S]{0,240}formatDuration\(props\.value\)/.test(controlSource) &&
+      /const parsed = parseDuration\(editText\.value, unitFactor\.value\)/.test(controlSource) &&
+      !controlSource.includes('onUnitChange'),
+    '时长输入与显示同一写法（`7d` / `1m 30s` / `350ms`），单位下拉已移除 —— 里外不会再打架',
   )
   check(
     !/已写入数据库|全部写入数据库/.test(settingsSource),
@@ -599,12 +601,23 @@ try {
   /* 交互"渲染出来了吗"这类断言要用 SSR 真渲染，e2e 这里的作用域拿不到 vite 实例，
      硬塞进去会把整份验收弄崩（踩过）。验证放在人工过一遍 + 下面的 class/属性断言里。 */
   /* 时长可以直接写单位：10s / 1.5m / 2h —— 不让人先把 10 秒换算成 10000 */
-  /* 时长：两段式（数值 + 单位下拉）+ 弹层里滚轮/拖动微调 */
+  /* 时长：**不再有单位下拉**，输入框直接写完整写法（显示什么样就能填什么样） */
   check(
-    controlSource.includes('class="step-unit"') &&
-      controlSource.includes('v-for="unit in UNITS"') &&
-      controlSource.includes('displayUnit'),
-    '时长两段式：数值 + 单位下拉（改哪个都行，1s ↔ 1000ms 总量不变）',
+    !controlSource.includes('class="step-unit"') &&
+      controlSource.includes('placeholder="isDuration') &&
+      /parseDuration\(editText\.value/.test(controlSource),
+    '时长输入框直接写单位（`7d` / `1m 30s`），不再有「数值 + 单位下拉」两段式',
+  )
+  check(
+    parseDuration('1m 30s') === 90000 &&
+      parseDuration('7d') === 604800000 &&
+      parseDuration('1d 12h') === 129600000 &&
+      parseDuration('1h 30m 5s') === 5405000 &&
+      parseDuration('1.5s') === 1500 &&
+      parseDuration('350ms') === 350 &&
+      parseDuration('10分钟') === 600000 &&
+      parseDuration('乱写') === null,
+    '复合写法能解析：`1d 12h` / `1h 30m 5s` / `1.5s` 都认，乱写返回 null（回滚不发脏值）',
   )
   check(
     controlSource.includes('@wheel.prevent="onWheel"') &&
@@ -641,11 +654,39 @@ try {
       (controlSource.match(/data-popover-anchor/g) || []).length >= 1,
     '时刻 / 数值不再挂后缀按钮（不会出现两个图标）；弹层锚点自带 anchor',
   )
+  /* ── 多源地址：可拖拽排序 / 可增删 / 每条单独测 / 一键全测 ───────────── */
+  const listEditorSource = readFileSync(resolve('src/components/settings/SourceListEditor.vue'), 'utf8')
+  check(
+    listEditorSource.includes('draggable="true"') &&
+      listEditorSource.includes('@dragover') &&
+      listEditorSource.includes('@drop.prevent'),
+    '多源地址可拖拽排序（另有上移 / 下移按钮，键盘也能改顺序）',
+  )
+  check(
+    listEditorSource.includes('添加一行') &&
+      listEditorSource.includes('测试全部') &&
+      listEditorSource.includes("$emit('test-row'"),
+    '多源地址可增删，每条可单独测，也能一键全测',
+  )
+  check(
+    controlSource.includes('SourceListEditor') && controlSource.includes("items.join('\\n')"),
+    '多源地址用列表编辑器（界面是数组，存库仍是换行文本 —— 线上格式没变）',
+  )
+  const settingsStoreSource = readFileSync(resolve('src/composables/useSettings.js'), 'utf8')
+  check(
+    settingsStoreSource.includes('fetchAiProviders') && settingsStoreSource.includes('providerModels'),
+    'AI 供应商取自社区目录（models.dev）：候选模型先用目录里的、再用接口实时结果覆盖',
+  )
+  check(
+    settingsStoreSource.includes('rowTests') && settingsStoreSource.includes('testRow'),
+    '多源地址每一行有独立测试状态（不是只给整组一个状态）',
+  )
+
   check(
     controlSource.includes('v-if="unitOf"') &&
       /const unitOf = computed/.test(controlSource) &&
-      controlSource.includes('toDisplayText'),
-    '单位**每一行都有**（时长按当前显示单位、其它按字段单位）—— 一列看下来是整齐的「数字 + 单位」',
+      /isDuration\.value \? '' : props\.field\.unit/.test(controlSource),
+    '时长行的值里已经带单位（`7d`）→ 不再挂重复的单位胶囊；非时长数值仍显示字段单位',
   )
   /* 里外一致：数值与单位必须走**同一份**换算。
      踩过的坑：弹层里是 `1`（1 分钟），行外却显示 `60000` + `m` —— 两处各算各的。 */
@@ -670,8 +711,8 @@ try {
     '单位换算回毫秒：界面 `10 m` → 入库 `600000`（库里永远是毫秒）',
   )
   check(
-    /emit\('update', Math\.round\(n \* unitFactor\.value\)\)/.test(controlSource),
-    '提交走 unitFactor 换算，不是把输入框里的数字原样提交',
+    /const parsed = parseDuration\(editText\.value, unitFactor\.value\)/.test(controlSource),
+    '提交走 parseDuration（写了单位就按单位算，纯数字按当前单位）—— 不是把输入框里的数字原样提交',
   )
   check(
     toDisplayText(60000, 'm') === '1' &&
@@ -683,8 +724,8 @@ try {
   check(
     controlSource.includes('syncEditText') &&
       /watch\(\s*\(\) => \[displayUnit\.value, props\.field\.path\]/.test(controlSource) &&
-      /function onUnitChange[\s\S]{0,240}syncEditText\(\)/.test(controlSource),
-    '换单位时**强制**重算输入框（哪怕用户正把光标放在输入框里）—— 「改了单位数值没改」的修复',
+      !controlSource.includes('onUnitChange'),
+    '输入框每次换字段/换单位都按 formatDuration 重算（不再有「改单位数字没改」那条路径）',
   )
 
   check(

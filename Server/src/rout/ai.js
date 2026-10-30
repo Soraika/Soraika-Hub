@@ -14,6 +14,7 @@ import { Router } from 'express'
 import { AI_TOOLS, callAiTool } from '../api/ai-tools.js'
 import { aiCacheStats, classifyEpisodes, classifyReleaseTags } from '../api/pages/ai.js'
 import { aiProviderInfo, listModels } from '../api/sources/ai.js'
+import { listProviders } from '../api/sources/providers.js'
 import { fail } from '../lib/errors.js'
 
 export const aiRouter = Router()
@@ -42,7 +43,19 @@ aiRouter.get('/ai/tools', (req, res) => {
 })
 
 /**
- * GET /api/ai/models —— 某接口可用的模型列表（设置页的模型下拉用它）
+ * GET /api/ai/providers —— 供应商目录（社区维护的 models.dev，取不到退回内置清单）
+ * 带各自的模型名：还没填 Key 时界面也能先把候选列出来
+ */
+aiRouter.get('/ai/providers', async (req, res, next) => {
+  try {
+    const data = await listProviders({ log: req.log })
+    res.json({ ok: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
  * `?baseUrl=` 可传**还没保存**的地址（换供应商时立刻看那家的模型）
  * 未配置 AI → 501 AI_DISABLED；上游取不到 → 502 UPSTREAM（前端回落成纯手动输入）
  */

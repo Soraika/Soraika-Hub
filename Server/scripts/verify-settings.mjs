@@ -87,17 +87,17 @@ try {
      这条断言是防膨胀用的：以后谁往常显里塞"调参项"，这里会直接红。 */
   const corePaths = settings.fields.filter((f) => !f.advanced).map((f) => f.path)
   check(
-    corePaths.length <= 8 &&
+    corePaths.length <= 10 &&
       corePaths.every((p) =>
-        /^(mikan\.bases|ai\.(baseUrl|apiKey|model)|worker\.(dailyAt|fetchSubgroups)|qb\.(base|apiKey))$/.test(p),
+        /^(mikan\.bases|bgm\.bases|ai\.(baseUrl|apiKey|model)|worker\.(dailyAt|fetchSubgroups)|qb\.(base|apiKey))$/.test(p),
       ),
     `基础层就是必要配置那几项 → ${corePaths.join(' / ')}`,
   )
   check(
     settings.fields
-      .filter((f) => ['bgm.bases', 'bgm.token', 'image.dir'].includes(f.path))
+      .filter((f) => ['bgm.token', 'image.dir'].includes(f.path))
       .every((f) => f.advanced),
-    '有默认值、不填也能跑的项（Bangumi 接口/Token、落盘目录）都收进微调参数',
+    '不填也能跑的可选项（Bangumi Token、落盘目录）都收进微调参数；数据源地址本身是必要项',
   )
   const leaked = JSON.stringify(settings).match(/sk-|Bearer/)
   check(!leaked, '整包里没有密钥痕迹')
@@ -194,7 +194,23 @@ try {
   )
   check(
     Array.isArray(settings.aiProviders) && settings.aiProviders.length >= 5,
-    `下发供应商预设 ${settings.aiProviders?.length} 条（选中即填接口地址）`,
+    `下发内置供应商清单 ${settings.aiProviders?.length} 条（目录取不到时的兜底）`,
+  )
+  /* 供应商目录走**社区维护的 models.dev**（200+ 家），不再手写；取不到退回内置清单。
+     这条是真请求：验证「能拿到 + 形状对 + 只收 OpenAI 兼容的」。 */
+  const catalog = await call('GET', '/api/ai/providers')
+  const catalogData = catalog.body?.data
+  check(
+    catalog.res.ok && Array.isArray(catalogData?.providers) && catalogData.providers.length >= 20,
+    `供应商目录可用 → ${catalogData?.source} / ${catalogData?.providers?.length} 家`,
+  )
+  check(
+    catalogData?.providers?.every((p) => typeof p.baseUrl === 'string' && /^https?:\/\//.test(p.baseUrl)),
+    '目录里每项都有可用地址',
+  )
+  check(
+    catalogData?.providers?.some((p) => Array.isArray(p.models) && p.models.length > 0),
+    '目录带模型名（还没填 Key 时界面也能先给候选）',
   )
   check(
     settings.aiProviders.every((p) => typeof p.name === 'string' && /^https?:\/\//.test(p.baseUrl)),

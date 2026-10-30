@@ -49,7 +49,7 @@ export const SETTINGS_FIELDS = [
   { path: 'mikan.bases', env: 'MIKAN_BASE_URLS', group: 'sources', section: 'Mikan 排期源', label: '站点地址', type: 'list', hint: '一行一个，按顺序切换' },
   { path: 'mikan.timeoutMs', env: 'MIKAN_TIMEOUT_MS', group: 'sources', section: 'Mikan 排期源', label: '请求超时', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true },
 
-  { path: 'bgm.bases', env: 'BGM_API_BASES', group: 'sources', section: 'Bangumi 评分源', label: '接口地址', type: 'list', advanced: true, hint: '一行一个，按顺序切换' },
+  { path: 'bgm.bases', env: 'BGM_API_BASES', group: 'sources', section: 'Bangumi 评分源', label: '接口地址', type: 'list', hint: '一行一个，按顺序切换' },
   { path: 'bgm.token', env: 'BGM_TOKEN', group: 'sources', section: 'Bangumi 评分源', label: 'Token', type: 'secret', advanced: true, hint: '官方接口要求时填写' },
   { path: 'bgm.userAgent', env: 'BGM_USER_AGENT', group: 'sources', section: 'Bangumi 评分源', label: 'User-Agent', type: 'text', hint: '官方接口要求携带', advanced: true },
   { path: 'bgm.timeoutMs', env: 'BGM_TIMEOUT_MS', group: 'sources', section: 'Bangumi 评分源', label: '请求超时', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true },

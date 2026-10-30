@@ -146,7 +146,7 @@ Mikan 额外一层 **解析级重试**：200 但连标题都解析不出来 = �
 | GET | `/api/anime/:id/subgroups` | 字幕组（**每次直连 Mikan**，`id` = 该作品下的 rss id；**详情页 404 时退化成一个「全部字幕组」**） |
 | GET | `/api/anime/:id/releases?subgroupId=` | 资源列表（`all` = 全量 feed） |
 | GET | `/api/img/anime/:id` | 出图（本地缓存 → `poster_src` → 问 BGM → 抓不到 302 交浏览器） |
-| GET | `/api/ai/tools` `/api/ai/models` | MCP `tools/list` 形状 / 模型列表 |
+| GET | `/api/ai/tools` `/api/ai/models` `/api/ai/providers` | MCP `tools/list` 形状 / 某地址的模型列表（`?baseUrl=` 可传未保存的） / 供应商目录（models.dev） |
 | POST | `/api/ai/call` | MCP `tools/call` 形状（统一入口） |
 | POST | `/api/ai/classify/tags` `/api/ai/classify/episodes` | 便利直连（前端用） |
 | GET / PUT | `/api/settings` | 读 / 批量改（非法值整批拒绝） |
@@ -208,7 +208,10 @@ Mikan 额外一层 **解析级重试**：200 但连标题都解析不出来 = �
 | 21 | **Mikan / Bangumi 都支持多地址**（`mikan.bases` / `bgm.bases`） | 写死一个域名等于把可用性押在它身上（会换域名、会抽风）。做法：有序候选 + 记住上次成功的那个；外链只认第一个地址（链接不能漂）。设置页是多行文本（一行一个），校验时「有一条不合法就整批拒绝」 |
 | 22 | **所有时长项统一存毫秒（`*Ms`），界面统一 `formatDuration`** | 旧设计里 `missRetryHours`（小时）、`image.maxAgeSec`（秒）是例外，正是"24 小时显示成 24ms"的来源。现在显示一律 `350ms` / `30s` / `1m 30s` / `7d` / `1d 12h`（最多两级单位），并且从**毫秒往上**换算，不再出现小数点（`1.5s` → `1s 500ms`） |
 | 23 | **AI 测试 = 真发一次对话并校验约定标记** | 只看 200 / `/models` 是假成功（地址对但 Key 错、模型名不存在都算"通"）。现在让模型只回 `SORAOK`，**收到这个词**才算通 —— 连带验证出网、Key、模型名与"会不会听指令" |
-| 24 | **供应商只维护地址，模型实时拉取** | 模型名几个月就变一批，写死在代码里必然过期。供应商清单（20 家，国内→海外→本地）只给地址；**换供应商时界面自动按该地址去 `/models` 取模型**（`/api/ai/models?baseUrl=` 支持未保存的地址） |
+| 24 | **供应商清单取自社区维护的 models.dev**，代码里不手写 | 模型/供应商几个月换一批，手写必然过期。`/api/ai/providers` 拉 models.dev（199 家可用，含国内几家），只收 `npm` 是 `@ai-sdk/openai(-compatible)` 且有 `api` 的（其它走不了 `/chat/completions`）；带各自模型名，**没填 Key 也能先给候选**；缓存 24h，取不到退回内置 20 家 |
+| 25 | **时长的输入框与显示用同一套写法** | 显示 `1m 30s` 就照着填 `1m 30s` / `7d` / `1h 30m 5s`（`parseDuration` 支持复合写法）。旧的「数值 + 单位下拉」等于让人自己换算，还会出现"外面 7d、输入框里 604800000" |
+| 26 | **多源地址是「可拖拽的有序列表」，不是多行文本** | 顺序本身就是配置（排在前面的先用）→ 必须能拖、能上下移；每条都可能独自坏掉 → 每条单独测 + 一键全测（`SourceListEditor`）。存库仍是换行文本，线上格式没变 |
+| 27 | **数据源地址属于「基础配置」** | Mikan / Bangumi 的地址不填就用不了（信息从哪来），所以 `mikan.bases` / `bgm.bases` 都在基础层；只有 Token、UA、落盘目录这类可选项才收进微调参数 |
 
 ---
 
