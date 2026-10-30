@@ -662,13 +662,15 @@ try {
     '「宽字段占两格」按**容器宽度**判断（容器查询）—— 只有一格时不再被顶出卡片',
   )
 
-  /* AI 提供商：**选名字**（目录 199 家 + 自定义），带搜索；不是填 URL 的下拉 */
+  /* AI 提供商：**输入框本身就是搜索框**（不再另放一个搜索框、也不再有两个下拉箭头）；
+     输入的名字目录里没有 → 末尾出现「＋ 添加「xxx」」= 自定义。 */
   check(
     controlSource.includes("field.type === 'provider'") &&
-      controlSource.includes('providerMatches') &&
-      controlSource.includes('pop-search') &&
-      controlSource.includes('自定义'),
-    'AI 提供商是「选提供商」：带搜索的目录 + 最后一行「自定义」（选了就自己填地址）',
+      controlSource.includes('provider-input') &&
+      !controlSource.includes('pop-search') &&
+      controlSource.includes('canAddCustom') &&
+      controlSource.includes('添加「'),
+    'AI 提供商：输入框即搜索框；名字不在目录里 → 「添加「xxx」」',
   )
   check(
     controlSource.includes("emit('pick-provider'") && controlSource.includes('models: item.models'),
@@ -702,6 +704,13 @@ try {
   check(
     controlSource.includes('SourceListEditor') && controlSource.includes("items.join('\\n')"),
     '多源地址用列表编辑器（界面是数组，存库仍是换行文本 —— 线上格式没变）',
+  )
+  /* 踩过：`.shell` 是固定 40px 高的居中 flex —— 多行列表塞进去会**上下同时溢出**
+     （第一行压住字段名、footer 压住下一节）。必须有 `is-list` 让它按内容长高。 */
+  check(
+    controlSource.includes("'is-list': field.type === 'list'") &&
+      /\.shell\.is-list\s*\{[^}]*height:\s*auto/s.test(controlSource),
+    '多源列表那一格高度自适应（class 真的挂上了，不再是固定 40px 居中）',
   )
   const settingsStoreSource = readFileSync(resolve('src/composables/useSettings.js'), 'utf8')
   check(

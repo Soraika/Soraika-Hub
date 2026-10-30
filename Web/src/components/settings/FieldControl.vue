@@ -17,7 +17,11 @@
     </template>
 
     <!-- 其余类型：统一外壳 = 输入区 + 后缀区（单位 / 可读文案 / 测试 / 眼睛 / 弹出） -->
-    <div v-else class="shell input-surface" :class="{ 'is-open': panel !== 'none', dirty }">
+    <div
+      v-else
+      class="shell input-surface"
+      :class="{ 'is-open': panel !== 'none', dirty, 'is-list': field.type === 'list' }"
+    >
       <!-- 数值 / 时长：**就是一行输入框 + 只读单位**。
            之前做成了「按钮 → 弹层 → 加减号 / 滚轮 / 拖拽 / 单位下拉」，一半代码是它，
            还因为"步长与单位推导各算各的"滚动时数字乱抖。这东西本该简单。
@@ -49,18 +53,31 @@
 
       <!-- 其余类型走「直接输入」（数值类不在这里 —— 它们是前面的按钮 + 点开的交互界面） -->
       <template v-else>
-        <!-- 提供商：**选名字**，不是填 URL。点开是带搜索的目录（199 家 + 自定义） -->
-        <button
-          v-if="field.type === 'provider'"
-          class="value-btn"
-          :class="{ empty: !providerLabel }"
-          type="button"
-          data-popover-anchor
-          @click="togglePanel"
-        >
-          <span class="value-text">{{ providerLabel }}</span>
-          <IconChevronDown :size="14" />
-        </button>
+        <!-- 提供商：**输入框自己就是搜索框**（不再在弹层里另放一个搜索框）。
+             输入的名称在目录里没有 → 弹层最后会出现「＋ 添加「我输入的名字」」，点了就是自定义。 -->
+        <template v-if="field.type === 'provider'">
+          <input
+            :id="inputId"
+            class="provider-input"
+            type="text"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="搜索或输入名称"
+            :value="value ?? ''"
+            @input="$emit('update', $event.target.value)"
+            @focus="openProviderPanel"
+            @click="openProviderPanel"
+          />
+          <button
+            class="pick-caret"
+            type="button"
+            tabindex="-1"
+            :aria-label="panel === 'provider' ? '收起列表' : '展开列表'"
+            @click="togglePanel"
+          >
+            <IconChevronDown :size="14" :class="{ flip: panel === 'provider' }" />
+          </button>
+        </template>
 
         <!-- 多源地址（Mikan / BGM 的多个入口）：可拖拽排序 + 可增删 + 每条单独测。
              顺序是配置的一部分（排在前面的先用），所以不能用一个多行文本框糊过去。 -->
@@ -248,19 +265,13 @@
       </template>
     </PopoverPanel>
 
-    <!-- 弹层⑤：提供商目录（搜索 + 自定义） -->
+    <!-- 弹层⑤：提供商目录 —— **搜索就是上面那个输入框本身**；
+         输入的名字目录里没有时，最后一行变成「＋ 添加「我输入的名字」」 -->
     <PopoverPanel :open="panel === 'provider'" align="right" label="选择提供商" @close="close">
       <p class="pop-title">
         提供商
         <span class="pop-note">{{ providerList.length }} 个</span>
       </p>
-      <input
-        v-model="providerQuery"
-        class="pop-search"
-        type="text"
-        spellcheck="false"
-        placeholder="搜索名称或地址"
-      />
       <div class="pop-list">
         <button
           v-for="item in providerMatches"
@@ -273,17 +284,12 @@
           <span class="provider-name">{{ item.name }}</span>
           <span class="provider-url">{{ item.baseUrl }}</span>
         </button>
-        <p v-if="!providerMatches.length" class="pop-empty">没找到 —— 换个关键词，或选下面的「自定义」</p>
+        <p v-if="!providerMatches.length && !canAddCustom" class="pop-empty">没有匹配 —— 换个关键词</p>
 
-        <!-- 列表最后一行固定是「自定义」：选中它，下面的「接口地址」就由你自己填 -->
-        <button
-          class="opt wide provider add"
-          :class="{ on: isCustom }"
-          type="button"
-          @click="chooseCustom"
-        >
-          <span class="provider-name"><IconPencil :size="14" /> 自定义</span>
-          <span class="provider-url">自己填接口地址</span>
+        <!-- 输入的名称不在目录里 → 直接把它加成自定义（地址在下面那一格自己填） -->
+        <button v-if="canAddCustom" class="opt wide provider add" type="button" @click="chooseCustom">
+          <span class="provider-name"><IconPlus :size="14" /> 添加「{{ typedName }}」</span>
+          <span class="provider-url">自定义：接口地址在下面填</span>
         </button>
       </div>
     </PopoverPanel>
@@ -302,8 +308,8 @@ import {
   IconCircleX,
   IconClock,
   IconEye,
-  IconPencil,
   IconPlugConnected,
+  IconPlus,
 } from '@tabler/icons-vue'
 import PopoverPanel from '@/components/ui/PopoverPanel.vue'
 import SourceListEditor from './SourceListEditor.vue'
@@ -353,12 +359,9 @@ const emit = defineEmits(['update', 'test', 'test-row', 'pick-provider', 'load-m
 const listItems = computed(() => String(props.value ?? '').split('\n'))
 const onListUpdate = (items) => emit('update', items.join('\n'))
 
-/* ── 提供商：目录（models.dev）+「自定义」 ────────────────────────────────
-   下拉里是 **199 家 + 自定义**，所以必须有搜索框（滚一屏找一个供应商不现实）。
-   选目录里的 → 自动填好下面的「接口地址」，并按那家的模型列表补齐「模型」；
-   选「自定义」→ 什么都不填，地址由使用者自己写。 */
-const CUSTOM_NAME = '自定义'
-const providerQuery = ref('')
+/* ── 提供商：**输入框就是搜索框**（目录项带模型名，选中时一起补下去）─────────
+   交互：输入 → 列表实时过滤；输入的名字目录里没有 → 末尾出现「＋ 添加「xxx」」。
+   不再单独放一个搜索框，也不再有第二个下拉箭头。 */
 const normBase = (url) => String(url || '').trim().toLowerCase().replace(/\/+$/, '')
 
 /** 目录项带上各自的模型名（用于自动补齐模型） */
@@ -366,39 +369,40 @@ const providerList = computed(() =>
   props.providers.map((p) => ({ name: p.name, baseUrl: p.baseUrl, models: p.models || [] })),
 )
 
+/** 用户正在输入的名字 */
+const typedName = computed(() => String(props.value || '').trim())
+
 const providerMatches = computed(() => {
-  const q = providerQuery.value.trim().toLowerCase()
+  const q = typedName.value.toLowerCase()
   const list = q
     ? providerList.value.filter((p) => `${p.name} ${p.baseUrl}`.toLowerCase().includes(q))
     : providerList.value
   return list.slice(0, 80)
 })
 
-const isCustom = computed(() => String(props.value || '').trim() === CUSTOM_NAME)
-
-/** 行内显示的名字：存下来的名字 → 按地址反查 → 「未选择」 */
-const providerLabel = computed(() => {
-  const name = String(props.value || '').trim()
-  if (name) return name
-  const matched = providerList.value.find((p) => normBase(p.baseUrl) === normBase(props.baseUrl))
-  return matched?.name || ''
-})
+/** 输入的名字不在目录里（且非空）→ 可以「添加」成自定义 */
+const canAddCustom = computed(
+  () => Boolean(typedName.value) && !providerList.value.some((p) => p.name === typedName.value),
+)
 
 const isCurrentProvider = (item) =>
   normBase(item.baseUrl) === normBase(props.baseUrl) ||
-  (Boolean(props.value) && item.name === String(props.value).trim())
+  (Boolean(typedName.value) && item.name === typedName.value)
+
+/** 聚焦/点击输入框就展开候选（输入框本身是搜索框） */
+function openProviderPanel() {
+  panel.value = 'provider'
+}
 
 function chooseProvider(item) {
   // 把"这一家自己带的模型名"一起带过去，让下面的模型能自动补齐
   emit('pick-provider', { name: item.name, baseUrl: item.baseUrl, models: item.models || [] })
-  providerQuery.value = ''
   close()
 }
 
-/** 「自定义」= 只记个名字，地址留给使用者自己填 */
+/** 「添加「xxx」」= 自定义：名字就是输入框里那个，地址留给下面的「接口地址」 */
 function chooseCustom() {
-  emit('pick-provider', { name: CUSTOM_NAME, baseUrl: '', models: [] })
-  providerQuery.value = ''
+  emit('pick-provider', { name: typedName.value, baseUrl: '', models: [] })
   close()
 }
 
@@ -432,7 +436,7 @@ const panelType = () => {
  * 时刻与数值都有自己的行内按钮打开弹层（`time-btn` / `value-btn`），
  * 后缀再来一个就会出现**两个一样的图标**（时钟+时钟、调整+调整），纯重复。
  */
-const hasPanel = computed(() => Boolean(props.field.models) || props.field.type === 'provider')
+const hasPanel = computed(() => Boolean(props.field.models))
 const panelIcon = computed(() => {
   if (props.field.type === 'time') return IconClock
   if (props.field.type === 'number') return IconAdjustmentsHorizontal
@@ -1351,27 +1355,29 @@ function step(dir) {
   outline: none;
 }
 
-/* 提供商：整行是一个按钮（显示选中的名字 + 下拉箭头） */
-.value-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  height: 100%;
-  padding: 0 12px;
-  color: var(--text-primary);
-  font-size: 0.88rem;
-  text-align: left;
-}
-.value-btn .value-text {
+/* 提供商：输入框（本身就是搜索框）+ 右侧下拉箭头（**只有这一个箭头**） */
+.provider-input {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
-.value-btn svg {
+.pick-caret {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 100%;
   color: var(--text-tertiary);
+  background: none;
+  border: 0;
+}
+.pick-caret:hover {
+  color: var(--accent);
+}
+.pick-caret svg {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.pick-caret svg.flip {
+  transform: rotate(180deg);
 }
 
 /* ── 提供商目录弹层：搜索 + 列表 + 新建自定义 ──────────────────────────── */
@@ -1379,21 +1385,6 @@ function step(dir) {
   margin-left: 6px;
   color: var(--text-tertiary);
   font-size: 0.7rem;
-}
-.pop-search {
-  width: 100%;
-  height: 30px;
-  margin-bottom: 6px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 0.78rem;
-}
-.pop-search:focus {
-  border-color: var(--accent);
-  outline: none;
 }
 .pop-list {
   display: flex;
