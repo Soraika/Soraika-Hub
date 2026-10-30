@@ -27,23 +27,29 @@ export const config = {
   seasonLimit: 300,
 
   mikan: {
-    /** 排期主源 */
-    base: 'https://mikanime.tv',
+    /**
+     * 排期主源（**可配多个**，按顺序故障切换）
+     * ---------------------------------------------------------------------------
+     * 同一个站点的镜像会轮流抽风/换域名，写死一个地址就等于把可用性押在它身上。
+     * `lib/multi-source.js` 会依次尝试，成功的那条会被记住（下一次优先用它）。
+     * 外链（Mikan 作品页）固定用**第一个**地址 —— 链接要稳定，不能随健康检查漂移。
+     */
+    bases: ['https://mikanime.tv', 'https://mikanani.me'],
     timeoutMs: 20000,
   },
 
   bgm: {
-    /** 评分 / 评分人数 / 标签（走镜像，不需要梯子） */
-    base: trimSlash('https://bgmapi.anibt.net'),
+    /** 评分 / 评分人数 / 标签（走镜像，不需要梯子）；同样支持多个地址故障切换 */
+    bases: ['https://bgmapi.anibt.net', 'https://api.bgm.tv'],
     token: '',
     userAgent: 'SoraikaHub/0.1 (https://github.com/soraika)',
     timeoutMs: 20000,
   },
 
   image: {
-    /** 出图接口的落盘目录 + 返回给浏览器的缓存时长 */
+    /** 出图接口的落盘目录 + 返回给浏览器的缓存时长（**毫秒**，统一口径） */
     dir: 'data/img',
-    maxAgeSec: 30 * 24 * 60 * 60,
+    maxAgeMs: 30 * 24 * 60 * 60 * 1000,
   },
 
   /**
@@ -63,8 +69,8 @@ export const config = {
     dailyAt: '04:00',
     /** 连续几次拿不到 bgmId 就退出补齐队列（Mikan 详情页确实没挂链接的那些） */
     missLimit: 3,
-    /** 超限之后隔多久再试一次（小时）：万一 Mikan 后来补上了链接，还能自动接上 */
-    missRetryHours: 168,
+    /** 超限之后隔多久再试一次：万一 Mikan 后来补上了链接，还能自动接上（毫秒，默认 7 天） */
+    missRetryMs: 7 * 24 * 60 * 60 * 1000,
     /** 每日更新覆盖的年份（null = 当年；0 = 不限年份，谨慎：会遍历全库） */
     staleYear: null,
     /**

@@ -55,7 +55,7 @@ imgRouter.get('/img/anime/:id', async (req, res, next) => {
     const row = findById(id)
     if (!row) throw fail('NOT_FOUND', `没有 id=${id} 的作品记录`)
 
-    res.setHeader('Cache-Control', `public, max-age=${config.image.maxAgeSec}`)
+    res.setHeader('Cache-Control', `public, max-age=${Math.max(0, Math.round(config.image.maxAgeMs / 1000))}`)
 
     // ① 磁盘命中 → 直接发（顺便把数据库里缺失的路径补上；不回源、不问 BGM）
     if (row.poster_src) {

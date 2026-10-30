@@ -8,7 +8,7 @@
  *   · 非 200（404 之类）        → **不写**：页面不存在，纯垃圾行
  *   · 页面在但没挂 Bangumi 链接 → 写 `mikan_id` + `title`，并把 `bgm_miss_count` 顶到上限
  *                                + `bgm_checked_at = now` → 借现有退避机制：不立刻重抓，
- *                                `missRetryHours`（默认 7 天）后自动重试一次
+ *                                `missRetryMs`（默认 7 天）后自动重试一次
  *   · 解析出 bgmId              → 写 `mikan_id` + `bgm_id` + `title`（**`bgm_checked_at` 留空**：
  *                                它表示"上次刷档案的时间"，留空才能让档案补齐队列立刻接手）
  *   · `year` / `season` / `weekday` → **一律留空**：首页 `listBySeason` 与每日刷新靠它们过滤，
@@ -28,6 +28,7 @@ import { getAnimeBangumiId, getAnimeTitle } from '../clients/Mikan.js'
 import { config } from '../config.js'
 import { db, val } from '../db/index.js'
 import { logger } from '../lib/logger.js'
+import { tryBases } from '../lib/multi-source.js'
 
 /** 命令行参数：`--key=value` / `--flag`（不引依赖，够用就好） */
 const arg = (name, fallback) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? fallback
@@ -84,22 +85,31 @@ export async function runSweep(options = {}) {
   }
 
   async function one(id) {
-    let res
+    let html
     try {
-      res = await fetch(`${config.mikan.base}/Home/Bangumi/${id}`, { signal: AbortSignal.timeout(timeoutMs) })
+      // 多源故障切换：某个镜像 404 / 抽风就换下一个（`__status` 用来区分「页面不存在」与「网络失败」）
+      html = await tryBases(
+        'mikan',
+        async (base) => {
+          const res = await fetch(`${base}/Home/Bangumi/${id}`, { signal: AbortSignal.timeout(timeoutMs) })
+          if (res.status !== 200) {
+            throw Object.assign(new Error(`HTTP ${res.status}`), { __status: res.status })
+          }
+          return await res.text()
+        },
+        { log, tip: 'sweep' },
+      )
     } catch (err) {
+      if (err?.__status) {
+        stat.notFound++
+        noteEmpty()
+        return // 页面不存在：不写库
+      }
       // 网络/超时：这次不写库（否则会把"暂时拿不到"记成"没有链接"），下次重跑会再试
       stat.failed++
       log.warn({ mikanId: id, err: err.message }, 'sweep.fetch fail')
       return
     }
-    if (res.status !== 200) {
-      stat.notFound++
-      noteEmpty()
-      return // 页面不存在：不写库
-    }
-
-    const html = await res.text()
     // quiet：批量扫描时「没挂 bgm 链接」是预期结果，不要为它刷 warn（老番很多都没挂）
     const bgmId = getAnimeBangumiId(html, { quiet: true })?.bangumiId ?? null
     const title = getAnimeTitle(html)

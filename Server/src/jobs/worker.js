@@ -97,7 +97,7 @@ export function startWorker({ log = logger } = {}) {
       dailyAt: config.worker.dailyAt,
       staleYear: config.worker.staleYear,
       missLimit: config.worker.missLimit,
-      missRetryHours: config.worker.missRetryHours,
+      missRetryMs: config.worker.missRetryMs,
       pending: countMissingBgm(),
       gaveUp: countGaveUp(),
       archivePending: countArchivePending(),

@@ -16,8 +16,10 @@ export function fetchAiTools() {
   return apiGet('/api/ai/tools', { timeout: 8000 })
 }
 
-/** 读取 AI 模型列表（设置页「模型」下拉用；未配置或取不到都回落成手动输入） */
-export const fetchAiModels = () => apiGet('/api/ai/models', { timeout: 12000 })
+/** 读取 AI 模型列表（设置页「模型」下拉用；传地址 = 按**还没保存**的地址取）
+ *  未配置或取不到都回落成手动输入（不打扰填写） */
+export const fetchAiModels = (baseUrl = '') =>
+  apiGet('/api/ai/models', { params: baseUrl ? { baseUrl } : {}, timeout: 15000 })
 
 /**
  * 资源文件名 → 筛选标签

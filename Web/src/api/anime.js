@@ -43,7 +43,8 @@ export function fetchAnimeSubgroups(id) {
 /**
  * 某字幕组的资源列表（第二级）
  * @param {number|string} id 作品主键
- * @param {number} subgroupId 字幕组主键（上面接口返回的 id）
+ * @param {number|string} subgroupId 字幕组标识：`/subgroups` 返回的 id（该作品下的 rss id）；
+ *   详情页 404 的番由「组标记→组名」映射得出时这里是**组名**；`'all'` = 全部资源
  * @returns {Promise<{ subgroup: {id:number,name:string}, items: Array<{
  *   title:string, magnet:string|null, magnetHash:string|null, torrentUrl:string|null,
  *   sizeText:string, publishedText:string }>, total:number, cached:boolean }>}

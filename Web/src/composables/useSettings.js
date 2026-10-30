@@ -9,6 +9,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { fetchAiModels } from '@/api/ai'
+import { formatDuration } from '@/utils/duration'
 import {
   exportUrl,
   fetchSettings,
@@ -135,14 +136,19 @@ export function useSettings() {
     ).length
   })
 
-  /** 模型列表：懒加载（点开模型下拉时才向接口要） */
+  /** 模型列表：懒加载（点开模型下拉时才向接口要；换供应商后自动刷新） */
   const models = ref([])
   const modelsLoading = ref(false)
+  /** 目前打算用的 AI 接口地址（草稿优先）—— 模型列表要按**它**去取，而不是按已保存的值 */
+  const aiBaseUrl = computed(() => {
+    if ('ai.baseUrl' in draft.value) return String(draft.value['ai.baseUrl'] || '')
+    return String(fieldByPath.value.get('ai.baseUrl')?.value || '')
+  })
   async function loadModels() {
     if (modelsLoading.value) return
     modelsLoading.value = true
     try {
-      const res = await fetchAiModels()
+      const res = await fetchAiModels(aiBaseUrl.value)
       models.value = res?.models ?? []
     } catch {
       // 未配置、或上游取不到：回落成纯手动输入，不打扰填写
@@ -164,6 +170,18 @@ export function useSettings() {
     return map
   })
   const allPaths = computed(() => (data.value?.fields ?? []).map((field) => field.path))
+
+  /* 换供应商（或手改接口地址）→ **自动**去拉那家的模型列表
+     -------------------------------------------------------------------------
+     为什么不再要求「保存 → 点模型 → 刷新」：选了供应商却还看到上一家的模型，
+     是最容易让人配错模型名的一种界面。这里只等 600ms（防止一边打字一边发请求），
+     然后按**草稿里的地址**去取 —— 没保存也能拿到。 */
+  let modelsTimer = null
+  watch(aiBaseUrl, (next) => {
+    if (!next) return
+    clearTimeout(modelsTimer)
+    modelsTimer = setTimeout(() => loadModels(), 600)
+  })
 
   /** 某一行当前该显示的值：改过就用草稿，否则用后端值 */
   const valueOf = (field) => (field.path in draft.value ? draft.value[field.path] : field.value)
@@ -215,8 +233,8 @@ export function useSettings() {
    * 不是只写「改过的项」。原因：只写 diff 时，点一次保存往往只落一两个键，
    * 打开数据库的人会以为「设置根本没存进去」（事实上别的项还挂在默认值/环境变量上）。
    * 全量提交后：点过保存的分组，整组配置都在库里，备份/搬迁直接拿到整份。
-   * 代价是这一组的值被固化（之后改 .env 对这几项不再生效）——各行都有「还原默认」，
-   * 那是把覆盖删掉、回落到 .env 的出口。
+   * 代价是这一组的值被固化（之后改代码默认值对这几项不再生效）——各行都有「还原默认」，
+   * 那是把覆盖删掉、回落到代码默认值的出口。
    * 密钥例外：它不回显（当前值永远是 null），没改过就**不提交** ——
    * 提交 null 等于把已经配好的 key 删掉。
    */
@@ -293,7 +311,7 @@ export function useSettings() {
     try {
       const res = await resetSettings([])
       data.value = res.settings
-      message.value = '已全部还原为 .env / 默认值'
+      message.value = '已全部还原为代码默认值'
     } catch (err) {
       message.value = `还原失败：${err.message}`
       error.value = err
@@ -337,13 +355,13 @@ export function useSettings() {
     try {
       const res = await testSetting(path, value)
       testStates.value = { ...testStates.value, [path]: res.ok ? 'success' : 'error' }
-      // 成功就说「成功 + 耗时」（绿），别把 200 这种状态码甩给使用者看；
-      // 失败才需要具体原因（带上状态码，方便排错）
+      // 成功就说「成功 + 可用数 + 耗时」（绿），别把 200 这种状态码甩给使用者看；
+      // 失败才需要具体原因（带上状态码，方便排错）。耗时统一成 `1s 234ms` 这种写法。
       testDetails.value = {
         ...testDetails.value,
         [path]: res.ok
-          ? `成功 · ${res.ms}ms`
-          : `失败：${res.reason || `HTTP ${res.status}`}（${res.ms}ms）`,
+          ? `成功 · ${res.detail ? `${res.detail} · ` : ''}${formatDuration(res.ms)}`
+          : `失败：${res.reason || `HTTP ${res.status}`}（${formatDuration(res.ms)}）`,
       }
       return res
     } catch (err) {

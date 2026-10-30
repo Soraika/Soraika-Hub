@@ -88,12 +88,14 @@ try {
   const corePaths = settings.fields.filter((f) => !f.advanced).map((f) => f.path)
   check(
     corePaths.length <= 8 &&
-      corePaths.every((p) => /^(mikan\.base|ai\.(baseUrl|apiKey|model)|worker\.dailyAt|qb\.(base|apiKey))$/.test(p)),
+      corePaths.every((p) =>
+        /^(mikan\.bases|ai\.(baseUrl|apiKey|model)|worker\.(dailyAt|fetchSubgroups)|qb\.(base|apiKey))$/.test(p),
+      ),
     `基础层就是必要配置那几项 → ${corePaths.join(' / ')}`,
   )
   check(
     settings.fields
-      .filter((f) => ['bgm.base', 'bgm.token', 'image.dir'].includes(f.path))
+      .filter((f) => ['bgm.bases', 'bgm.token', 'image.dir'].includes(f.path))
       .every((f) => f.advanced),
     '有默认值、不填也能跑的项（Bangumi 接口/Token、落盘目录）都收进微调参数',
   )
@@ -138,18 +140,33 @@ try {
     settings.fields.filter((f) => f.format === 'duration').length > 0,
     `时长类字段带 format=duration → ${settings.fields.filter((f) => f.format === 'duration').length} 项（前端换算成「30 分钟」）`,
   )
-  /* 单位语义：`format: 'duration'` 的含义是「**值是毫秒**」，只能挂在 `*Ms` 这类项上。
-     挂到「值是小时/秒」的项上会出真问题：界面按毫秒显示（24 小时 → 显示成 `24ms`），
-     单位下拉也会被推成 ms，用户一改单位就把值放大成天文数字（3 小时 → 10800000 小时）。
-     这条断言就是为了钉住这个坑：**以后新增时长项，值是毫秒才挂 duration**。 */
+  /* 单位语义（已统一）：**所有时长项都存毫秒**（`*Ms`），并且都挂 `format: 'duration'`，
+     界面由 `formatDuration` 统一显示成 `350ms` / `1m 30s` / `7d` / `1d 12h`。
+     旧设计里「值是小时/秒」的两项（missRetryHours / maxAgeSec）已改成 `*Ms`，
+     这样就不会再出现「24 小时显示成 24ms」那类换算歧义。 */
   const durationPaths = settings.fields.filter((f) => f.format === 'duration').map((f) => f.path)
   check(
     durationPaths.every((p) => /Ms$/.test(p)),
     `duration 只给「值是毫秒」的项（*Ms）→ ${durationPaths.join(' / ')}`,
   )
+  const timePaths = settings.fields.filter((f) => /Ms$/.test(f.path)).map((f) => f.path)
   check(
-    !durationPaths.includes('worker.missRetryHours') && !durationPaths.includes('image.maxAgeSec'),
-    '「放弃后重试间隔（小时）」「浏览器缓存（秒）」不挂 duration（否则被当毫秒换算）',
+    timePaths.every((p) => durationPaths.includes(p)),
+    `反方向也成立：所有 *Ms 项都挂 duration（不再有"值是毫秒但不按时长显示"的例外）→ ${timePaths.length} 项`,
+  )
+  check(
+    !settings.fields.some((f) => /^(小时|秒)$/.test(f.unit || '')),
+    '没有以「小时 / 秒」为单位存储的时长项（统一毫秒）',
+  )
+  /* 多源地址：Mikan / Bangumi 都能配多条，按顺序故障切换（见 lib/multi-source.js） */
+  const listFields = settings.fields.filter((f) => f.type === 'list').map((f) => f.path)
+  check(
+    listFields.includes('mikan.bases') && listFields.includes('bgm.bases'),
+    `数据源支持多地址 → ${listFields.join(' / ')}`,
+  )
+  check(
+    settings.fields.filter((f) => f.type === 'list').every((f) => typeof f.value === 'string' && f.value.includes('\n')),
+    '多地址在界面上是「一行一个」的文本（存库仍是数组）',
   )
   /* 缓存时长必须**改完立即生效**：缓存实例是模块加载时创建的长生命周期对象，
      传死 ttl 就变成"保存成功、实际一直用旧值"（必须重启进程才生效）。 */
@@ -165,8 +182,9 @@ try {
   check(
     /async function testAi\(/.test(settingsPageSource) &&
       /chat\/completions/.test(settingsPageSource) &&
-      /max_tokens: 1/.test(settingsPageSource),
-    'AI 测试连接**真调一次模型**（最小 chat + max_tokens:1），不是只看 /models 的 200',
+      /AI_PROBE_TOKEN/.test(settingsPageSource) &&
+      /text\.toUpperCase\(\)\.includes\(AI_PROBE_TOKEN\)/.test(settingsPageSource),
+    'AI 测试连接是**真对话**：发一次最小 chat，模型按约定回 SORAOK 才算通（不是只看 /models 的 200）',
   )
   check(
     /async function testQb\(/.test(settingsPageSource) &&
@@ -193,9 +211,14 @@ try {
   check(fieldOf(reread, 'worker.gapMs').value === 777, '再读一遍仍是新值（已落库 + 已应用）')
 
   /* ── 校验：整批拒绝，并指出是哪一项 ────────────────────────────────── */
-  const badUrl = await call('PUT', '/api/settings', { values: { 'mikan.base': 'not-a-url' } })
+  const badUrl = await call('PUT', '/api/settings', { values: { 'mikan.bases': 'not-a-url' } })
   check(badUrl.res.status === 400 && badUrl.body?.error?.code === 'BAD_REQUEST', '非法 URL → 400')
-  check(badUrl.body?.error?.detail?.errors?.[0]?.path === 'mikan.base', '错误里点明是哪一项')
+  check(badUrl.body?.error?.detail?.errors?.[0]?.path === 'mikan.bases', '错误里点明是哪一项')
+  // 多源里夹一条坏的也要整批拒绝（不允许"一半地址能用"就存进去）
+  const partlyBad = await call('PUT', '/api/settings', {
+    values: { 'mikan.bases': 'https://mikanime.tv\nnope' },
+  })
+  check(partlyBad.res.status === 400, `多地址里有一条非法 → 400（${partlyBad.body?.error?.detail?.errors?.[0]?.message}）`)
   const badTime = await call('PUT', '/api/settings', { values: { 'worker.dailyAt': '25:00' } })
   check(badTime.res.status === 400, '非法时刻 → 400')
   const unknown = await call('PUT', '/api/settings', { values: { 'nope.field': 1 } })
@@ -231,16 +254,32 @@ try {
 
   /* ── 测试连接（设置页每行右边的插头按钮）───────────────────────────── */
   // 拿「自己的健康检查」当被测目标：不需要外网，状态码也确定是 200
-  await call('PUT', '/api/settings', { values: { 'mikan.base': `${base}/api/health` } })
-  const testOk = await call('POST', '/api/settings/test', { path: 'mikan.base' })
+  await call('PUT', '/api/settings', { values: { 'mikan.bases': `${base}/api/health` } })
+  const testOk = await call('POST', '/api/settings/test', { path: 'mikan.bases' })
   check(
     testOk.res.ok && testOk.body?.data?.ok === true && testOk.body.data.status === 200,
     `连通时回报 ok → ${testOk.body?.data?.status} / ${testOk.body?.data?.ms}ms`,
   )
   check(typeof testOk.body?.data?.target === 'string', `回报里带上实际请求的地址 → ${testOk.body?.data?.target}`)
+  check(Array.isArray(testOk.body?.data?.sources), `回报里逐个地址的结果 → ${testOk.body?.data?.sources?.length} 条`)
+
+  /* 多源：一条通、一条死 → 整体算"可用"，但坏的那条要能看到 */
+  await call('PUT', '/api/settings', {
+    values: { 'mikan.bases': `${base}/api/health\nhttp://127.0.0.1:1` },
+  })
+  const mixed = await call('POST', '/api/settings/test', { path: 'mikan.bases' })
+  check(
+    mixed.body?.data?.ok === true && /1\/2 可用/.test(String(mixed.body?.data?.detail)),
+    `多地址里有能用的就算通 → ${mixed.body?.data?.detail}`,
+  )
+  check(
+    mixed.body?.data?.sources?.filter((s) => !s.ok).length === 1,
+    '坏掉的那条单独标出来（不掩盖问题）',
+  )
+  await call('PUT', '/api/settings', { values: { 'mikan.bases': ['https://mikanime.tv', 'https://mikanani.me'] } })
 
   const testDead = await call('POST', '/api/settings/test', {
-    path: 'mikan.base',
+    path: 'mikan.bases',
     value: 'http://127.0.0.1:1', // 没人监听的端口
   })
   check(
@@ -259,7 +298,7 @@ try {
     testUnknown.res.status === 404 && testUnknown.body?.error?.code === 'NOT_FOUND',
     `未知配置项 → ${testUnknown.res.status} / ${testUnknown.body?.error?.message}`,
   )
-  const testBadValue = await call('POST', '/api/settings/test', { path: 'mikan.base', value: '不是地址' })
+  const testBadValue = await call('POST', '/api/settings/test', { path: 'mikan.bases', value: '不是地址' })
   check(
     testBadValue.res.status === 400,
     `地址非法 → ${testBadValue.res.status}（先校验再发请求：${testBadValue.body?.error?.message}）`,

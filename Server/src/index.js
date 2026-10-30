@@ -85,8 +85,8 @@ const server = app.listen(config.port, () => {
   logger.info(
     {
       port: config.port,
-      mikan: config.mikan.base,
-      bgm: config.bgm.base,
+      mikan: config.mikan.bases,
+      bgm: config.bgm.bases,
       workerInline: config.worker.inline,
       dailyAt: config.worker.dailyAt,
       /** 设置页覆盖过的配置项数量（0 = 全用 .env / 默认值） */

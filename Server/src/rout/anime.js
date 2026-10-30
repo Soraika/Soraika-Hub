@@ -62,11 +62,17 @@ animeRouter.get('/anime/:id/releases', async (req, res, next) => {
   try {
     const id = animeIdOf(req)
     const raw = String(req.query.subgroupId ?? '')
-    // 'all' = 全部字幕组（不带 subgroupid 的全量 feed）；其余必须是正整数（/subgroups 返回的那个 id）
-    const subgroupId = raw === 'all' ? 'all' : Number(raw)
-    if (subgroupId !== 'all' && (!Number.isInteger(subgroupId) || subgroupId <= 0)) {
-      throw fail('BAD_REQUEST', 'subgroupId 需要是正整数（用 /subgroups 返回的 id），或 all 表示全部')
+    // 三种都能传：
+    //   · 正整数 = 该作品下的字幕组 RSS id（详情页正常时 /subgroups 给的就是它）
+    //   · 'all'  = 全部资源
+    //   · 其它字符串 = **组名**（详情页 404 时由 AI 分类得出，/subgroups 直接把组名当 id 给前端）
+    const isAll = raw === 'all'
+    const isId = /^\d+$/.test(raw) && Number(raw) > 0
+    const isLabel = !isAll && !isId && raw.length > 0 && raw.length <= 80
+    if (!isAll && !isId && !isLabel) {
+      throw fail('BAD_REQUEST', 'subgroupId 需要是正整数（/subgroups 的 id）、组名，或 all 表示全部')
     }
+    const subgroupId = isId ? Number(raw) : raw
     res.json({ ok: true, data: await getSubgroupReleases(id, subgroupId, { log: req.log }) })
   } catch (err) {
     next(err)

@@ -62,6 +62,14 @@ export function fillMissingSettings({ log = logger } = {}) {
 /** 启动时调用：把库里存过的覆盖项应用上，再静默补齐缺的项 */
 export function loadStoredSettings({ log = logger } = {}) {
   const stored = listSettings()
+  // 旧版本留下的键（例如改过名的 `mikan.base` → `mikan.bases`）直接清掉，
+  // 否则它们会一直挂在 overridden 里、界面上却找不到对应项。
+  const known = new Set(SETTINGS_FIELDS.map((f) => f.path))
+  const stale = Object.keys(stored).filter((key) => !known.has(key))
+  if (stale.length) {
+    clearSettings(stale)
+    log.info({ stale }, 'settings.prune ok')
+  }
   resetToDefaults()
   const count = applyValues(stored)
   if (count) log.info({ count, keys: Object.keys(stored) }, 'settings.load ok')
@@ -111,6 +119,17 @@ export const exportSettings = ({ includeSecrets = false } = {}) => buildExport({
 /* ── 测试连接（设置页每行右边那个插头按钮）───────────────────────────────── */
 
 const TEST_TIMEOUT_MS = 8000
+/** AI 要给模型时间"想"，探测也得给宽一点（8 秒对慢模型常常不够） */
+const AI_TEST_TIMEOUT_MS = 15000
+
+/**
+ * 探测用的应答标记
+ * ---------------------------------------------------------------------------
+ * 「通」的判定不是「HTTP 200」，而是**模型真的按约定把这句话回出来**：
+ * 地址对但 Key 错、模型名不存在、模型不支持对话，都会在这条上露馅。
+ * 只回一个短词是有意的 —— 既是完整的一次对话，又几乎不花 token。
+ */
+const AI_PROBE_TOKEN = 'SORAOK'
 
 /** 通用探针：光请求根路径看不出服务在不在的，给个真端点 */
 const TEST_TARGET = {
@@ -121,11 +140,12 @@ const TEST_TARGET = {
 const trimBase = (base) => String(base).replace(/\/+$/, '')
 
 /**
- * AI 接口：**真调一次模型**才算通
+ * AI 接口：**真发起一次对话**，并检查模型按约定回了标记词
  * ---------------------------------------------------------------------------
  * 只看根路径 / `/models` 的 200 是**假成功**：地址对但 Key 错、模型名不存在，
  * 用户照样以为配好了，等真去解析资源才炸（而且那时候他早忘了自己测过）。
- * 这里发一次最小 chat（`max_tokens: 1`），能拿到 `choices` 才算通，顺带验证模型名。
+ * 这里发一次最小 chat（system 让它只回 `SORAOK`），**收到这个词**才算通 ——
+ * 顺带验证了：出网、地址、Key、模型名、以及"这个模型会听指令"。
  * Key / 模型名从**已保存的配置**里读：密钥不从浏览器往回调，测试也不该破这个例。
  */
 async function testAi(baseUrl, log) {
@@ -147,26 +167,39 @@ async function testAi(baseUrl, log) {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 1,
+        messages: [
+          { role: 'system', content: `你是一个连通性探针：只回复 ${AI_PROBE_TOKEN} 这个词，不要解释、不要标点。` },
+          { role: 'user', content: 'ping' },
+        ],
+        max_tokens: 512, // 推理型模型会先"想"一段，给太少会只出思考、正文为空
+        temperature: 0,
         stream: false,
       }),
-      signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(AI_TEST_TIMEOUT_MS),
     })
     const ms = Date.now() - startedAt
     if (!res.ok) {
       return { target, ok: false, status: res.status, ms, reason: aiReason(res.status) }
     }
     const body = await res.json().catch(() => null)
-    const ok = Boolean(body?.choices?.length)
-    log.info({ target, status: res.status, ms, ok, model }, 'settings.test done')
+    const choice = body?.choices?.[0]
+    const text = String(choice?.message?.content ?? '').trim()
+    const ok = text.toUpperCase().includes(AI_PROBE_TOKEN)
+    const served = body?.model || model
+    log.info({ target, status: res.status, ms, ok, model: served }, 'settings.test done')
     return {
       target,
       ok,
       status: res.status,
       ms,
-      reason: ok ? '' : `接口有响应，但模型 ${model} 没有返回内容（模型名可能不对）`,
-      detail: ok ? model : '',
+      reason: ok
+        ? ''
+        : text
+          ? `模型回了「${text.slice(0, 40)}」，没回约定的 ${AI_PROBE_TOKEN}（模型名可能不对，或该模型不支持对话）`
+          : choice?.finish_reason === 'length'
+            ? '模型把输出额度用在了推理上、正文为空（换个非推理模型，或调大"最大输出"）'
+            : '模型没有返回内容（模型名可能不对）',
+      detail: ok ? `${served} 已应答` : '',
     }
   } catch (err) {
     return { target, ok: false, status: 0, ms: Date.now() - startedAt, reason: reasonOf(err) }
@@ -249,35 +282,60 @@ const reasonOf = (err) => {
   return err?.message || '请求失败'
 }
 
+/** 单个地址的探测：判定方式按分组定（AI 真对话 / qB 真拿版本号 / 其余看状态码 < 500） */
+async function probeOne(field, base, log) {
+  if (field.group === 'ai') return testAi(base, log)
+  if (field.group === 'qb') return testQb(base, log)
+  return testHttp(TEST_TARGET[field.path] ? TEST_TARGET[field.path](base) : base, log)
+}
+
 /**
  * 测试某个配置项的连接
  * ---------------------------------------------------------------------------
  * 为什么必须在后端测：浏览器有 CORS，前端直接 fetch 第三方域名基本都失败 ——
  * 而后端测出来的才是「真要访问它的那个进程」能不能通（顺带验证出网/代理）。
- * 「通」的标准**按服务定，不是看 200**：AI 要真调一次模型、下载要真拿到版本号
- * （见上面两个函数里的说明）；只有没有专属判定的地址才退回「状态码 < 500」。
- * 只对 url 类型的项开放：数字/文本/密钥没有「连接」可测。
+ * 「通」的标准**按服务定，不是看 200**：AI 要真发一次对话并收到约定标记、
+ * 下载要真拿到版本号（见上面几个函数里的说明）；只有没有专属判定的地址才退回「状态码 < 500」。
+ * **多源地址（`type: 'list'`）逐个测**：只要有一个通就算可用（多源的意义就是这样），
+ * 同时把每个地址的结果都带回去，坏的那条能直接被看到。
  * @param {string} path 配置项
  * @param {string} [value] 要测的值（不传 = 测当前生效值，用户还没保存也能先试）
  */
 export async function testEndpoint(path, value, { log = logger } = {}) {
   const field = SETTINGS_FIELDS.find((f) => f.path === path)
   if (!field) throw fail('NOT_FOUND', `未知配置项 ${path}`)
-  if (field.type !== 'url') throw fail('BAD_REQUEST', '只有地址类配置项能测试连接')
+  if (field.type !== 'url' && field.type !== 'list') {
+    throw fail('BAD_REQUEST', '只有地址类配置项能测试连接')
+  }
 
   const raw = value === undefined || value === null || value === '' ? currentValues()[path] : value
   const checked = validateValue(field, raw)
   if (!checked.ok) throw fail('BAD_REQUEST', checked.message)
 
-  const base = String(checked.value)
-  const result =
-    field.group === 'ai'
-      ? await testAi(base, log)
-      : field.group === 'qb'
-        ? await testQb(base, log)
-        : await testHttp(TEST_TARGET[path] ? TEST_TARGET[path](base) : base, log)
+  const bases = Array.isArray(checked.value) ? checked.value : [String(checked.value)]
+  const startedAt = Date.now()
+  const sources = []
+  for (const base of bases) sources.push({ base, ...(await probeOne(field, base, log)) })
 
-  return { path, ...result }
+  const ms = Date.now() - startedAt
+  const usable = sources.filter((s) => s.ok)
+  const first = usable[0] || sources[0]
+  return {
+    path,
+    ok: usable.length > 0,
+    status: first.status,
+    ms,
+    target: bases.join(' | '),
+    reason: usable.length
+      ? ''
+      : bases.length > 1
+        ? `${bases.length} 个地址都不可用：${sources.map((s) => `${s.base}（${s.reason}）`).join('；')}`
+        : first.reason,
+    detail: usable.length
+      ? [bases.length > 1 ? `${usable.length}/${bases.length} 可用` : '', first.detail].filter(Boolean).join(' · ')
+      : '',
+    sources: sources.map((s) => ({ base: s.base, ok: s.ok, status: s.status, ms: s.ms, reason: s.reason })),
+  }
 }
 
 /**

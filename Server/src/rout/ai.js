@@ -42,12 +42,14 @@ aiRouter.get('/ai/tools', (req, res) => {
 })
 
 /**
- * GET /api/ai/models —— 当前接口可用的模型列表（设置页的模型下拉用它）
+ * GET /api/ai/models —— 某接口可用的模型列表（设置页的模型下拉用它）
+ * `?baseUrl=` 可传**还没保存**的地址（换供应商时立刻看那家的模型）
  * 未配置 AI → 501 AI_DISABLED；上游取不到 → 502 UPSTREAM（前端回落成纯手动输入）
  */
 aiRouter.get('/ai/models', async (req, res, next) => {
   try {
-    res.json({ ok: true, data: { models: await listModels({ log: req.log }) } })
+    const baseUrl = typeof req.query.baseUrl === 'string' ? req.query.baseUrl.trim() : ''
+    res.json({ ok: true, data: { models: await listModels({ baseUrl, log: req.log }) } })
   } catch (err) {
     next(err)
   }

@@ -509,10 +509,10 @@ try {
   check(store.data.value.overridden.length === 0, '全部还原后没有覆盖项（隔离库回到干净状态）')
 
   /* ── 测试连接：真的经由「前端 → 代理 → 后端 → 目标」走一遍 ─────────── */
-  await store.testField('mikan.base', `${DEV}/api/health`)
-  check(store.testStates.value['mikan.base'] === 'success', `连通 → ${store.testDetails.value['mikan.base']}`)
-  await store.testField('mikan.base', 'http://127.0.0.1:1')
-  check(store.testStates.value['mikan.base'] === 'error', `不通 → ${store.testDetails.value['mikan.base']}`)
+  await store.testField('mikan.bases', `${DEV}/api/health`)
+  check(store.testStates.value['mikan.bases'] === 'success', `连通 → ${store.testDetails.value['mikan.bases']}`)
+  await store.testField('mikan.bases', 'http://127.0.0.1:1')
+  check(store.testStates.value['mikan.bases'] === 'error', `不通 → ${store.testDetails.value['mikan.bases']}`)
 
   /* ── 页面契约（来源级）── */
   const settingsSource = readFileSync(new URL('../src/pages/SettingsPage.vue', import.meta.url), 'utf8')

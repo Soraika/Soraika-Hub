@@ -117,21 +117,24 @@ export const aiProviderInfo = () => ({
 })
 
 /**
- * 列出当前接口可用的模型
+ * 列出某个 OpenAI 兼容接口可用的模型
  * ---------------------------------------------------------------------------
- * 走 OpenAI 兼容的 `/models` 端点：模型名会随供应商更新，写死在代码里迟早过期，
+ * 走 `/models` 端点：模型名会随供应商更新，写死在代码里迟早过期，
  * 所以设置页的模型项做成「可输入 + 可下拉」，下拉项就从这里来。
- * 结果按 baseUrl 缓存（10 分钟）：同一个地址反复点开下拉不会反复请求。
+ * `baseUrl` 可传入**还没保存**的地址 —— 用户在下拉里换供应商时，界面要能立刻拿到那家的模型列表，
+ * 而不是等他先保存、再退回来看（`/models` 只需要 key，不需要保存）。
+ * 结果按地址缓存（10 分钟）：同一个地址反复点开下拉不会反复请求。
  */
-export async function listModels({ log = logger } = {}) {
+export async function listModels({ baseUrl, log = logger } = {}) {
   if (!config.ai.enabled) {
     throw fail('AI_DISABLED', 'AI 未配置：先在设置页填写 API Key')
   }
-  const cacheKey = `ai:models:${config.ai.baseUrl}`
+  const base = String(baseUrl || config.ai.baseUrl).replace(/\/+$/, '')
+  const cacheKey = `ai:models:${base}`
   return upstreamCache.wrap(
     cacheKey,
     async () => {
-      const res = await request(`${config.ai.baseUrl}/models`, {
+      const res = await request(`${base}/models`, {
         headers: { Authorization: `Bearer ${config.ai.apiKey}` },
         timeoutMs: 10000,
         retries: 0,
@@ -142,7 +145,7 @@ export async function listModels({ log = logger } = {}) {
         .map((item) => (typeof item === 'string' ? item : item?.id))
         .filter(Boolean)
         .sort((a, b) => a.localeCompare(b))
-      log.info({ baseUrl: config.ai.baseUrl, count: models.length }, 'ai.models ok')
+      log.info({ baseUrl: base, count: models.length }, 'ai.models ok')
       return models
     },
     MODELS_TTL_MS,

@@ -225,6 +225,8 @@ const subgroupStmt = {
       updated_at = excluded.updated_at
   `),
   countEntities: db.prepare('SELECT COUNT(*) AS n FROM subgroup'),
+  /** 全部组名（去重字典）—— 详情页 404 时给 AI 一份「可选组名」清单 */
+  listDict: db.prepare('SELECT name FROM subgroup ORDER BY name'),
 }
 
 /**
@@ -258,6 +260,9 @@ export function rememberSubgroups(subgroups = []) {
 
 /** 字典里有多少个字幕组（排错用） */
 export const countSubgroupDict = () => subgroupStmt.countEntities.get()?.n ?? 0
+
+/** 字典里的全部组名（去重）—— 详情页 404 时交给 AI 当「可选组名」清单 */
+export const listSubgroupDict = () => subgroupStmt.listDict.all().map((r) => r.name)
 
 // ── 系列链（后台走 BGM 关系算出来的产物；下载归档目录要用）──────────────────
 //

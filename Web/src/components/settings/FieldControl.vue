@@ -49,11 +49,24 @@
 
       <!-- 其余类型走「直接输入」（数值类不在这里 —— 它们是前面的按钮 + 点开的交互界面） -->
       <template v-else>
+        <!-- 多值地址（Mikan / BGM 的多源）：一行一个。存库是数组，界面是换行文本 ——
+             填第二个地址时不用学新语法（逗号 / 空格 / 换行都认，见 lib/settings.js）。 -->
+        <textarea
+          v-if="field.type === 'list'"
+          :id="inputId"
+          class="list-input"
+          rows="3"
+          spellcheck="false"
+          :value="value ?? ''"
+          :placeholder="placeholder"
+          @input="$emit('update', $event.target.value)"
+        />
+
         <!-- 时刻：原生 input[type=time]。图标已隐藏（所有行统一不带图标），
              入口是**点这个框**——直接调浏览器原生的 showPicker()。
              不支持 showPicker 的浏览器会退化成普通聚焦，输入框本身照样能键盘改。 -->
         <input
-          v-if="field.type === 'time'"
+          v-else-if="field.type === 'time'"
           :id="inputId"
           type="time"
           :value="value || ''"
@@ -97,7 +110,7 @@
 
       <!-- 后缀区 -->
       <button
-        v-if="field.type === 'url'"
+        v-if="field.type === 'url' || field.type === 'list'"
         class="suffix-btn"
         :class="testState"
         type="button"
@@ -273,7 +286,9 @@ const placeholder = computed(() => {
   const field = props.field
   if (field.placeholder) return field.placeholder
   const fallback = field.default
-  if (fallback === null || fallback === undefined || fallback === '') return field.type === 'url' ? 'https://…' : ''
+  if (fallback === null || fallback === undefined || fallback === '') {
+    return field.type === 'url' || field.type === 'list' ? 'https://…' : ''
+  }
   return String(fallback)
 })
 
@@ -541,20 +556,22 @@ const readable = computed(() =>
 )
 
 /**
- * 行内按钮上显示的**数值**（不含单位，单位单独做成胶囊）
- * · 时长：按当前显示单位换算（`350` + `ms` / `1` + `s`），换个单位就换个数字，总量不变
- * · 其它：原值
- * 人话写法（`5m 30s`）挪到按钮的 `title` 上 —— 行里要的是"能对齐的一列数字 + 单位"。
+ * 行内显示的**值**（时长字段就显示成完整的时长文案）
+ * ---------------------------------------------------------------------------
+ * 时长统一走 `formatDuration`：`350ms` / `30s` / `1m 30s` / `7d` / `1d 12h`
+ * （最多两级单位）。不再拆成「数字 + 单位胶囊」——
+ * 那套在 `1d 12h` 这种跨档值上根本摆不下，而且和输入框里的写法对不上。
+ * 其它数值仍是原值 + 字段声明的单位。
  */
 const valueText = computed(() => {
   const v = props.value
   if (v === null || v === undefined || v === '') return '未设置'
   if (!isDuration.value) return String(v)
-  return toDisplayText(v, displayUnit.value) || String(v)
+  return formatDuration(v) || String(v)
 })
 
-/** 行内按钮右上那个单位胶囊的文案（时长 = 当前显示单位，其它 = 字段声明的单位） */
-const unitOf = computed(() => (isDuration.value ? displayUnit.value : props.field.unit || ''))
+/** 单位胶囊：时长已经写在值里（`7d`），再挂个胶囊就是重复，所以只有非时长才有 */
+const unitOf = computed(() => (isDuration.value ? '' : props.field.unit || ''))
 
 /**
  * 打开浏览器的时刻选择面板
@@ -1097,6 +1114,26 @@ function step(dir) {
   color: var(--text-primary);
   font-size: 0.82rem;
 }
+/* 多值地址输入框（Mikan / BGM 多源）：等宽、可换行、行高紧凑 —— 「一行一个」要看得出行 */
+.list-input {
+  width: 100%;
+  min-height: 66px;
+  padding: 7px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  resize: vertical;
+}
+.list-input::placeholder {
+  color: var(--text-tertiary);
+}
+.list-input:focus-visible {
+  outline: none;
+}
+
 /* 供应商选项：名字 + 地址两行 */
 .provider {
   flex-direction: column;

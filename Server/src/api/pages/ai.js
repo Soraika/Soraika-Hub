@@ -479,75 +479,70 @@ export async function classifyReleaseFormat(samples = [], { provider, log = logg
   }
 }
 
-/* ── ⑤ 资源按字幕组归类（「全部字幕组」视图用）────────────────────────────
-   为什么要它：全量 feed 是**完整历史**（黑叶草 369 条 / 1~169 集），但没有「这条属于哪个组」；
-   而按组视图要靠它才能筛。这里把**官方组名表**发给模型，让它逐条归类 —— 「废点 token」是
-   用户明确接受的代价（比逐条问便宜得多：按 120 条/批、批间并发 3）。
-   改 prompt 必须同步升 GROUP_PROMPT_VERSION（缓存 key 带版本号）。 */
+/* ── ⑤ 组标记 → 字幕组名（详情页拿不到组列表时用）──────────────────────────
+   为什么要它：Mikan 详情页 404 的老番拿不到「这部有哪些组」，但**全量 feed 是完整的**，
+   而且每条文件名开头几乎都带组标记（`【DMHY】` / `[c.c动漫]`…）。
+   所以只把**去重后的组标记**（通常 5~10 个）+ **我们库里的组名字典**发给模型做一次映射，
+   逐条归类交给确定性前缀匹配（`lib/release-match.js#groupTagOf`）—— 一次调用搞定，
+   不用把几百条文件名都塞给模型（那样又慢又贵）。
+   改 prompt 必须同步升 GROUP_PROMPT_VERSION。 */
 
-const GROUP_PROMPT_VERSION = 'v1'
+const GROUP_PROMPT_VERSION = 'v2'
 
-const GROUP_SYSTEM_PROMPT = `你在给一批动画资源文件名按**字幕组/发布组**归类。
+const GROUP_SYSTEM_PROMPT = `你在把「动画资源文件名开头的组标记」对应到我们库里已有的**字幕组名**。
 
-【可选字幕组】（只能从这里选；对不上就输出 null）
-{{GROUPS}}
+【库里已有的字幕组名】（只能从这里选；对不上就写 null）
+{{NAMES}}
 
 只输出 JSON，不要 Markdown、不要解释：
-{ "labels": { "完整文件名": "字幕组名" } }
+{ "tags": { "DMHY": "动漫花园", "幻樱字幕组": "幻樱字幕组", "XXX": null } }
 
 规则：
-- 文件名里通常带组名标记：\`【组名】\`、\`[组名]\`、开头或结尾；**缩写要能对上**（如 \`DMHY\` = 动漫花园）
-- 键必须是**输入里的完整文件名**，一字不改
-- 认不出 / 这批里没出现过的组 → 该条给 null，**不要猜**
-- 一条只能属于一个组`
+- 键必须是输入里的组标记，一字不改
+- 值是上面的组名之一；**缩写 / 别称要能对上**（「DMHY」= 动漫花园、「LoliHouse」就是它自己）
+- 实在对不上（库里没有这个组）→ 写 null，不要硬凑、不要新造名字`
 
-/** 归类缓存：同一部番同一批文件名 24 小时内不重复问（样本基本不变） */
-const groupCache = createMemCache({ ttlMs: () => 24 * 60 * 60 * 1000, max: 100 })
+/** 组标记映射缓存：同一部番同一批标记 24 小时内不重复问 */
+const groupTagCache = createMemCache({ ttlMs: () => 24 * 60 * 60 * 1000, max: 100 })
 
 /**
- * 把一批资源文件名按字幕组归类
+ * 把「组标记」映射到库里已有的字幕组名（**一次调用**，不分批）
  * ---------------------------------------------------------------------------
- * @param {string[]} titles 资源文件名（会按 `ai.maxTitles` 切批、批间并发 3）
- * @param {Array<{name:string, rssId?:string|number}>} groups 官方组名表（来自 /subgroups）
- * @returns {Promise<Record<string,string|null>|null>} 标题 → 组名（null = 认不出）；AI 不可用/失败返回 null
+ * @param {string[]} tags 去重后的组标记（如 `['DMHY', '幻樱字幕组']`）
+ * @param {string[]} names 库里已有的字幕组名（`subgroup` 表的字典）
+ * @returns {Promise<Record<string,string|null>|null>} 标记 → 组名；AI 不可用/失败返回 null
  */
-export async function classifyReleaseGroups(titles = [], groups = [], { provider, log = logger } = {}) {
-  const list = uniqueTitles(titles)
-  const names = [...new Set((groups || []).map((g) => String(g?.name || '').trim()).filter(Boolean))]
-  if (!list.length || !names.length) return null
+export async function classifyGroupTags(tags = [], names = [], { provider, log = logger } = {}) {
+  const list = [...new Set((tags || []).map((t) => String(t || '').trim()).filter(Boolean))].slice(0, 40)
+  const dict = [...new Set((names || []).map((n) => String(n || '').trim()).filter(Boolean))]
+  if (!list.length || !dict.length) return null
   if (!config.ai.enabled) return null
 
-  const key = `groups:${GROUP_PROMPT_VERSION}:${hashOf([...names, ...list])}`
-  const cached = groupCache.get(key)
+  const key = `groupTags:${GROUP_PROMPT_VERSION}:${hashOf([...dict, ...list])}`
+  const cached = groupTagCache.get(key)
   if (cached) return { ...cached }
 
-  const nameList = names.map((n, i) => `${i + 1}. ${n}`).join('\n')
-  const batches = chunk(list, Math.max(1, config.ai.maxTitles || 120))
   try {
-    const runs = await mapLimit(batches, 3, async (part) => {
-      const { parsed } = await chatJson({
-        system: GROUP_SYSTEM_PROMPT.replace('{{GROUPS}}', nameList),
-        user: JSON.stringify({ titles: part }),
-        provider,
-        log,
-      })
-      return parsed?.labels && typeof parsed.labels === 'object' ? parsed.labels : {}
+    const { parsed } = await chatJson({
+      system: GROUP_SYSTEM_PROMPT.replace('{{NAMES}}', dict.map((n, i) => `${i + 1}. ${n}`).join('\n')),
+      user: JSON.stringify({ tags: list }),
+      provider,
+      log,
     })
-
-    // 收敛：只认「输入里真有的标题」+「官方组名表里真有的组名」，其余一律 null
-    const allowed = new Set(names)
-    const labels = {}
-    for (const title of list) {
-      const hit = runs.map((r) => r?.[title]).find((v) => typeof v === 'string' && allowed.has(v.trim()))
-      labels[title] = hit ? hit.trim() : null
+    const allowed = new Set(dict)
+    const out = {}
+    let hit = 0
+    for (const tag of list) {
+      const v = parsed?.tags?.[tag]
+      const name = typeof v === 'string' && allowed.has(v.trim()) ? v.trim() : null
+      out[tag] = name
+      if (name) hit++
     }
-    groupCache.set(key, labels)
-    const labelled = Object.values(labels).filter(Boolean).length
-    log.info({ titles: list.length, groups: names.length, labelled, batches: batches.length }, 'ai.groups ok')
-    return labels
+    groupTagCache.set(key, out)
+    log.info({ tags: list.length, names: dict.length, mapped: hit }, 'ai.groupTags ok')
+    return out
   } catch (err) {
-    // 归类失败不影响列表展示（前端照旧显示全部），所以只记日志、返 null
-    log.warn({ titles: list.length, groups: names.length, err: err.message }, 'ai.groups fail')
+    log.warn({ tags: list.length, names: dict.length, err: err.message }, 'ai.groupTags fail')
     return null
   }
 }
@@ -557,5 +552,5 @@ export const aiCacheStats = () => ({
   tagCache: tagCache.size(),
   episodeCache: episodeCache.size(),
   formatCache: formatCache.size(),
-  groupCache: groupCache.size(),
+  groupTagCache: groupTagCache.size(),
 })

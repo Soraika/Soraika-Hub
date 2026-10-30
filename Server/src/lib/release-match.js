@@ -100,6 +100,49 @@ export function normalizeSignature(raw, samples = []) {
 }
 
 /**
+ * 从资源文件名里取「组标记」—— 开头第一个 【…】 / […] / （…）
+ * ---------------------------------------------------------------------------
+ * Mikan 上发布组几乎都写在开头（`【DMHY】【番名】…` / `[c.c动漫][番名]…`），
+ * 所以「这条属于哪个组」在绝大多数情况下是**确定性**的：取开头那段标记即可。
+ * 取不到返回 ''（这条不参与按组归类，界面只显示文件名）。
+ */
+export function groupTagOf(title) {
+  const m = String(title || '').match(/^\s*[【[(（]([^】\])）]{1,40})[】\])）]/)
+  return m ? m[1].trim() : ''
+}
+
+/**
+ * 统计一批资源里出现过的组标记（按条数降序）
+ * @param {Array<{title:string}>} items
+ * @returns {Array<{ tag:string, count:number }>}
+ */
+export function groupTagsOf(items = []) {
+  const map = new Map()
+  for (const it of items) {
+    const tag = groupTagOf(it?.title)
+    if (!tag) continue
+    map.set(tag, (map.get(tag) || 0) + 1)
+  }
+  return [...map.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count)
+}
+
+/**
+ * 给资源条目补上「所属字幕组」：用 tag → 群名 的映射做**确定性**匹配
+ * @param {Array<{title:string}>} items 会被就地写入 `subgroup`
+ * @param {Record<string,string>} tagToName 组标记 → 组名
+ */
+export function labelByGroupTag(items = [], tagToName = {}) {
+  let labelled = 0
+  for (const item of items) {
+    const tag = groupTagOf(item?.title)
+    const name = tag ? tagToName[tag] || null : null
+    item.subgroup = name
+    if (name) labelled++
+  }
+  return labelled
+}
+
+/**
  * 一条资源标题是否符合特征
  * @param {string} title
  * @param {{ prefix?: string, literals?: string[] }} signature

@@ -7,6 +7,7 @@
  */
 import { config } from '../../config.js'
 import { DAY_META, compactNumber, parseTags, posterUrlOf, ratingText, scoreText, themeTags } from '../../lib/format.js'
+import { primaryBase } from '../../lib/multi-source.js'
 
 /**
  * 一行 anime 记录 → 详情面板数据
@@ -45,7 +46,7 @@ export function toAnimeDetail(row) {
     mikanId: row.mikan_id,
     /** 外链也在这里拼好：前端只认成品 URL，不拼站点地址 */
     bgmUrl: row.bgm_id ? `https://bgm.tv/subject/${row.bgm_id}` : '',
-    mikanUrl: row.mikan_id ? `${config.mikan.base}/Home/Bangumi/${row.mikan_id}` : '',
+    mikanUrl: row.mikan_id ? `${primaryBase('mikan')}/Home/Bangumi/${row.mikan_id}` : '',
   }
 }
 

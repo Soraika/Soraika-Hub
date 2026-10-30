@@ -197,16 +197,17 @@ try {
       /fetchSubgroupReleases\(row\.mikan_id\)/.test(animePageSource),
     '取资源用 RSS 字幕组 id（/subgroups 的 id）；不传参数即全量 feed',
   )
-  /* 「全部」视图要能筛组：后端把**官方组名表**发给模型逐条归类（AI 失败则只显示文件名） */
+  /* 「详情页 404」的老番：不要摆一个假的「全部字幕组」，而是用**库里的组名字典 + 组标记**
+     让 AI 做一次映射，得出这部番实际有资源的字幕组；逐条归类交给确定性前缀匹配。 */
   check(
-    /classifyReleaseGroups/.test(animePageSource) && /labelReleases\(row, items/.test(animePageSource),
-    '「全部」视图给每条标所属字幕组（AI 按官方组名表归类，失败则降级为不标）',
+    /classifyGroupTags/.test(animePageSource) &&
+      /tagNameMap\(row, items/.test(animePageSource) &&
+      animePageSource.includes('labelByGroupTag'),
+    '详情页 404 → 组标记 × 库里组名 映射出字幕组；逐条归类是纯匹配（零额外 token）',
   )
-  /* 老番的详情页可能被 Mikan 拿掉（实测 龙珠超 547 / 怪物弹珠 624 / 幻境 2547 全 404），
-     但资源 feed 还活着 → 退化成一个「全部字幕组」，照样能取资源。 */
   check(
-    /detail-404/.test(animePageSource) && /source: 'all-only'/.test(animePageSource),
-    'Mikan 详情页 404 → 退化「全部字幕组」（资源 feed 还在：龙珠超实测 514 条）',
+    animePageSource.includes("source: 'classified'") && animePageSource.includes("name: '全部资源'"),
+    '分类成功给真实组名；一条都分不出才退化成「全部资源」',
   )
 
   if (subgroupData.items.length) {
@@ -259,8 +260,15 @@ try {
       oddSg.res.ok && Array.isArray(oddSg.body?.data?.items),
       `任意 rss id 都返回结构完整的响应（映射已不落库）→ ${oddSg.res.status} / ${oddSg.body?.data?.total} 条`,
     )
-    const badSgId = await get(`/api/anime/${card.id}/releases?subgroupId=abc`)
-    check(badSgId.res.status === 400 && badSgId.body?.error?.code === 'BAD_REQUEST', '非法 subgroupId → 400 / BAD_REQUEST')
+    // 组名（详情页 404 时 AI 分类得出）现在也是合法参数 → 返回空筛选结果，不是 400
+    const nameSgId = await get(`/api/anime/${card.id}/releases?subgroupId=abc`)
+    check(
+      nameSgId.res.status === 200 && nameSgId.body?.data?.source === 'classified',
+      `组名当参数也合法（详情页 404 的番用它筛）→ ${nameSgId.body?.data?.total} 条`,
+    )
+    // 空值仍然要拒绝
+    const badSgId = await get(`/api/anime/${card.id}/releases?subgroupId=`)
+    check(badSgId.res.status === 400 && badSgId.body?.error?.code === 'BAD_REQUEST', '空 subgroupId → 400 / BAD_REQUEST')
   }
 
   const noSg = await get('/api/anime/99999999/subgroups')

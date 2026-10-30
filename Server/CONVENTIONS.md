@@ -222,7 +222,7 @@ AI 是**可选功能**：没配 `AI_API_KEY` 也照常跑 —— 相关接口回
 
 **10.1 系列链（走链 + AI 归一）**
 
-- **只用镜像 API**：`GET {config.bgm.base}/v0/subjects/{id}/subjects`（1 跳）。
+- **只用镜像 API**：`GET {config.bgm.bases[i]}/v0/subjects/{id}/subjects`（1 跳；`bases` 是**有序候选**，见 §7 多源）。
   `bgm.tv/subject/{id}/relations/graph` 里虽然有现成的 `SUBJECT_SERIES_GRAPH`（一次给全、带 year/auxiliary），
   但**它要梯子**，不作依赖；只在有梯子时拿来交叉校验链序。
 - **BFS 展开规则**：只沿 `relation ∈ {续集, 前传}` 且 `type === 2`（动画）的边扩展；
@@ -279,10 +279,10 @@ AI 是**可选功能**：没配 `AI_API_KEY` 也照常跑 —— 相关接口回
     否则库里会出现一堆 `title = mikan:470` 这种既没名字也没链接的假行
   - `no-bgm-link`（页面在、有标题、没挂 Bangumi 链接）**要塞**：`bgm_id = NULL` + 保留 `title`，
     并标 **`bgm_miss_count = 3`**（≥ `worker.missLimit`）+ `bgm_checked_at = 扫描时间`
-    → 借现有退避机制：不立刻重抓，`missRetryHours`（默认 7 天）后自动重试一次
+    → 借现有退避机制：不立刻重抓，`missRetryMs`（默认 7 天）后自动重试一次
   - `ok` 的写 `mikan_id` + `bgm_id` + `title`（Mikan 的标题），
     **`bgm_checked_at` 留空**：它的语义是「上次刷档案的时间」，
-    留空才会被档案补齐队列（触发④）当场接手 —— 写 now 会把它挡在门外 `missRetryHours`（7 天）
+    留空才会被档案补齐队列（触发④）当场接手 —— 写 now 会把它挡在门外 `missRetryMs`（7 天）
   - **`year` / `season` / `weekday` 一律留空**：首页 `listBySeason` 与每日更新都靠这三个字段过滤，
     留空才不会把「只有映射的作品」混进排期
   - **库里已存在的行一个字段都不改**（否则 `bgm_checked_at` 被重置、推迟它的刷新）

@@ -33,7 +33,7 @@ const stmt = {
     UPDATE anime SET bgm_checked_at = ?
     WHERE id = ? AND mikan_id IS NOT NULL AND bgm_id IS NULL AND bgm_checked_at IS ?
   `),
-  /** 拿不到 bgmId：失败计数 +1（超限后改成隔 missRetryHours 再试一次） */
+  /** 拿不到 bgmId：失败计数 +1（超限后改成隔 missRetryMs 再试一次） */
   bumpMiss: db.prepare(`
     UPDATE anime SET bgm_miss_count = COALESCE(bgm_miss_count, 0) + 1, bgm_checked_at = ?
     WHERE id = ?
@@ -74,7 +74,7 @@ const stmt = {
 }
 
 /** 失败退避的「冷却期起点」参数：超过这个时刻没试过，才重新进入队列 */
-const retryBefore = () => Date.now() - config.worker.missRetryHours * 3600 * 1000
+const retryBefore = () => Date.now() - config.worker.missRetryMs
 
 /**
  * 认领一条待补任务（CAS 抢占）
@@ -121,7 +121,7 @@ export const countStale = ({ olderThan }) => stmt.countStale.get(val(staleYear()
  * 结果就是老番季的卡片没有评分、点进去面板也是空的（"有 bgm_id 却没档案"）。
  *
  * 谓词：`bgm_id IS NOT NULL AND (score/tags/summary 任一为空)` + 退避窗口 ——
- *   补过之后仍然缺的（上游真没评分）隔 missRetryHours 再试一次，不会变成死循环。
+ *   补过之后仍然缺的（上游真没评分）隔 missRetryMs 再试一次，不会变成死循环。
  * 处理：`jobs/enrich.js#enrichOne` 认得 `row.bgm_id` → **跳过 Mikan 详情页**，只打 Bangumi 一次。
  */
 const archiveStmt = {

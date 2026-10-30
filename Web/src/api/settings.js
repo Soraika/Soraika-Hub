@@ -15,7 +15,7 @@ export const fetchSettings = () => apiGet('/api/settings', { timeout: 10000 })
 /** 保存（只传改过的项） */
 export const saveSettings = (values) => apiPut('/api/settings', { values }, { timeout: 20000 })
 
-/** 重置：paths 为空数组 = 全部还原为 .env / 默认值 */
+/** 重置：paths 为空数组 = 全部还原为代码默认值 */
 export const resetSettings = (paths = []) => apiPost('/api/settings/reset', { paths }, { timeout: 20000 })
 
 /** 导入（payload 就是导出的那份 JSON；mode: merge | replace） */

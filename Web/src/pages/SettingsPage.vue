@@ -80,7 +80,7 @@
               v-for="field in section.fields"
               :key="field.path"
               class="field"
-              :class="{ dirty: isDirty(field), wide: field.type === 'url' || field.type === 'text' }"
+              :class="{ dirty: isDirty(field), wide: field.type === 'url' || field.type === 'text' || field.type === 'list' }"
             >
               <div class="field-head">
                 <label class="field-label" :for="`f-${field.path}`" :title="field.hint || ''">{{ field.label }}</label>
@@ -178,7 +178,7 @@
       <section class="card card-surface">
         <header class="card-head">
           <h2 class="card-title"><IconTerminal2 :size="19" /> 启动参数（只读）</h2>
-          <p class="card-hint">这两项在进程启动时定，要改得去 Server/.env 改完再重启</p>
+          <p class="card-hint">这两项由启动命令决定（PORT / DB_FILE），要改请改了启动参数再重启</p>
         </header>
         <div class="readonly-grid">
           <div v-for="item in data.readonly" :key="item.path" class="readonly-item">
@@ -318,7 +318,7 @@ function testTitle(field) {
 const onExport = (includeSecrets) => exportFile({ includeSecrets })
 
 async function onResetAll() {
-  if (!window.confirm('把所有设置还原为 .env / 默认值？')) return
+  if (!window.confirm('把所有设置还原为默认值？')) return
   await resetAll()
 }
 

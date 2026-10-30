@@ -14,6 +14,7 @@ import { config } from '../../config.js'
 import { fail } from '../../lib/errors.js'
 import { request } from '../../lib/http-client.js'
 import { logger } from '../../lib/logger.js'
+import { tryBases } from '../../lib/multi-source.js'
 
 /** 条目详情缓存时长：评分/标签变化很慢，6 小时足够 */
 const SUBJECT_TTL_MS = 6 * 60 * 60 * 1000
@@ -36,12 +37,17 @@ export async function fetchSubject(bgmId) {
   return upstreamCache.wrap(
     `bgm:subject:${bgmId}`,
     () =>
-      request(`${config.bgm.base}/v0/subjects/${encodeURIComponent(bgmId)}`, {
-        headers: headers(),
-        expect: 'json',
-        timeoutMs: config.bgm.timeoutMs,
-        tip: `Bangumi 条目 ${bgmId}`,
-      }),
+      tryBases(
+        'bgm',
+        (base) =>
+          request(`${base}/v0/subjects/${encodeURIComponent(bgmId)}`, {
+            headers: headers(),
+            expect: 'json',
+            timeoutMs: config.bgm.timeoutMs,
+            tip: `Bangumi 条目 ${bgmId}`,
+          }),
+        { tip: 'subject' },
+      ),
     SUBJECT_TTL_MS,
   )
 }
@@ -64,12 +70,17 @@ export async function fetchRelatedSubjects(bgmId) {
     list = await upstreamCache.wrap(
       `bgm:related:${bgmId}`,
       () =>
-        request(`${config.bgm.base}/v0/subjects/${encodeURIComponent(bgmId)}/subjects`, {
-          headers: headers(),
-          expect: 'json',
-          timeoutMs: config.bgm.timeoutMs,
-          tip: `Bangumi 关联条目 ${bgmId}`,
-        }),
+        tryBases(
+          'bgm',
+          (base) =>
+            request(`${base}/v0/subjects/${encodeURIComponent(bgmId)}/subjects`, {
+              headers: headers(),
+              expect: 'json',
+              timeoutMs: config.bgm.timeoutMs,
+              tip: `Bangumi 关联条目 ${bgmId}`,
+            }),
+          { tip: 'related' },
+        ),
       RELATED_TTL_MS,
     )
   } catch (err) {

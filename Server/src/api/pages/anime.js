@@ -13,9 +13,9 @@
  *   4. 系列：没算过就现场跑一遍走链（用户看了啥、库里没有就补一遍）
  */
 import { warmPoster } from '../../cache/poster.js'
-import { findById, listSeriesMembers, rememberSubgroups } from '../../db/anime.js'
-import { claimBySignature, signatureFromSamples } from '../../lib/release-match.js'
-import { classifyReleaseFormat, classifyReleaseGroups } from './ai.js'
+import { findById, listSeriesMembers, listSubgroupDict, rememberSubgroups } from '../../db/anime.js'
+import { claimBySignature, groupTagsOf, labelByGroupTag, signatureFromSamples } from '../../lib/release-match.js'
+import { classifyGroupTags, classifyReleaseFormat } from './ai.js'
 import { enrichOne } from '../../jobs/enrich.js'
 import { fillSeriesFor } from '../../jobs/series.js'
 import { fail } from '../../lib/errors.js'
@@ -103,12 +103,12 @@ export async function getAnimeSubgroups(id, { log = logger } = {}) {
     return { items, source: 'mikan' }
   } catch (err) {
     // Mikan 详情页 404 = 条目在 Mikan 列表里还在、但**详情页被拿掉了**
-    // （实测 龙珠超 547 / 怪物弹珠 624 / 星球大战幻境 2547 —— 季度列表仍有，详情页 404）。
-    // 而它们的**资源 feed 还活着**（514 / 144 / 12 条）。所以这里退化成「全部字幕组」一项：
-    // 前端选它 → `/releases?subgroupId=all` → 全量 feed，照样能取资源（只是没法按组筛）。
+    // （实测 龙珠超 547 / 怪物弹珠 624 / 星球大战幻境 2547 / 久保同学不放过我 2906）。
+    // 这种情况拿不到「这部作品的字幕组列表」，但**全量 feed 是完整的**。
+    // 做法：把**我们库里的字幕组名字典** + **全部资源名**发给 AI 分类 →
+    //       分类出来的组名就是这部番实际有资源的字幕组（比直接摆一个「全部」有用得多）。
     if (/HTTP 404/.test(String(err?.message || ''))) {
-      log.warn({ id, mikanId: row.mikan_id, fallback: 'all' }, 'anime.subgroups detail-404')
-      return { items: [{ id: 'all', name: '全部字幕组', mikanId: '', rssId: '' }], source: 'all-only' }
+      return await subgroupsFromFeed(row, { log })
     }
     log.warn({ id, mikanId: row.mikan_id, err: err.message }, 'anime.subgroups fetch-fail')
     return { items: [], source: 'none' }
@@ -166,33 +166,61 @@ export async function getAnimeSeries(id, { log = logger } = {}) {
 }
 
 /**
- * 给资源条目补上「所属字幕组」（只用于「全部字幕组」视图）
+ * 详情页 404 时：用「库里的组名字典 + 全量资源名」让 AI 分类，得到这部番的字幕组列表
  * ---------------------------------------------------------------------------
- * 组名表来自 Mikan 详情页（和 `/subgroups` 同一份）；归类交给 `classifyReleaseGroups`（AI + 24h 缓存）。
- * AI 没配 / 归类失败 → 所有条目的 `subgroup` 都是 null，**不影响列表本身**（前端只当它没有标签）。
- * @returns {Promise<number>} 成功标上的条数
+ * 组名取**我们库里已存的字典**（`subgroup` 表，跨作品去重）—— 同一个组在不同作品下叫法一致。
+ * 分类结果里的组名就是「这部番实际有资源的字幕组」；一条都没分出来 → 退化成单项 `all`
+ * （至少还能取到资源）。组项的 `id` 直接用**组名**，`/releases?subgroupId=<组名>` 会再分类一次
+ * 并按名筛（走 24h 缓存，不会重复烧钱）。
  */
-async function labelReleases(row, items, { log }) {
+async function subgroupsFromFeed(row, { log }) {
   try {
-    const profile = await fetchAnimeProfile(row.mikan_id)
-    const groups = (profile.subgroups || []).map((sg) => ({ name: sg.subgroupName, rssId: sg.subgroupRSSId }))
-    const labels = await classifyReleaseGroups(
-      items.map((it) => it.title),
-      groups,
-      { log },
-    )
-    if (!labels) return 0
-    let labelled = 0
-    for (const item of items) {
-      const name = labels[item.title] || null
-      item.subgroup = name
-      if (name) labelled++
+    const items = await fetchSubgroupReleases(row.mikan_id)
+    const map = await tagNameMap(row, items, { log })
+    const names = [...new Set(Object.values(map))]
+    if (names.length) {
+      log.info(
+        { id: row.id, mikanId: row.mikan_id, releases: items.length, tags: Object.keys(map).length, groups: names.length },
+        'anime.subgroups classified',
+      )
+      return { items: names.map((name) => ({ id: name, name, mikanId: '', rssId: '' })), source: 'classified' }
     }
-    return labelled
+    log.warn({ id: row.id, mikanId: row.mikan_id, releases: items.length, groups: 0 }, 'anime.subgroups detail-404')
+    return { items: [{ id: 'all', name: '全部资源', mikanId: '', rssId: '' }], source: 'all-only' }
   } catch (err) {
-    log.warn({ id: row.id, err: err.message }, 'anime.releases label fail')
-    return 0
+    log.warn({ id: row.id, err: err.message }, 'anime.subgroups feed-fallback fail')
+    return { items: [{ id: 'all', name: '全部资源', mikanId: '', rssId: '' }], source: 'all-only' }
   }
+}
+
+/**
+ * 组标记 → 组名（AI 映射一次 + 24h 缓存），并**把不是组的标记丢掉**
+ * ---------------------------------------------------------------------------
+ * Mikan 文件名里开头的方括号不全是字幕组：也可能是番名（`[推しの子]`）、平台（`[爱奇艺]`）、
+ * 版本标记（`[修正]`）、人名 —— 所以这里两道过滤：
+ *   1. `count >= 2`（只发过一条的标记大概率不是组）
+ *   2. **AI 可用但对不上库里组名** → 判定它不是字幕组，直接丢（不回退成标记本身）
+ *      AI 不可用时才退化成标记本身（此时再做一次"和番名撞车就丢"的兜底）
+ * 返回的映射同时用于「组列表」和「每条资源的组标签」，保证两边一致。
+ */
+async function tagNameMap(row, items, { log }) {
+  const tags = groupTagsOf(items).filter((t) => t.count >= 2)
+  if (!tags.length) return {}
+
+  const mapped = await classifyGroupTags(tags.map((t) => t.tag), listSubgroupDict(), { log })
+  const title = String(row.title_cn || row.title || '').trim()
+  const map = {}
+  for (const { tag } of tags) {
+    const name = mapped?.[tag] || null
+    if (mapped) {
+      if (name) map[tag] = name // AI 给了库里的组名 → 收
+      continue // AI 可用却对不上 → 不是字幕组（番名/平台/修正…），丢
+    }
+    // AI 不可用：退化成标记本身，但和番名撞车的不要（那是标题不是组）
+    if (title && (title.includes(tag) || tag.includes(title))) continue
+    map[tag] = tag
+  }
+  return map
 }
 
 /**
@@ -222,12 +250,10 @@ export async function getSubgroupReleases(id, subgroupRssId, { log = logger } = 
     return base
   }
 
-  // 「全部字幕组」：直接拉全量（完整历史，不分字幕组）
+  // 「全部」：直接拉全量（完整历史，不分字幕组），并给每条标上所属组（确定性前缀匹配，零 AI 逐条）
   if (want === 'all') {
     const items = await fetchSubgroupReleases(row.mikan_id)
-    // 额外做一件事：**给每条标出所属字幕组**（把官方组名表发给 AI 逐条归类，缓存 24h）。
-    // 这一步失败不影响列表（label 全是 null，前端照旧只显示文件名）。
-    const labelled = await labelReleases(row, items, { log })
+    const labelled = labelByGroupTag(items, await tagNameMap(row, items, { log }))
     log.debug({ id, total: items.length, source: 'all', labelled }, 'anime.releases ok')
     return { ...base, items, total: items.length, source: 'all' }
   }
@@ -235,6 +261,15 @@ export async function getSubgroupReleases(id, subgroupRssId, { log = logger } = 
   if (!want) {
     log.warn({ id, want, mikanId: row.mikan_id }, 'anime.releases missing-ids')
     return base
+  }
+
+  // 组名（详情页 404 时由组标记映射得出）→ 全量 feed 里按标签筛（纯匹配，零额外 token）
+  if (!/^\d+$/.test(want)) {
+    const all = await fetchSubgroupReleases(row.mikan_id)
+    labelByGroupTag(all, await tagNameMap(row, all, { log }))
+    const items = all.filter((it) => it.subgroup === want)
+    log.debug({ id, group: want, total: items.length, source: 'classified' }, 'anime.releases ok')
+    return { ...base, items, total: items.length, source: 'classified' }
   }
 
   const own = await fetchSubgroupReleases(row.mikan_id, want)

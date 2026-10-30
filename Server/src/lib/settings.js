@@ -44,10 +44,12 @@ export const SETTINGS_GROUPS = [
  */
 export const SETTINGS_FIELDS = [
   // ── 数据源 ──
-  { path: 'mikan.base', env: 'MIKAN_BASE_URL', group: 'sources', section: 'Mikan 排期源', label: '站点地址', type: 'url', hint: '排期来源，可换成可用镜像' },
+  /* 多源：一行一个地址，按顺序故障切换（见 lib/multi-source.js）。
+     为什么不做成「一个主地址 + 若干备用」：它们就是同一类东西，分主备反而要解释"备用什么时候用"。 */
+  { path: 'mikan.bases', env: 'MIKAN_BASE_URLS', group: 'sources', section: 'Mikan 排期源', label: '站点地址', type: 'list', hint: '一行一个，按顺序切换' },
   { path: 'mikan.timeoutMs', env: 'MIKAN_TIMEOUT_MS', group: 'sources', section: 'Mikan 排期源', label: '请求超时', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true },
 
-  { path: 'bgm.base', env: 'BGM_API_BASE', group: 'sources', section: 'Bangumi 评分源', label: '接口地址', type: 'url', advanced: true, hint: '评分、标签与简介来源' },
+  { path: 'bgm.bases', env: 'BGM_API_BASES', group: 'sources', section: 'Bangumi 评分源', label: '接口地址', type: 'list', advanced: true, hint: '一行一个，按顺序切换' },
   { path: 'bgm.token', env: 'BGM_TOKEN', group: 'sources', section: 'Bangumi 评分源', label: 'Token', type: 'secret', advanced: true, hint: '官方接口要求时填写' },
   { path: 'bgm.userAgent', env: 'BGM_USER_AGENT', group: 'sources', section: 'Bangumi 评分源', label: 'User-Agent', type: 'text', hint: '官方接口要求携带', advanced: true },
   { path: 'bgm.timeoutMs', env: 'BGM_TIMEOUT_MS', group: 'sources', section: 'Bangumi 评分源', label: '请求超时', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true },
@@ -69,19 +71,18 @@ export const SETTINGS_FIELDS = [
   { path: 'worker.gapMs', env: 'WORKER_GAP_MS', group: 'worker', section: '调度', label: '每条间隔', type: 'number', unit: 'ms', format: 'duration', min: 0, advanced: true, hint: '间隔过小可能被上游限流' },
   { path: 'worker.idleMs', env: 'WORKER_IDLE_MS', group: 'worker', section: '调度', label: '空闲休眠', type: 'number', unit: 'ms', format: 'duration', min: 100, advanced: true },
   { path: 'worker.staleYear', env: 'WORKER_STALE_YEAR', group: 'worker', section: '调度', label: '覆盖年份', type: 'number', unit: '年', allowNull: true, advanced: true, hint: '留空表示仅当年，0 表示全部年份' },
-  { path: 'worker.fetchSubgroups', env: 'WORKER_FETCH_SUBGROUPS', group: 'worker', section: '调度', label: '顺手抓字幕组', type: 'boolean', hint: '补档案时多抓一次 Mikan 详情页；老番的「资源」区要靠它（关掉则只在打开面板时现取）' },
+  { path: 'worker.fetchSubgroups', env: 'WORKER_FETCH_SUBGROUPS', group: 'worker', section: '调度', label: '顺手抓字幕组', type: 'boolean', hint: '补档案时顺带抓字幕组' },
 
   { path: 'worker.missLimit', env: 'WORKER_MISS_LIMIT', group: 'worker', section: '失败退避', label: 'bgmId 重试上限', type: 'number', unit: '次', min: 1, advanced: true },
-  /* 注意单位：这一项的值是**小时**，不是毫秒 —— 不能挂 `format: 'duration'`（那是「值是毫秒」的意思），
-     否则界面把它按毫秒显示（24 用时 → 显示成「24ms」），提交时还会被当毫秒换算回一个天文数字。 */
-  { path: 'worker.missRetryHours', env: 'WORKER_MISS_RETRY_HOURS', group: 'worker', section: '失败退避', label: '放弃后重试间隔', type: 'number', unit: '小时', min: 0, advanced: true },
+  /* 时长项**一律存毫秒**（`*Ms`），界面统一用 formatDuration 显示成 `7d` / `350ms` 这种写法 ——
+     不再有「值是小时」「值是秒」的例外项（那正是把 24 小时显示成 24ms 的来源）。 */
+  { path: 'worker.missRetryMs', env: 'WORKER_MISS_RETRY_MS', group: 'worker', section: '失败退避', label: '放弃后重试间隔', type: 'number', unit: 'ms', format: 'duration', min: 0, advanced: true },
 
   // ── 缓存与图片 ──
   { path: 'cacheTtlMs', env: 'CACHE_TTL_MS', group: 'cache', section: '数据缓存', label: '排期缓存', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true, hint: '缓存期内直接读库，不回源' },
   { path: 'seasonLimit', env: 'SEASON_LIMIT', group: 'cache', section: '数据缓存', label: '单季入库上限', type: 'number', unit: '条', min: 1, advanced: true },
   { path: 'image.dir', env: 'IMAGE_CACHE_DIR', group: 'cache', section: '海报图片', label: '落盘目录', type: 'text', restart: true, advanced: true, hint: '相对服务端工作目录' },
-  /* 同上：这一项是**秒**（写进 Cache-Control 的 max-age），不是毫秒 —— 不挂 `format: 'duration'` */
-  { path: 'image.maxAgeSec', env: 'IMAGE_MAX_AGE_SEC', group: 'cache', section: '海报图片', label: '浏览器缓存', type: 'number', unit: '秒', min: 0, advanced: true },
+  { path: 'image.maxAgeMs', env: 'IMAGE_MAX_AGE_MS', group: 'cache', section: '海报图片', label: '浏览器缓存', type: 'number', unit: 'ms', format: 'duration', min: 0, advanced: true },
 
   // ── 下载 ──
   { path: 'qb.base', env: 'QB_BASE_URL', group: 'qb', section: 'qBittorrent', label: '地址', type: 'url', placeholder: 'http://127.0.0.1:8080' },
@@ -90,17 +91,31 @@ export const SETTINGS_FIELDS = [
 
 /**
  * 常见 OpenAI 兼容供应商 —— 设置页的「供应商」下拉用它们一键填好接口地址。
- * 只提供地址；模型列表由 `/api/ai/models` 从接口实时获取（不在代码里写死，避免过期）。
+ * 只提供地址；**模型列表由 `/api/ai/models` 从该地址实时获取**（不在代码里写死，避免过期）：
+ * 选中供应商后界面会自动去拉那家的 `/models`，所以这里只维护地址，不用维护模型名。
+ * 排列顺序 = 国内直连友好 → 海外 → 本地，方便按可用性挑。
  */
 export const AI_PROVIDERS = [
-  { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1' },
-  { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1' },
-  { name: 'Moonshot', baseUrl: 'https://api.moonshot.cn/v1' },
+  { name: 'DeepSeek 深度求索', baseUrl: 'https://api.deepseek.com/v1' },
+  { name: '月之暗面 Kimi', baseUrl: 'https://api.moonshot.cn/v1' },
   { name: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
-  { name: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-  { name: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1' },
+  { name: '通义千问（百炼）', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { name: '火山方舟（豆包）', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
+  { name: 'SiliconFlow 硅基流动', baseUrl: 'https://api.siliconflow.cn/v1' },
+  { name: '阶跃星辰 StepFun', baseUrl: 'https://api.stepfun.com/v1' },
+  { name: '百川智能', baseUrl: 'https://api.baichuan-ai.com/v1' },
+  { name: 'MiniMax', baseUrl: 'https://api.minimax.chat/v1' },
+  { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1' },
+  { name: 'Google Gemini（兼容）', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+  { name: 'xAI Grok', baseUrl: 'https://api.x.ai/v1' },
+  { name: 'Mistral', baseUrl: 'https://api.mistral.ai/v1' },
+  { name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1' },
+  { name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1' },
+  { name: 'Together AI', baseUrl: 'https://api.together.xyz/v1' },
+  { name: 'Fireworks AI', baseUrl: 'https://api.fireworks.ai/inference/v1' },
   { name: 'Ollama（本地）', baseUrl: 'http://127.0.0.1:11434/v1' },
   { name: 'LM Studio（本地）', baseUrl: 'http://127.0.0.1:1234/v1' },
+  { name: 'vLLM（本地）', baseUrl: 'http://127.0.0.1:8000/v1' },
 ]
 
 const FIELD_BY_PATH = new Map(SETTINGS_FIELDS.map((f) => [f.path, f]))
@@ -167,6 +182,19 @@ export function validateValue(field, raw) {
       return /^([01]?\d|2[0-3]):[0-5]\d$/.test(value)
         ? { ok: true, value }
         : { ok: false, message: `${field.label} 需要是 HH:MM（24 小时制），例如 04:00` }
+    }
+    case 'list': {
+      // 一行一个（也认逗号分隔，导入的 JSON 可能是数组）→ 去空、去重、去结尾斜杠
+      const items = (Array.isArray(raw) ? raw : String(raw).split(/[\r\n,，]+/))
+        .map((s) => String(s ?? '').trim().replace(/\/+$/, ''))
+        .filter(Boolean)
+      const uniq = [...new Set(items)]
+      if (!uniq.length) return { ok: false, message: `${field.label} 至少要填一个地址` }
+      const max = field.maxItems ?? 10
+      if (uniq.length > max) return { ok: false, message: `${field.label} 最多 ${max} 个地址` }
+      const bad = uniq.find((s) => !isHttpUrl(s))
+      if (bad) return { ok: false, message: `${field.label} 里有不是 http(s):// 的地址：${bad}` }
+      return { ok: true, value: uniq }
     }
     case 'url': {
       const value = String(raw).trim()
@@ -254,6 +282,8 @@ export function secretState(path) {
 
 /** 给设置页的清单：字段定义 + 当前值 + **默认值**（placeholder 用）+ 是否被覆盖过 */
 export function fieldsForUi(overridden = []) {
+  /** 多值地址在界面上是「一行一个」的文本，所以数组统一转成换行串（存库仍是数组） */
+  const asText = (v) => (Array.isArray(v) ? v.join('\n') : v ?? '')
   return SETTINGS_FIELDS.map((field) => {
     const base = {
       ...field,
@@ -262,6 +292,9 @@ export function fieldsForUi(overridden = []) {
       default: getAtPath(defaultConfig, field.path) ?? null,
     }
     if (field.type === 'secret') return { ...base, value: null, ...secretState(field.path) }
+    if (field.type === 'list') {
+      return { ...base, default: asText(base.default), value: asText(getAtPath(config, field.path)) }
+    }
     return { ...base, value: getAtPath(config, field.path) ?? null }
   })
 }
@@ -271,7 +304,7 @@ export function fieldsForUi(overridden = []) {
 export const EXPORT_KIND = 'soraikahub-settings'
 export const EXPORT_VERSION = 1
 
-/** 导出当前生效值（含 .env 里配的）—— 对方导入后行为才一致 */
+/** 导出当前生效值 —— 对方导入后行为才一致 */
 export function buildExport({ includeSecrets = false } = {}) {
   return {
     app: 'soraika-hub',

@@ -21,6 +21,7 @@ import { config } from '../../config.js'
 import { fail } from '../../lib/errors.js'
 import { mikanToRow, releaseToItem } from '../../lib/format.js'
 import { logger } from '../../lib/logger.js'
+import { primaryBase, tryBases } from '../../lib/multi-source.js'
 
 /**
  * 抓某季排期 → anime 行数组
@@ -28,16 +29,21 @@ import { logger } from '../../lib/logger.js'
  * @param {string} season 春 / 夏 / 秋 / 冬
  */
 export async function fetchSeasonSchedule(year, season) {
-  const html = await getMikanSeasonPage(config.mikan.base, year, season, 3, (text) =>
-    // 空壳页校验：真季度页一定有番剧条目，一条都没有就是"这次没取到"（要重试，而不是当成空季）
-    (getSeasonAnimeList(text)?.length ?? 0) > 0,
+  const html = await tryBases(
+    'mikan',
+    (base) =>
+      getMikanSeasonPage(base, year, season, 3, (text) =>
+        // 空壳页校验：真季度页一定有番剧条目，一条都没有就是"这次没取到"（要重试，而不是当成空季）
+        (getSeasonAnimeList(text)?.length ?? 0) > 0,
+      ),
+    { tip: 'season' },
   )
   const list = getSeasonAnimeList(html)
 
   if (!Array.isArray(list) || list.length === 0) {
     // 上游返回了内容但解析不出条目 —— 多半是页面改版（选择器失效），归 PARSE 便于区分
     throw fail('PARSE', `Mikan 季度页（${year} ${season}）没有解析出任何番剧，可能页面结构变了`, {
-      url: `${config.mikan.base}/Home/BangumiCoverFlowByDayOfWeek`,
+      url: `${primaryBase('mikan')}/Home/BangumiCoverFlowByDayOfWeek`,
       htmlLength: html?.length ?? 0,
     })
   }
@@ -74,7 +80,7 @@ const profileInflight = new Map()
 async function loadProfile(mikanId) {
   let htmlLength = 0
   for (let attempt = 1; attempt <= PROFILE_ATTEMPTS; attempt++) {
-    const html = await getAnimeDetailPage(config.mikan.base, mikanId)
+    const html = await tryBases('mikan', (base) => getAnimeDetailPage(base, mikanId), { tip: 'profile' })
     const bangumiId = getAnimeBangumiId(html, { quiet: attempt > 1 })?.bangumiId ?? null
     const subgroups = getSubGroupList(html) ?? []
     // 真页面必有标题：标题都解析不出来 → 空壳页，重试
@@ -111,7 +117,7 @@ export async function fetchBgmIdByMikan(mikanId) {
  * @returns {Promise<Array<object>>}
  */
 export async function fetchSubgroupReleases(mikanId, subgroupRssId = null) {
-  const xml = await getAnimeRSSPage(config.mikan.base, mikanId, subgroupRssId)
+  const xml = await tryBases('mikan', (base) => getAnimeRSSPage(base, mikanId, subgroupRssId), { tip: 'rss' })
   const list = getAnimeReleaseFromRSS(xml)
   if (!Array.isArray(list)) return []
   return list.map(releaseToItem)
