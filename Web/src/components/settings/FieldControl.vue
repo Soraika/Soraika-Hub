@@ -92,7 +92,7 @@
 
         <!-- 时刻：点开是两列滚轮（时 / 分），和「时长」同一套手感 -->
         <button
-          v-if="field.type === 'time'"
+          v-else-if="field.type === 'time'"
           class="time-btn"
           type="button"
           data-popover-anchor
@@ -438,14 +438,18 @@ const providerMatches = computed(() => {
   return list.slice(0, 80)
 })
 
-/** 输入的名字不在目录里（且非空）→ 可以「添加」成自定义 */
-const canAddCustom = computed(
-  () => Boolean(typedName.value) && !providerList.value.some((p) => p.name === typedName.value),
-)
+/** 输入的名字不在目录里（且非空）→ 可以「添加」成自定义。
+ *  比较要**不分大小写**：输入 `deepseek` 时目录里已有 `DeepSeek`，
+ *  否则会同时出现「DeepSeek」和「＋ 添加「deepseek」」两条，看着像重复。 */
+const canAddCustom = computed(() => {
+  const typed = typedName.value.toLowerCase()
+  if (!typed) return false
+  return !providerList.value.some((p) => p.name.toLowerCase() === typed)
+})
 
 const isCurrentProvider = (item) =>
   normBase(item.baseUrl) === normBase(props.baseUrl) ||
-  (Boolean(typedName.value) && item.name === typedName.value)
+  (Boolean(typedName.value) && item.name.toLowerCase() === typedName.value.toLowerCase())
 
 /** 聚焦/点击输入框就展开候选（输入框本身是搜索框） */
 function openProviderPanel() {
@@ -1409,12 +1413,16 @@ function step(dir) {
   align-items: center;
   justify-content: center;
   width: 26px;
-  height: 100%;
+  height: 26px;
+  border-radius: var(--radius-sm);
   color: var(--text-tertiary);
   background: none;
   border: 0;
+  cursor: pointer;
+  transition: color var(--dur-fast), background var(--dur-fast);
 }
 .pick-caret:hover {
+  background: var(--bg-hover);
   color: var(--accent);
 }
 .pick-caret svg {

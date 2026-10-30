@@ -735,6 +735,14 @@ try {
     settingsStoreSource.includes('rowTests') && settingsStoreSource.includes('testRow'),
     '多源地址每一行有独立测试状态（不是只给整组一个状态）',
   )
+  check(
+    /testField[\s\S]{0,900}state:\s*'testing'/.test(settingsStoreSource),
+    '「测试全部」先把每条置成"测试中"（行上的转圈会动），结果回来再覆盖',
+  )
+  check(
+    /canAddCustom[\s\S]{0,260}toLowerCase\(\)/.test(controlSource),
+    '「添加「xxx」」的判定不分大小写（输入 deepseek 不会再冒出一条自定义，看着像重复）',
+  )
 
   check(
     controlSource.includes('v-if="unitOf"') &&

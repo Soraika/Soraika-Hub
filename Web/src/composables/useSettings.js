@@ -429,6 +429,19 @@ export function useSettings() {
     if (testStates.value[path] === 'testing') return undefined
     testStates.value = { ...testStates.value, [path]: 'testing' }
     testDetails.value = { ...testDetails.value, [path]: '正在连接…' }
+
+    /* 「测试全部」：先把**每条**都置成"测着呢"，行上的转圈才会动起来；
+       结果回来后由下面的 sources 合并覆盖。 */
+    const urls = String(value || '')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (urls.length) {
+      const pending = {}
+      for (const url of urls) pending[url] = { state: 'testing', detail: '正在连接…', ms: null }
+      rowTests.value = { ...rowTests.value, [path]: { ...(rowTests.value[path] || {}), ...pending } }
+    }
+
     try {
       const res = await testSetting(path, value)
       testStates.value = { ...testStates.value, [path]: res.ok ? 'success' : 'error' }

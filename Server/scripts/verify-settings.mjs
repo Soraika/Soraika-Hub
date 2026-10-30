@@ -212,6 +212,8 @@ try {
     catalogData?.providers?.some((p) => Array.isArray(p.models) && p.models.length > 0),
     '目录带模型名（还没填 Key 时界面也能先给候选）',
   )
+  const names = catalogData?.providers?.map((p) => p.name) ?? []
+  check(new Set(names).size === names.length, `同一家只出现一次（去重后 ${names.length} 家，无重名）`)
   check(
     settings.aiProviders.every((p) => typeof p.name === 'string' && /^https?:\/\//.test(p.baseUrl)),
     '供应商预设都有名称与可用地址',

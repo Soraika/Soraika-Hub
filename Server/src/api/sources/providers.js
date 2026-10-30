@@ -62,9 +62,20 @@ export async function listProviders({ log = logger } = {}) {
 
     if (!providers.length) throw new Error('目录里没有 OpenAI 兼容的供应商')
 
-    const value = { source: 'models.dev', fetchedAt: Date.now(), providers }
+    /** 同名去重：目录里同一个名字常挂着多个入口（eg. `deepseek` 与 `deepseek-coding-plan`），
+     *  对使用者来说就是"两个 DeepSeek"。保留地址更"正经"的那个（不含 coding / plan / vertex 之类的）。 */
+    const score = (p) => (/coding|plan|anthropic|vertex|gateway/i.test(p.baseUrl) ? 1000 : 0) + p.baseUrl.length
+    const byName = new Map()
+    for (const p of providers) {
+      const key = p.name.toLowerCase().replace(/\s+/g, '')
+      const prev = byName.get(key)
+      if (!prev || score(p) < score(prev)) byName.set(key, p)
+    }
+    const unique = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
+
+    const value = { source: 'models.dev', fetchedAt: Date.now(), providers: unique }
     cache = { at: Date.now(), value }
-    log.info({ providers: providers.length }, 'ai.providers ok')
+    log.info({ providers: unique.length, deduped: providers.length - unique.length }, 'ai.providers ok')
     return value
   } catch (err) {
     // 目录站挂了 / 断网：退回静态清单（含上一次成功的结果，如果有）
