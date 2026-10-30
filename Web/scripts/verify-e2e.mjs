@@ -542,13 +542,22 @@ try {
     settingsSource.includes('field.hint') && /:title="field\.hint/.test(settingsSource),
     '字段说明改成鼠标悬浮显示（行脚只留测试结果，表单不再像说明书）',
   )
-  /* 时长的**输入框与行外同一套写法**：显示 `1m 30s` 就照着填 `1m 30s`。
-     旧版是「数字 + 单位下拉」，等于逼人自己换算，还会出现"外面 7d、输入框里 604800000"。 */
+  /* 时长 = **多列滚轮**（用户要的形状）：`xx s xx ms` / `xx m xx s` / `xx h xx m` / `xx d xx h xx m`。
+     先前试过"输入框直接写 1m 30s"，但时长的量级从 350ms 到 7 天，滚轮才是"看得见、滚得动"的形态。 */
   check(
-    /function syncEditText[\s\S]{0,240}formatDuration\(props\.value\)/.test(controlSource) &&
-      /const parsed = parseDuration\(editText\.value, unitFactor\.value\)/.test(controlSource) &&
-      !controlSource.includes('onUnitChange'),
-    '时长输入与显示同一写法（`7d` / `1m 30s` / `350ms`），单位下拉已移除 —— 里外不会再打架',
+    controlSource.includes('class="wheels dur"') &&
+      /DUR_TIERS[\s\S]{0,200}\['s', 59, 1\][\s\S]{0,80}\['ms', 990, 10\]/.test(controlSource) &&
+      controlSource.includes("['d', 90, 1]"),
+    '时长弹层是多列滚轮，列按量级自动选（s·ms / m·s / h·m / d·h·m）',
+  )
+  check(
+    /function onDurScroll[\s\S]{0,600}total \+= n \* DUR_FACTOR\[col\.unit\]/.test(controlSource) &&
+      controlSource.includes('emit(\'update\', total)'),
+    '滚轮停下后按各列求和换算成毫秒提交（不是把某一列的数字当总量）',
+  )
+  check(
+    controlSource.includes('@wheel.prevent="durStep') && controlSource.includes('startDurDrag'),
+    '时长滚轮支持鼠标滚轮逐格 + 按住拖动',
   )
   check(
     !/已写入数据库|全部写入数据库/.test(settingsSource),
@@ -561,16 +570,15 @@ try {
      之前那套「按钮 → 弹层 → 加减号 / 滚轮 / 拖拽 / 单位下拉」占了一半代码，
      还因为"步长与单位推导各算各的"滚动时数字乱抖。轻量化的正解是**不自己造控件**。 */
   check(
-    !controlSource.includes('class="value-btn"') &&
-      controlSource.includes('commitNum') &&
-      !controlSource.includes('DURATION_PRESETS'),
-    '数值 / 时长就是输入框（`commitNum` 直接写值 / 单位）—— 界面里不再有"按钮 → 弹层"这个入口',
+    !controlSource.includes('DURATION_PRESETS') &&
+      controlSource.includes('class="stepper"') &&
+      controlSource.includes('class="wheels dur"'),
+    '编辑都在弹层里：数值 = 输入框 + 加减，时长 = 多列滚轮（行内只显示结果）',
   )
-  /* TODO 下次清理：模板里旧的数值弹层（`.stepper` / `.step-input` / 单位下拉）已成死代码，
-     删掉后把上面这条补上 `!controlSource.includes('class="stepper"')`，这里先如实留着。 */
+  /* 旧的 `commitNum`（文本写单位）已随滚轮方案删除；复合写法的解析能力仍在 utils 里被别处用 */
   check(
-    controlSource.includes('parseDuration') && /function commitNum/.test(controlSource),
-    '输入框直接写就行：`31`（按当前单位）或 `2m` / `500ms`（按写出来的单位）都认',
+    !/function commitNum/.test(controlSource) && !/function onUnitChange/.test(controlSource),
+    '旧的「文本换算 / 单位下拉」两条路径已清除（不留死代码）',
   )
   check(
     controlSource.includes('formatDuration(stepSize.value)') &&
@@ -603,10 +611,8 @@ try {
   /* 时长可以直接写单位：10s / 1.5m / 2h —— 不让人先把 10 秒换算成 10000 */
   /* 时长：**不再有单位下拉**，输入框直接写完整写法（显示什么样就能填什么样） */
   check(
-    !controlSource.includes('class="step-unit"') &&
-      controlSource.includes('placeholder="isDuration') &&
-      /parseDuration\(editText\.value/.test(controlSource),
-    '时长输入框直接写单位（`7d` / `1m 30s`），不再有「数值 + 单位下拉」两段式',
+    !controlSource.includes('class="step-unit"') && controlSource.includes('class="wheels dur"'),
+    '时长不再有「数值 + 单位下拉」两段式（换成多列滚轮 s·ms / m·s / h·m / d·h·m）',
   )
   check(
     parseDuration('1m 30s') === 90000 &&
@@ -642,7 +648,18 @@ try {
     controlSource.includes('commitEdit') && controlSource.includes('editText'),
     '交互界面里的数值输入失焦/回车即提交，解析不了就回滚',
   )
-  check(controlSource.includes('class="opt wide provider"') || /class="[^"]*provider"/.test(controlSource), '供应商：预设下拉（选中即填接口地址）')
+  /* AI 提供商：**选名字**（目录 199 家 + 自定义），带搜索；不是填 URL 的下拉 */
+  check(
+    controlSource.includes("field.type === 'provider'") &&
+      controlSource.includes('providerMatches') &&
+      controlSource.includes('pop-search') &&
+      controlSource.includes('新建自定义'),
+    'AI 提供商是「选提供商」：带搜索的目录 + 可新建自定义（把当前地址起个名字）',
+  )
+  check(
+    controlSource.includes("emit('pick-provider'") && controlSource.includes("emit('save-custom-provider'"),
+    '选中提供商同时写「提供商名 + 接口地址」；自定义只要求输入名称',
+  )
   check(controlSource.includes('field.models') && controlSource.includes('可用模型'), '模型：从接口读取候选列表')
   check(
     controlSource.includes('class="step-btn"') && controlSource.includes('stepSize'),
@@ -711,8 +728,9 @@ try {
     '单位换算回毫秒：界面 `10 m` → 入库 `600000`（库里永远是毫秒）',
   )
   check(
-    /const parsed = parseDuration\(editText\.value, unitFactor\.value\)/.test(controlSource),
-    '提交走 parseDuration（写了单位就按单位算，纯数字按当前单位）—— 不是把输入框里的数字原样提交',
+    /const parsed = parseDuration\(editText\.value, unitFactor\.value\)/.test(controlSource) ||
+      /function onDurScroll[\s\S]{0,600}DUR_FACTOR\[col\.unit\]/.test(controlSource),
+    '提交走换算（写单位就按单位算 / 滚轮按列求和），不是把某个数字原样提交',
   )
   check(
     toDisplayText(60000, 'm') === '1' &&

@@ -71,7 +71,7 @@ export const config = {
     missLimit: 3,
     /** 超限之后隔多久再试一次：万一 Mikan 后来补上了链接，还能自动接上（毫秒，默认 7 天） */
     missRetryMs: 7 * 24 * 60 * 60 * 1000,
-    /** 每日更新覆盖的年份（null = 当年；0 = 不限年份，谨慎：会遍历全库） */
+    /** 每日更新覆盖的年份（内部固定为当年；保留字段是为了回填任务能复用同一套查询） */
     staleYear: null,
     /**
      * 补档案时**顺手抓一次字幕组**（Mikan 详情页）
@@ -100,6 +100,10 @@ export const config = {
   ai: {
     baseUrl: trimSlash('https://api.deepseek.com/v1'),
     apiKey: '',
+    /** 只用于界面显示"用的是哪家"（真正生效的是 baseUrl）；从目录或自定义里选出来的名字 */
+    provider: '',
+    /** 自定义提供商：[{ name, baseUrl }] —— 给某个地址起个名字，下次能在下拉里直接选 */
+    customProviders: [],
     model: 'deepseek-chat',
     /** 单次调用超时：模型思考慢，比抓网页给得宽 */
     timeoutMs: 60000,

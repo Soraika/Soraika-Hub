@@ -1,6 +1,7 @@
 <template>
   <div
     v-if="open"
+    ref="root"
     class="popover"
     :class="[`align-${align}`, { 'width-anchor': width === 'anchor' }]"
     role="dialog"
@@ -11,17 +12,19 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 
 /**
  * 浮层（下拉 / 弹层）
  * ---------------------------------------------------------------------------
- * 设置页里「可点开选择」的交互统一由它承载（模型下拉、供应商下拉、时长与时刻的可视化选择）。
+ * 设置页里「可点开选择」的交互统一由它承载（模型下拉、供应商下拉、时长/时刻的可视化选择）。
  * 为什么不引组件库：项目已有自己的颜色/圆角/缓动令牌，引库会带进一整套平行样式与覆盖成本；
  * 这里只依赖 `--bg-dropdown` / `--shadow-lg` / `--radius` / `--dur`，视觉自然与全站一致。
  *
  * 关闭行为：点击外部、按 Esc、切换路由（组件卸载）都关闭。
- * 用法：父元素给 `position: relative`，本组件绝对定位在其下方。
+ * **「外部」= 不在本字段的 `.control` 容器里** —— 早先的实现是"跳过所有 `[data-popover-anchor]`"，
+ * 于是点另一个字段的输入框时，**上一个弹层不会关**（两个同时开着）。
+ * 现在只跳过"自己这一格"里的点击，点别处一律关闭。
  */
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -34,9 +37,16 @@ const props = defineProps({
 })
 const emit = defineEmits(['close'])
 
+const root = ref(null)
+
+/** 本浮层所属的那一格（`.control`）—— 用「是不是同一格」判断内外，而不是看属性 */
+function containerOf() {
+  return root.value?.parentElement || null
+}
+
 function onPointerDown(event) {
-  // 点在浮层内部（含触发按钮，用 data-popover-anchor 标记）不关闭
-  if (event.target.closest?.('.popover, [data-popover-anchor]')) return
+  const box = containerOf()
+  if (box && box.contains(event.target)) return
   emit('close')
 }
 

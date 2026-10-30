@@ -49,10 +49,23 @@
 
       <!-- 其余类型走「直接输入」（数值类不在这里 —— 它们是前面的按钮 + 点开的交互界面） -->
       <template v-else>
+        <!-- 提供商：**选名字**，不是填 URL。点开是带搜索的目录（199 家 + 自定义） -->
+        <button
+          v-if="field.type === 'provider'"
+          class="value-btn"
+          :class="{ empty: !providerLabel }"
+          type="button"
+          data-popover-anchor
+          @click="togglePanel"
+        >
+          <span class="value-text">{{ providerLabel }}</span>
+          <IconChevronDown :size="14" />
+        </button>
+
         <!-- 多源地址（Mikan / BGM 的多个入口）：可拖拽排序 + 可增删 + 每条单独测。
              顺序是配置的一部分（排在前面的先用），所以不能用一个多行文本框糊过去。 -->
         <SourceListEditor
-          v-if="field.type === 'list'"
+          v-else-if="field.type === 'list'"
           :items="listItems"
           :tests="rowTests"
           @update="onListUpdate"
@@ -150,9 +163,9 @@
     <!-- 时刻不再有弹层：改用原生 input[type=time]（滚轮/键盘/鼠标都是浏览器原生的） -->
 
     <!-- 弹层②：数值 / 时长的交互界面
-         · **输入框和行外是同一套写法**：显示 `1m 30s` 就照着写 `1m 30s`
-           （旧版是「数字 + 单位下拉」，等于让人自己换算，还容易出现"显示 7d、输入框里是 604800000"）
-         · 支持鼠标滚轮与左右拖动微调（调超时不该"输入—回车"来回折腾） -->
+         · **时长 = 多列滚轮**（按量级自动选列）：`xx s xx ms` / `xx m xx s` / `xx h xx m` / `xx d xx h xx m`
+           —— 滚动选数字，不让人心算毫秒，也不再有"输入框里是 604800000"这种事
+         · 其它数值：`[−] 输入 [＋]`，可滚轮 / 拖动微调 -->
     <PopoverPanel
       :open="panel === 'number'"
       width="anchor"
@@ -160,7 +173,37 @@
       :label="`${field.label} 调整`"
       @close="close"
     >
+      <!-- 时长：多列滚轮 -->
+      <div v-if="isDuration" class="wheels dur">
+        <template v-for="col in durCols" :key="col.unit">
+          <div
+            :ref="(el) => setWheel(col.unit, el)"
+            class="wheel"
+            @scroll="onDurScroll"
+            @wheel.prevent="durStep($event, col)"
+            @pointerdown="startDurDrag($event, col)"
+            @pointermove="onDurDrag"
+            @pointerup="endDurDrag"
+            @pointercancel="endDurDrag"
+          >
+            <span class="wheel-pad" />
+            <span
+              v-for="n in col.values"
+              :key="n"
+              class="wheel-item"
+              :class="{ on: durValue[col.unit] === n }"
+            >
+              {{ n }}
+            </span>
+            <span class="wheel-pad" />
+          </div>
+          <span class="wheel-unit">{{ col.unit }}</span>
+        </template>
+      </div>
+
+      <!-- 其它数值：输入框 + 加减 -->
       <div
+        v-else
         class="stepper"
         @wheel.prevent="onWheel"
         @pointerdown="startDrag"
@@ -173,7 +216,6 @@
           class="step-input"
           type="text"
           spellcheck="false"
-          :placeholder="isDuration ? '7d / 1m 30s / 350ms' : ''"
           :value="editText"
           @input="onEdit"
           @blur="commitEdit"
@@ -181,6 +223,7 @@
         />
         <button class="step-btn" type="button" :disabled="!canStepUp" aria-label="加" @click="step(1)">＋</button>
       </div>
+      <p v-if="isDuration" class="pop-hint">{{ readable }}</p>
     </PopoverPanel>
 
     <!-- 弹层③：模型列表（从接口实时获取，取不到则回落手动输入） -->
@@ -205,21 +248,49 @@
       </template>
     </PopoverPanel>
 
-    <!-- 弹层④：供应商预设（选中即填接口地址） -->
-    <PopoverPanel :open="panel === 'providers'" align="right" label="选择供应商" @close="close">
-      <p class="pop-title">常见供应商</p>
-      <button
-        v-for="item in providers"
-        :key="item.name"
-        class="opt wide provider"
-        :class="{ on: item.baseUrl === value }"
-        type="button"
-        @click="pick(item.baseUrl)"
-      >
-        <span class="provider-name">{{ item.name }}</span>
-        <span class="provider-url">{{ item.baseUrl }}</span>
-      </button>
+    <!-- 弹层⑤：提供商目录（搜索 + 自定义） -->
+    <PopoverPanel :open="panel === 'provider'" align="right" label="选择提供商" @close="close">
+      <p class="pop-title">
+        提供商
+        <span class="pop-note">{{ providerList.length }} 个</span>
+      </p>
+      <input
+        v-model="providerQuery"
+        class="pop-search"
+        type="text"
+        spellcheck="false"
+        placeholder="搜索名称或地址"
+      />
+      <div class="pop-list">
+        <button
+          v-for="item in providerMatches"
+          :key="`${item.name}-${item.baseUrl}`"
+          class="opt wide provider"
+          :class="{ on: isCurrentProvider(item) }"
+          type="button"
+          @click="chooseProvider(item)"
+        >
+          <span class="provider-name">{{ item.name }}</span>
+          <span class="provider-url">{{ item.baseUrl }}</span>
+        </button>
+        <p v-if="!providerMatches.length" class="pop-empty">没找到 —— 换个关键词，或在下面新建自定义</p>
+      </div>
+      <div class="pop-foot">
+        <input
+          v-model="newProviderName"
+          class="pop-input"
+          type="text"
+          spellcheck="false"
+          placeholder="给当前地址起个名字"
+        />
+        <button class="pop-link" type="button" :disabled="!newProviderName.trim()" @click="createCustom">
+          新建自定义
+        </button>
+      </div>
     </PopoverPanel>
+
+    <!-- 弹层④：旧的「供应商预设」已并入上面的**提供商目录**（那个带搜索、还能自定义），
+         这里不再保留第二份下拉 —— 同一件事只留一个入口。 -->
   </div>
 </template>
 
@@ -236,7 +307,7 @@ import {
 } from '@tabler/icons-vue'
 import PopoverPanel from '@/components/ui/PopoverPanel.vue'
 import SourceListEditor from './SourceListEditor.vue'
-import { formatDuration, parseDuration, unitForMs } from '@/utils/duration'
+import { formatDuration, unitForMs } from '@/utils/duration'
 
 /**
  * 字段控件：输入 + 可视化选择
@@ -268,10 +339,14 @@ const props = defineProps({
   modelsLoading: { type: Boolean, default: false },
   /** 供应商清单（来自 /api/ai/providers；取不到时是内置清单） */
   providers: { type: Array, default: () => [] },
+  /** 自定义提供商：[{ name, baseUrl }]（来自 ai.customProviders） */
+  customProviders: { type: Array, default: () => [] },
+  /** 当前生效的接口地址（新建自定义时用它） */
+  baseUrl: { type: String, default: '' },
   /** 多源列表里每一行的测试结果：url → { state, detail } */
   rowTests: { type: Object, default: () => ({}) },
 })
-const emit = defineEmits(['update', 'test', 'test-row', 'load-models'])
+const emit = defineEmits(['update', 'test', 'test-row', 'pick-provider', 'save-custom-provider', 'load-models'])
 
 /**
  * 多源地址：界面是数组、存库是换行文本（`mikan.bases` 的线上格式没变）
@@ -279,6 +354,53 @@ const emit = defineEmits(['update', 'test', 'test-row', 'load-models'])
  */
 const listItems = computed(() => String(props.value ?? '').split('\n'))
 const onListUpdate = (items) => emit('update', items.join('\n'))
+
+/* ── 提供商：目录（models.dev）+ 自定义 ──────────────────────────────────
+   下拉里是 **199 家 + 自定义**，所以必须有搜索框（滚一屏找一个供应商不现实）。
+   选中 = 同时写「提供商名」与「接口地址」；「新建自定义」= 把**当前地址**起个名字。 */
+const providerQuery = ref('')
+const newProviderName = ref('')
+const normBase = (url) => String(url || '').trim().toLowerCase().replace(/\/+$/, '')
+
+/** 自定义排前面（自己配的通常就是最常用的那个） */
+const providerList = computed(() => [
+  ...props.customProviders.map((p) => ({ name: p.name, baseUrl: p.baseUrl })),
+  ...props.providers.map((p) => ({ name: p.name, baseUrl: p.baseUrl })),
+])
+
+const providerMatches = computed(() => {
+  const q = providerQuery.value.trim().toLowerCase()
+  const list = q
+    ? providerList.value.filter((p) => `${p.name} ${p.baseUrl}`.toLowerCase().includes(q))
+    : providerList.value
+  return list.slice(0, 80)
+})
+
+/** 行内显示的名字：优先用存下来的提供商名，其次按地址反查，最后「未选择」 */
+const providerLabel = computed(() => {
+  const name = String(props.value || '').trim()
+  if (name) return name
+  const matched = providerList.value.find((p) => normBase(p.baseUrl) === normBase(props.baseUrl))
+  return matched?.name || ''
+})
+
+const isCurrentProvider = (item) =>
+  normBase(item.baseUrl) === normBase(props.baseUrl) ||
+  (Boolean(props.value) && item.name === String(props.value).trim())
+
+function chooseProvider(item) {
+  emit('pick-provider', { name: item.name, baseUrl: item.baseUrl })
+  providerQuery.value = ''
+  close()
+}
+
+function createCustom() {
+  const name = newProviderName.value.trim()
+  if (!name) return
+  emit('save-custom-provider', { name, baseUrl: props.baseUrl })
+  newProviderName.value = ''
+  close()
+}
 
 
 const MASK = '••••••••••••'
@@ -299,14 +421,18 @@ const panel = ref('none')
 const isDuration = computed(() => props.field.format === 'duration')
 /** 数值型（含时长）——它们有常显的加减号，不需要弹层 */
 const isNumberLike = computed(() => props.field.type === 'number')
-const panelType = () =>
-  props.field.type === 'time' ? 'time' : props.field.type === 'number' ? 'number' : props.field.models ? 'models' : 'providers'
+const panelType = () => {
+  if (props.field.type === 'provider') return 'provider'
+  if (props.field.type === 'time') return 'time'
+  if (props.field.type === 'number') return 'number'
+  return props.field.models ? 'models' : 'none'
+}
 /**
  * 后缀那个「弹出」按钮只给 模型 / 供应商 用。
  * 时刻与数值都有自己的行内按钮打开弹层（`time-btn` / `value-btn`），
  * 后缀再来一个就会出现**两个一样的图标**（时钟+时钟、调整+调整），纯重复。
  */
-const hasPanel = computed(() => Boolean(props.field.models) || Boolean(props.field.providers))
+const hasPanel = computed(() => Boolean(props.field.models) || props.field.type === 'provider')
 const panelIcon = computed(() => {
   if (props.field.type === 'time') return IconClock
   if (props.field.type === 'number') return IconAdjustmentsHorizontal
@@ -455,16 +581,121 @@ watch(
 )
 const unitFactor = computed(() => UNITS.find((u) => u.value === displayUnit.value)?.factor || 1)
 
+/* ── 时长：多列滚轮 ─────────────────────────────────────────────────────────
+   为什么是滚轮：时长跨度从 350ms 到 7 天，让人"心算毫秒"或者"输入 1m 30s"都是在跟机器较劲；
+   滚轮是**可滚动的数字列**，一眼看到 `7 d 0 h 0 m`，手指一动就改。
+   列按量级自动选（用户要的就是这个形状）：
+     < 1 分钟   → `s ms`
+     < 1 小时   → `m s`
+     < 1 天     → `h m`
+     ≥ 1 天     → `d h m`
+   高位优先：`durValue` 按列从大到小扣减，保证 7 天不会显示成 `168 h`。 */
+const DUR_FACTOR = { d: 86400000, h: 3600000, m: 60000, s: 1000, ms: 1 }
+const DUR_TIERS = [
+  { limit: 60_000, cols: [['s', 59, 1], ['ms', 990, 10]] },
+  { limit: 3_600_000, cols: [['m', 59, 1], ['s', 59, 1]] },
+  { limit: 86_400_000, cols: [['h', 23, 1], ['m', 59, 1]] },
+  { limit: Infinity, cols: [['d', 90, 1], ['h', 23, 1], ['m', 59, 1]] },
+]
+
+const durCols = computed(() => {
+  const ms = Number(props.value) || 0
+  const tier = DUR_TIERS.find((t) => ms < t.limit) || DUR_TIERS[DUR_TIERS.length - 1]
+  return tier.cols.map(([unit, max, step]) => ({
+    unit,
+    step,
+    max,
+    values: Array.from({ length: Math.floor(max / step) + 1 }, (_, i) => i * step),
+  }))
+})
+
+/** 当前值拆到各列（高位优先扣减） */
+const durValue = computed(() => {
+  let rest = Math.max(0, Number(props.value) || 0)
+  const out = {}
+  for (const col of durCols.value) {
+    const factor = DUR_FACTOR[col.unit]
+    const n = Math.min(Math.floor(rest / factor), col.max)
+    out[col.unit] = Math.floor(n / col.step) * col.step
+    rest -= out[col.unit] * factor
+  }
+  return out
+})
+
+const wheelEls = new Map()
+function setWheel(unit, el) {
+  if (el) wheelEls.set(unit, el)
+  else wheelEls.delete(unit)
+}
+
+/** 打开弹层 / 值被外部改 → 把每列滚到当前值（不要在滚动中调用，否则会跟手指打架） */
+function syncDurWheels() {
+  nextTick(() => {
+    for (const col of durCols.value) {
+      const el = wheelEls.get(col.unit)
+      if (!el) continue
+      el.scrollTop = ((durValue.value[col.unit] || 0) / col.step) * WHEEL_ITEM
+    }
+  })
+}
+watch(
+  () => panel.value,
+  (next) => {
+    if (next === 'number' && isDuration.value) syncDurWheels()
+  },
+)
+watch(
+  () => [props.field.path, props.value],
+  () => {
+    if (panel.value === 'number' && isDuration.value) syncDurWheels()
+  },
+)
+
+/** 滚动停下（140ms 内不再滚）再提交，避免每帧都发 */
+let durTimer = null
+function onDurScroll() {
+  clearTimeout(durTimer)
+  durTimer = setTimeout(() => {
+    let total = 0
+    for (const col of durCols.value) {
+      const el = wheelEls.get(col.unit)
+      const index = el ? Math.round(el.scrollTop / WHEEL_ITEM) : 0
+      const n = Math.min(Math.max(index * col.step, 0), col.max)
+      total += n * DUR_FACTOR[col.unit]
+    }
+    emit('update', total)
+  }, 140)
+}
+
+/** 滚轮一格 = 一格（浏览器一次 wheel ≈ 3 格，自己接管才选得准） */
+function durStep(event, col) {
+  const el = wheelEls.get(col.unit)
+  if (!el) return
+  el.scrollTop += (event.deltaY < 0 ? -1 : 1) * WHEEL_ITEM
+}
+
+/* 拖拽跟手：原生滚动区鼠标拖不动，得自己按位移改 scrollTop */
+let durDrag = null
+function startDurDrag(event, col) {
+  const el = wheelEls.get(col.unit)
+  if (!el) return
+  durDrag = { el, y: event.clientY, top: el.scrollTop }
+  el.setPointerCapture?.(event.pointerId)
+}
+function onDurDrag(event) {
+  if (!durDrag) return
+  durDrag.el.scrollTop = durDrag.top - (event.clientY - durDrag.y)
+}
+function endDurDrag() {
+  durDrag = null
+}
+
 const editText = ref('')
 const editingNum = ref(false)
 
-/** 把当前值写进输入框（**和行外同一套写法**：`7d` / `1m 30s` / `350ms`） */
+/** 数值类（到这里的只剩非时长）写进输入框 */
 function syncEditText() {
-  if (!isDuration.value) {
-    editText.value = props.value === null || props.value === undefined ? '' : String(props.value)
-    return
-  }
-  editText.value = formatDuration(props.value) || ''
+  editText.value = props.value === null || props.value === undefined ? '' : String(props.value)
 }
 
 /* 换单位 / 换字段 → **无条件**重算：点开弹层看到的第一眼必须和行外一致 */
@@ -492,24 +723,12 @@ function onEdit(event) {
 }
 
 /**
- * 失焦/回车提交
- * ---------------------------------------------------------------------------
- * 时长：直接按**写出来的单位**解析（`7d` / `1m 30s` / `350ms`）；写不出单位的纯数字按
- * 当前显示单位理解（`90` 在显示为 `s` 时 = 90 秒）。解析不了就回滚 ——
- * 不把垃圾发给后端，也不静默改成别的数。
+ * 数值输入框提交（时长走滚轮，不再经过这里）
+ * 解析不了就回滚 —— 不把垃圾发给后端，也不静默改成别的数。
  */
 function commitEdit() {
   editingNum.value = false
-  if (!isDuration.value) {
-    emit('update', editText.value)
-    return
-  }
-  const parsed = parseDuration(editText.value, unitFactor.value)
-  if (parsed === null) {
-    syncEditText()
-    return
-  }
-  emit('update', parsed)
+  emit('update', editText.value)
 }
 
 /* 弹层里的滚轮 / 拖动微调：调一个超时不值得「点开—输入—回车」走一遍 */
@@ -584,28 +803,10 @@ function openTimePicker(event) {
 }
 
 /**
- * 数值输入框提交
- * ---------------------------------------------------------------------------
- * 写 `31` → 按当前显示单位算（显示 `m` 就是 31 分钟）；写 `2m` / `500ms` / `1.5h`
- * → 按写出来的单位算。两种写法都认（`parseDuration` 就是干这个的），
- * 解析不了就**保留原值**，不把垃圾发给后端。
- */
-function commitNum(text) {
-  const raw = String(text ?? '').trim()
-  if (!raw) return props.value
-  const parsed = parseDuration(raw, unitFactor.value)
-  return parsed === null ? props.value : parsed
-}
-/**
  * 加减的步长
  * ---------------------------------------------------------------------------
- * 时长：**一档 = 一个当前显示单位**（显示 `m` 就 ±1 分钟、显示 `h` 就 ±1 小时）。
- * 为什么必须这样（踩过）：步长若不是当前单位的整数倍，滚一下就会得到"除不尽"的值，
- * 而显示单位是**按能不能整除推导**的 —— 于是 30 m 滚一下变成 1830 s（数字暴涨），
- * 再滚一下又凑巧整除跳回 31 m，数字和单位一起抖，看着就像坏了。
- * 步长按单位给，值永远是整数个单位，单位自然就稳住了。
- * 毫秒档太细（1ms），用 100ms 一档（350 → 450 仍是有意义的一步）。
- * 其它数字按数量级（1 / 10 / 100）—— 让「点一下」每次都是有意义的一步。
+ * 时长走滚轮，不经过这里；这里只服务普通数值：
+ * 按数量级给步长（1 / 10 / 100），让「点一下」每次都是有意义的一步。
  */
 const stepSize = computed(() => {
   if (isDuration.value) {
@@ -658,6 +859,13 @@ function step(dir) {
 }
 .shell.dirty {
   border-color: var(--accent);
+}
+/* 多源地址那一格：里面是**多行列表**，不能再钉死 40px 高（否则行会溢出、被裁掉/压住） */
+.shell.is-list {
+  height: auto;
+  min-height: 40px;
+  align-items: stretch;
+  padding: 4px 6px;
 }
 .shell.is-open {
   border-color: var(--accent);
@@ -1126,6 +1334,104 @@ function step(dir) {
 }
 .list-input:focus-visible {
   outline: none;
+}
+
+/* 提供商：整行是一个按钮（显示选中的名字 + 下拉箭头） */
+.value-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  height: 100%;
+  padding: 0 12px;
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  text-align: left;
+}
+.value-btn .value-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.value-btn svg {
+  color: var(--text-tertiary);
+}
+
+/* ── 提供商目录弹层：搜索 + 列表 + 新建自定义 ──────────────────────────── */
+.pop-note {
+  margin-left: 6px;
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+}
+.pop-search {
+  width: 100%;
+  height: 30px;
+  margin-bottom: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+}
+.pop-search:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.pop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 210px;
+  overflow-y: auto;
+}
+.pop-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.pop-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 0.76rem;
+}
+.pop-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.pop-link:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* 提供商未选时给个灰字，别让它看着像已配置 */
+.value-btn.empty .value-text {
+  color: var(--text-tertiary);
+}
+
+/* ── 时长滚轮：多列数字（`7 d 0 h 0 m`），列按量级自动增减 ─────────────── */
+.wheels.dur {
+  gap: 2px;
+}
+/* 列与单位标签成组：数字在左、单位在右，多列时像 `7 d 0 h 0 m` 那样读 */
+.wheel-unit {
+  display: flex;
+  align-items: center;
+  padding-right: 6px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  user-select: none;
 }
 
 /* 供应商选项：名字 + 地址两行 */

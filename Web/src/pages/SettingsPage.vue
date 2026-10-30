@@ -112,10 +112,14 @@
                 :models="models"
                 :models-loading="modelsLoading"
                 :providers="providers"
+                :custom-providers="customProviders"
+                :base-url="aiBaseUrl"
                 :row-tests="rowTests[field.path] || {}"
                 @update="setValue(field.path, $event)"
                 @test="testField(field.path, valueOf(field))"
                 @test-row="testRow(field.path, $event)"
+                @pick-provider="pickProvider"
+                @save-custom-provider="addCustomProvider"
                 @load-models="loadModels"
               />
 
@@ -260,6 +264,10 @@ const {
   testField,
   rowTests,
   testRow,
+  customProviders,
+  pickProvider,
+  addCustomProvider,
+  aiBaseUrl,
   setValue,
   revert,
   load,

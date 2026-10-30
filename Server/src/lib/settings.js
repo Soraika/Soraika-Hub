@@ -55,10 +55,16 @@ export const SETTINGS_FIELDS = [
   { path: 'bgm.timeoutMs', env: 'BGM_TIMEOUT_MS', group: 'sources', section: 'Bangumi 评分源', label: '请求超时', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true },
 
   // ── AI ──
-  { path: 'ai.baseUrl', env: 'AI_BASE_URL', group: 'ai', section: '接口与凭据', label: '接口地址', type: 'url', providers: true },
+  /* 先选**提供商**，再谈地址：使用者脑子里是"用哪家"，不是"哪个 URL"。
+     地址仍然存在 `ai.baseUrl`（运行时只认它），只是从基础配置挪进微调参数 ——
+     选提供商时会把它一起写掉。自定义提供商 = 给某个地址起个名字，存进 `ai.customProviders`。 */
+  { path: 'ai.provider', env: 'AI_PROVIDER', group: 'ai', section: '接口与凭据', label: '提供商', type: 'provider', allowNull: true, hint: '从目录里选，或自定义' },
   { path: 'ai.apiKey', env: 'AI_API_KEY', group: 'ai', section: '接口与凭据', label: 'API Key', type: 'secret', hint: '留空即关闭 AI 功能' },
   { path: 'ai.model', env: 'AI_MODEL', group: 'ai', section: '接口与凭据', label: '模型', type: 'text', models: true },
-  { path: 'ai.maxTokens', env: 'AI_MAX_TOKENS', group: 'ai', section: '接口与凭据', label: '最大输出', type: 'number', unit: 'token', min: 64, advanced: true },
+
+  { path: 'ai.baseUrl', env: 'AI_BASE_URL', group: 'ai', section: '高级接口', label: '接口地址', type: 'url', advanced: true, hint: '选提供商时自动填好' },
+  { path: 'ai.customProviders', env: 'AI_CUSTOM_PROVIDERS', group: 'ai', section: '高级接口', label: '自定义提供商', type: 'json', advanced: true, hint: '名称 + 地址的列表' },
+  { path: 'ai.maxTokens', env: 'AI_MAX_TOKENS', group: 'ai', section: '高级接口', label: '最大输出', type: 'number', unit: 'token', min: 64, advanced: true },
 
   { path: 'ai.timeoutMs', env: 'AI_TIMEOUT_MS', group: 'ai', section: '解析参数', label: '单次超时', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true },
   { path: 'ai.maxTitles', env: 'AI_MAX_TITLES', group: 'ai', section: '解析参数', label: '单批上限', type: 'number', unit: '条', min: 1, advanced: true, hint: '超出会切多批跑完，不丢数据' },
@@ -70,7 +76,8 @@ export const SETTINGS_FIELDS = [
   { path: 'worker.dailyAt', env: 'WORKER_DAILY_AT', group: 'worker', section: '调度', label: '每日更新时刻', type: 'time', hint: '每天在这个时间刷新当年档案' },
   { path: 'worker.gapMs', env: 'WORKER_GAP_MS', group: 'worker', section: '调度', label: '每条间隔', type: 'number', unit: 'ms', format: 'duration', min: 0, advanced: true, hint: '间隔过小可能被上游限流' },
   { path: 'worker.idleMs', env: 'WORKER_IDLE_MS', group: 'worker', section: '调度', label: '空闲休眠', type: 'number', unit: 'ms', format: 'duration', min: 100, advanced: true },
-  { path: 'worker.staleYear', env: 'WORKER_STALE_YEAR', group: 'worker', section: '调度', label: '覆盖年份', type: 'number', unit: '年', allowNull: true, advanced: true, hint: '留空表示仅当年，0 表示全部年份' },
+  /* 「覆盖年份」已删除：每日更新天然只刷当年那一批（谓词里写死当年），
+     放开成"可配置"只会让人误以为能跨年遍历全库 —— 那是另一个任务（回填），不属于日常调度。 */
   { path: 'worker.fetchSubgroups', env: 'WORKER_FETCH_SUBGROUPS', group: 'worker', section: '调度', label: '顺手抓字幕组', type: 'boolean', hint: '补档案时顺带抓字幕组' },
 
   { path: 'worker.missLimit', env: 'WORKER_MISS_LIMIT', group: 'worker', section: '失败退避', label: 'bgmId 重试上限', type: 'number', unit: '次', min: 1, advanced: true },
@@ -80,7 +87,8 @@ export const SETTINGS_FIELDS = [
 
   // ── 缓存与图片 ──
   { path: 'cacheTtlMs', env: 'CACHE_TTL_MS', group: 'cache', section: '数据缓存', label: '排期缓存', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true, hint: '缓存期内直接读库，不回源' },
-  { path: 'seasonLimit', env: 'SEASON_LIMIT', group: 'cache', section: '数据缓存', label: '单季入库上限', type: 'number', unit: '条', min: 1, advanced: true },
+  /* 「单季入库上限」已删除：它本来是防异常数据把首页拉爆的硬上限（300 条/季），
+     属于**代码里的护栏**，不是使用者该调的旋钮 —— 放进设置页只会让人以为"调小可以少缓存"。 */
   { path: 'image.dir', env: 'IMAGE_CACHE_DIR', group: 'cache', section: '海报图片', label: '落盘目录', type: 'text', restart: true, advanced: true, hint: '相对服务端工作目录' },
   { path: 'image.maxAgeMs', env: 'IMAGE_MAX_AGE_MS', group: 'cache', section: '海报图片', label: '浏览器缓存', type: 'number', unit: 'ms', format: 'duration', min: 0, advanced: true },
 
@@ -195,6 +203,34 @@ export function validateValue(field, raw) {
       const bad = uniq.find((s) => !isHttpUrl(s))
       if (bad) return { ok: false, message: `${field.label} 里有不是 http(s):// 的地址：${bad}` }
       return { ok: true, value: uniq }
+    }
+    case 'json': {
+      // 目前只有「自定义提供商」用：必须是 [{ name, baseUrl }] 且地址合法
+      let parsed = raw
+      if (typeof raw === 'string') {
+        try {
+          parsed = JSON.parse(raw)
+        } catch {
+          return { ok: false, message: `${field.label} 需要是 JSON（例如 [{"name":"我家网关","baseUrl":"https://x/v1"}]）` }
+        }
+      }
+      if (!Array.isArray(parsed)) return { ok: false, message: `${field.label} 需要是数组` }
+      const limit = field.maxItems ?? 30
+      if (parsed.length > limit) return { ok: false, message: `${field.label} 最多 ${limit} 条` }
+      const items = []
+      for (const entry of parsed) {
+        const name = String(entry?.name ?? '').trim()
+        const baseUrl = String(entry?.baseUrl ?? '').trim().replace(/\/+$/, '')
+        if (!name) return { ok: false, message: `${field.label} 里有一条没有名称` }
+        if (!isHttpUrl(baseUrl)) return { ok: false, message: `${field.label} 里「${name}」的地址不合法` }
+        items.push({ name, baseUrl })
+      }
+      return { ok: true, value: items }
+    }
+    case 'provider': {
+      const value = String(raw).trim()
+      if (value.length > 80) return { ok: false, message: `${field.label} 名称太长了（上限 80 字）` }
+      return { ok: true, value }
     }
     case 'url': {
       const value = String(raw).trim()

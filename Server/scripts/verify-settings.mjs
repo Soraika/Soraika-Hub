@@ -89,7 +89,7 @@ try {
   check(
     corePaths.length <= 10 &&
       corePaths.every((p) =>
-        /^(mikan\.bases|bgm\.bases|ai\.(baseUrl|apiKey|model)|worker\.(dailyAt|fetchSubgroups)|qb\.(base|apiKey))$/.test(p),
+        /^(mikan\.bases|bgm\.bases|ai\.(provider|apiKey|model)|worker\.(dailyAt|fetchSubgroups)|qb\.(base|apiKey))$/.test(p),
       ),
     `基础层就是必要配置那几项 → ${corePaths.join(' / ')}`,
   )
