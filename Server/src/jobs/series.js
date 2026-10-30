@@ -176,17 +176,22 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
     else setSeriesMeta(libRow.id, { seriesId, ...meta })
   }
 
+  // 季位按「本次真正能写的成员」连续编号 —— 不直接用走链给的序号。两个原因：
+  //   · 补骨架行有单趟上限（超上限的节点建不出来）→ 用链序号会留空洞（实测蜡笔小新剧场版 24/33）
+  //   · 链头本身是剧场版（被降级、不给季位）时，后面的正传不该从 2 开始（实测《弦音》）
+  let seq = 0
   for (const node of chain) {
     const libRow = libMap.get(node.id)
-    if (!libRow) continue
+    if (!libRow) continue // 没写进库（超上限 / 写库失败）→ 不占季位
+    const position = node.demoted ? null : ++seq
     writeMember(
       libRow,
       // 起点自己是剧场版/OVA（用户直接点开的）→ 不给季位，按番外类别写
       node.demoted
         ? { seriesRelation: node.demoted, seriesCheckedAt: now }
         : {
-            seriesIndex: node.index,
-            seriesRelation: node.index === 1 ? null : '续集', // 链头没有「相对前驱」的关系
+            seriesIndex: position,
+            seriesRelation: position === 1 ? null : '续集', // 链头没有「相对前驱」的关系
             seriesCheckedAt: now,
           },
       { position: true },

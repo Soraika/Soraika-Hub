@@ -167,6 +167,13 @@ try {
     '链位覆盖写（补进头部后季位重排）；根名仍用 COALESCE（不抹掉已有值）',
   )
 
+  /* 季位按「真正写进库的成员」连续编号，不直接用走链序号：
+     补骨架行有上限（蜡笔小新剧场版 24/33 会留空洞）、链头是剧场版时后面的正传不该从 2 开始（弦音） */
+  check(
+    /let seq = 0/.test(seriesJobSource) && /position = node\.demoted \? null : \+\+seq/.test(seriesJobSource),
+    '季位连续编号（不留空洞）；被降级的剧场版链头不占季位',
+  )
+
   /* ── 字幕组（资源区第一级）与资源列表（第二级）──────────────────────── */
   const sgRes = await get(`/api/anime/${card.id}/subgroups`)
   const subgroupData = sgRes.body?.data
