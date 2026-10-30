@@ -339,20 +339,28 @@ export async function classifyEpisodes(animeTitle, titles, options = {}) {
    结果落在 anime 表（series_* 那几列），所以这里**不需要另设缓存**。
    改了下面的 prompt 必须同步升 SERIES_PROMPT_VERSION（否则老库里的旧结果看起来「没生效」）。 */
 
-const SERIES_PROMPT_VERSION = 'v1'
+const SERIES_PROMPT_VERSION = 'v2'
 
 const SERIES_SYSTEM_PROMPT = `你在给一个动画系列做归档命名。
 
 只输出 JSON，不要 Markdown、不要解释：
-{ "namingStyle": "season", "rootTitle": "系列总名", "extras": [ { "bgmId": "221781", "relation": "OVA" } ] }
+{ "namingStyle": "season", "rootTitle": "系列总名", "allMovies": false,
+  "extras": [ { "bgmId": "221781", "relation": "OVA" } ] }
 
 namingStyle（只看【正传播出线】）：
 - "season"：各条其实是同一部作品的不同季（名字剥掉「第二季 / Season 2 / 2期 / ver.N / 裸数字后缀 / R」后基本一致）
 - "volume"：各条是不同标题的独立作品（化物语 / 伪物语 / 猫物语(黑) …）
 
+allMovies：**整条系列是不是「全是剧场版」**（没有 TV 正传季）。
+- true：所有成员都是电影（如「哆啦A梦：大雄的恐龙」「哆啦A梦：大雄的宇宙开拓史」… 一年一部的剧场版系列）
+- false：有 TV 正传季，或者判断不了
+注意：判断依据是「这些是电影」而不是名字里有没有「剧场版」三个字 ——
+标题写成「XX：大雄的恐龙」也算电影；只有全系列都是电影时才给 true。
+
 rootTitle：整个系列的目录名，中文 2~12 字、不带季标记。
 - season → 剥掉季标记后的作品名（如「进击的巨人」）
 - volume → 能概括全部的系列名（如「物语系列」）
+- allMovies → 剧场版系列的统称（如「哆啦A梦剧场版」）
 
 extras[].relation 只能取这 5 个值：
 - OVA：OAD / OVA / 番外篇（有正片内容）

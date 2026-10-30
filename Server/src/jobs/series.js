@@ -28,6 +28,7 @@ import { db, val } from '../db/index.js'
 import { ensureBgmStub, findByBgmIds, setSeriesMeta, setSeriesPosition } from '../db/anime.js'
 import { logger } from '../lib/logger.js'
 import { pickRepresentative, walkSeries } from '../lib/series.js'
+import { SEASON_START_MONTH } from '../lib/season.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -182,15 +183,32 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
     }
   }
 
-  // 季位按「本次真正能写的成员」连续编号 —— 不直接用走链给的序号。两个原因：
+  // 季位按「本次真正能写的成员」连续编号 —— 不直接用走链给的序号。三个原因：
   //   · 补骨架行有单趟上限（超上限的节点建不出来）→ 用链序号会留空洞（实测蜡笔小新剧场版 24/33）
   //   · 链头本身是剧场版（被降级、不给季位）时，后面的正传不该从 2 开始（实测《弦音》）
+  //   · **整条系列都是剧场版**时（AI 判 allMovies：哆啦A梦剧场版 31 部），番外也按年排进季位，
+  //     否则一半是 S01..S25、另一半全是「番外」，看着就是坏的
+  const movieOnly = ai.allMovies === true && (extras.length > 0 || chain.some((n) => n.demoted))
+  /** 排序键：air_date（YYYY-MM）优先，退到 年+季；都没有的排最后 */
+  const dateRank = (row) => {
+    const d = String(row?.air_date || '')
+    if (/^\d{4}-\d{2}/.test(d)) return Number(d.slice(0, 4)) * 100 + Number(d.slice(5, 7))
+    const y = Number(row?.year)
+    if (!y) return Number.MAX_SAFE_INTEGER
+    return y * 100 + (SEASON_START_MONTH[row?.season] ?? 1)
+  }
   const positions = new Map()
   let seq = 0
   for (const node of chain) {
     if (!libMap.has(node.id)) continue // 没写进库（超上限 / 写库失败）→ 不占季位
     if (node.demoted) continue
     positions.set(node.id, ++seq)
+  }
+  if (movieOnly) {
+    const rest = extras
+      .filter((e) => libMap.has(e.id) && !positions.has(e.id))
+      .sort((a, b) => dateRank(libMap.get(a.id)) - dateRank(libMap.get(b.id)))
+    for (const e of rest) positions.set(e.id, ++seq)
   }
   /**
    * 同一系列可能被**多条不同的链**写到（BGM 的关系是局部的：《我的英雄学院》剧场版之间互连、
@@ -218,12 +236,14 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
   for (const item of extras) {
     const libRow = libMap.get(item.id)
     if (!libRow) continue
+    const position = positions.get(item.id) ?? null
     writeMember(
       libRow,
       {
-        // 番外一律不给季位（清掉可能存在的旧值），类别代码判的优先（按名字认的比 AI 稳）
-        seriesIndex: null,
-        seriesRelation: item.category || extraRelation.get(item.id) || '其他',
+        // 番外默认不给季位（清掉可能存在的旧值）；「全剧场版系列」例外：按年排进季位
+        seriesIndex: movieOnly ? position : null,
+        seriesRelation:
+          (movieOnly ? '剧场版' : null) || item.category || extraRelation.get(item.id) || '其他',
         seriesCheckedAt: now,
       },
       { position: true },
@@ -235,7 +255,8 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
   const rootName = ai.rootTitle || rootRow?.series_root_title || repRow?.title_cn || repRow?.title || ''
   if (repRow) {
     writeMember(repRow, {
-      namingStyle: ai.namingStyle || rootRow?.naming_style,
+      // 全剧场版系列强制 volume：归档目录是「哆啦A梦剧场版/01 大雄的恐龙」，不是 S01
+      namingStyle: movieOnly ? 'volume' : ai.namingStyle || rootRow?.naming_style,
       seriesRootTitle: rootName,
       seriesCheckedAt: now,
     })
@@ -251,7 +272,8 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
       extras: extras.length,
       inLibrary: libMap.size,
       stubs: stubs.length,
-      namingStyle: ai.namingStyle || rootRow?.naming_style || null,
+      movieOnly,
+      namingStyle: movieOnly ? 'volume' : ai.namingStyle || rootRow?.naming_style || null,
       rootTitle: rootName,
       ...(conflicts.length ? { conflicts } : {}),
       ms: Date.now() - startedAt,

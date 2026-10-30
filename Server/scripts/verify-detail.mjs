@@ -161,17 +161,39 @@ try {
       /MAX_STUBS_PER_WALK/.test(seriesJobSource),
     '链上缺的成员建骨架行（只有 bgm_id + 名字），并有单趟上限防关系成网',
   )
-  /* 骨架行补进来之后季位要整体重排 → 链位必须是**覆盖**写（COALESCE 会留下旧值 → 两个 index=1） */
+  /* 骨架行补进来之后季位要整体重排 → 番外/全剧场版系列用**覆盖写**（setSeriesPosition）；
+     正传链位用 COALESCE（只填不改，避免多链并写撞出两个 index=1）+ 部分唯一索引兜底。 */
   check(
     /setSeriesPosition/.test(seriesJobSource) && /updatePosition/.test(animeDbSource),
-    '链位覆盖写（补进头部后季位重排）；根名仍用 COALESCE（不抹掉已有值）',
+    '番外用覆盖写（setSeriesPosition）；根名仍用 COALESCE（不抹掉已有值）',
   )
 
   /* 季位按「真正写进库的成员」连续编号，不直接用走链序号：
      补骨架行有上限（蜡笔小新剧场版 24/33 会留空洞）、链头是剧场版时后面的正传不该从 2 开始（弦音） */
   check(
-    /let seq = 0/.test(seriesJobSource) && /position = node\.demoted \? null : \+\+seq/.test(seriesJobSource),
+    /let seq = 0/.test(seriesJobSource) && /position = node\.demoted \? null : \+\+seq/.test(seriesJobSource) ||
+      /positions\.set\(node\.id, \+\+seq\)/.test(seriesJobSource),
     '季位连续编号（不留空洞）；被降级的剧场版链头不占季位',
+  )
+
+  /* 整条系列都是剧场版（哆啦A梦剧场版 33 部）→ 番外也按年排进季位，命名风格强制 volume，
+     否则一半 S01.. 一半「番外」，看着就是坏的。判据由 AI 给（allMovies）。 */
+  check(
+    /allMovies/.test(readFileSync(new URL('../src/lib/series.js', import.meta.url), 'utf8')) &&
+      /allMovies/.test(readFileSync(new URL('../src/api/pages/ai.js', import.meta.url), 'utf8')) &&
+      /movieOnly/.test(seriesJobSource),
+    '全剧场版系列：AI 判 allMovies → 番外按年占季位 + 命名风格 volume',
+  )
+
+  /* 「放送」这一行：没有排期字段（扫描行 / 系列里的骨架行）时用首播日期推，
+     否则从系列里点进老番/剧场版，整行会消失。 */
+  const { toAnimeDetail } = await import('../src/api/mappers/anime.js')
+  const dtoNoSeason = toAnimeDetail({ id: 1, title: 'x', year: null, season: null, air_date: '2004-10-05' })
+  const dtoBoth = toAnimeDetail({ id: 2, title: 'y', year: 2026, season: '夏', air_date: '2026-07-05' })
+  const dtoNone = toAnimeDetail({ id: 3, title: 'z', year: null, season: null, air_date: '' })
+  check(
+    dtoNoSeason.seasonText === '2004 秋' && dtoBoth.seasonText === '2026 夏' && dtoNone.seasonText === '',
+    `放送季有兜底：排期字段优先，没有就用首播日期推 → ${dtoNoSeason.seasonText} / ${dtoBoth.seasonText} / （空）`,
   )
 
   /* ── 字幕组（资源区第一级）与资源列表（第二级）──────────────────────── */

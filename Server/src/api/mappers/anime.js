@@ -8,6 +8,24 @@
 import { config } from '../../config.js'
 import { DAY_META, compactNumber, parseTags, posterUrlOf, ratingText, scoreText, themeTags } from '../../lib/format.js'
 import { primaryBase } from '../../lib/multi-source.js'
+import { seasonOf } from '../../lib/season.js'
+
+/**
+ * 放送季文案：`2026 夏`
+ * ---------------------------------------------------------------------------
+ * 两个来源，缺一不可：
+ *   ① 排期字段（year + season）—— Mikan 季度页给的最准
+ *   ② 首播日期（air_date）—— 扫描进来的老番 / 系列里的骨架行**没有排期字段**，
+ *      但它们有 Bangumi 的首播日期，能推出「2004 秋」
+ * 都没有 → 返回 ''（前端那一行不渲染）。**不能只认 ①**：否则从系列里点进老番/剧场版，
+ * 「放送」这一行会整行消失。
+ */
+function seasonTextOf(row) {
+  const year = Number(row.year) || Number(String(row.air_date || '').slice(0, 4)) || 0
+  if (!year) return ''
+  const season = row.season || seasonOf(row.air_date)
+  return `${year} ${season || ''}`.trim()
+}
 
 /**
  * 一行 anime 记录 → 详情面板数据
@@ -37,7 +55,9 @@ export function toAnimeDetail(row) {
     ratingText: hasScore ? ratingText(total) : '',
     watchingText: watching > 0 ? `${compactNumber(watching)}人在看` : '',
     epsText: row.total_episodes ? `${row.total_episodes} 话` : '',
-    seasonText: row.year ? `${row.year} ${row.season || ''}`.trim() : '',
+    // 放送季：优先用排期字段（Mikan 给的年+季）；没有（扫描行 / 骨架行）就用首播日期推
+    // —— 否则从系列里点进一部老番/剧场版，这一行会整行消失（用户看到「放送」不见了）
+    seasonText: seasonTextOf(row),
     weekdayText: DAY_META[row.weekday]?.dayLabel ?? '',
     airDate: row.air_date || '',
     tags: themes.length ? themes : rawTags.slice(0, 8),

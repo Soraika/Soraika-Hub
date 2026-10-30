@@ -184,6 +184,8 @@ export function pickRepresentative(chain, library) {
 export function normalizeSeriesAiOutput(raw, { extraIds = [] } = {}) {
   const allowed = new Set(extraIds.map(String))
   const namingStyle = NAMING_STYLES.includes(raw?.namingStyle) ? raw.namingStyle : null
+  // 「整条系列全是剧场版」（哆啦A梦剧场版 31 部这种）：番外也要按顺序占季位，见 jobs/series.js
+  const allMovies = raw?.allMovies === true || raw?.all_movies === true
   // 键名兜底：模型有时会给 root_title / rootName 这类写法（换个模型就容易出现）
   const rootTitle = String(raw?.rootTitle ?? raw?.root_title ?? raw?.rootName ?? '')
     .replace(/\s+/g, ' ')
@@ -196,7 +198,7 @@ export function normalizeSeriesAiOutput(raw, { extraIds = [] } = {}) {
     if (!bgmId || !allowed.has(bgmId)) continue
     extras.push({ bgmId, relation: EXTRA_CATEGORIES.includes(item?.relation) ? item.relation : '其他' })
   }
-  return { namingStyle, rootTitle, extras }
+  return { namingStyle, rootTitle, allMovies, extras }
 }
 
 /**

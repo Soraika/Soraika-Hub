@@ -402,7 +402,7 @@ export function findByBgmIds(bgmIds = []) {
   const placeholders = ids.map(() => '?').join(',')
   return db
     .prepare(`SELECT id, bgm_id, title, title_cn, series_id, series_index, series_relation,
-                     naming_style, series_root_title
+                     naming_style, series_root_title, air_date, year, season
                 FROM anime WHERE bgm_id IN (${placeholders})`)
     .all(...ids.map((v) => val(v)))
 }
