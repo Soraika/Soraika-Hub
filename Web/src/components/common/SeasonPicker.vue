@@ -168,10 +168,17 @@ function isDisabled(item, season) {
   return Array.isArray(item.disabled) && item.disabled.includes(season)
 }
 
-/** 整年都不可选（四个季全是未来）→ 年份行也灰掉禁用（展开没有意义） */
+/**
+ * 整年都不可选（四个季全是未来）→ 年份行也灰掉禁用（展开没有意义）
+ * ---------------------------------------------------------------------------
+ * 注意：`<script setup>` 里**没有**裸的 `seasons` 变量 —— 必须走 `props.seasons`。
+ * 之前这里写成 `seasons.length`，而它在**面板渲染时**才被调用 →
+ * 面板一渲染就抛 `ReferenceError`，表现就是"箭头转了但弹层永远不出现"
+ * （触发器在面板关着时渲染，所以看不出问题；SSR 验收也测不到）。
+ */
 function isYearDisabled(item) {
   const list = Array.isArray(item?.disabled) ? item.disabled : []
-  return list.length >= seasons.length
+  return list.length >= props.seasons.length
 }
 
 function pick(year, season) {

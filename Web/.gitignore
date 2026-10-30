@@ -40,3 +40,6 @@ __screenshots__/
 
 # 一次性调试脚本（长期保留的验证脚本叫 verify-*.mjs，要入库）
 scripts/tmp-*
+
+# 季选冒烟的临时构建产物（verify-picker 跑完会自己删）
+scripts/.picker-harness-dist

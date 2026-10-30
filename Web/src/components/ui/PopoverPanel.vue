@@ -104,6 +104,10 @@ onBeforeUnmount(() => bind(false))
 <style scoped>
 .popover {
   position: fixed;
+  /* **兜底坐标**：即使 JS 没算出位置（锚点缺失 / 计算异常），弹层也会出现在
+     视口左上偏下的位置 —— 宁可位置不对，也不能"什么都不显示"（那是没法排查的）。 */
+  top: 64px;
+  left: 16px;
   z-index: 60;
   min-width: 180px;
   /* 内容再宽也不许超出视口（不然靠右的字段一展开，左边就被顶出屏幕） */
