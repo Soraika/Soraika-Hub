@@ -28,6 +28,7 @@
             :data-year="item.year"
             :class="{ expanded: expandedYear === item.year }"
             :aria-expanded="expandedYear === item.year"
+            :disabled="isYearDisabled(item)"
             @click="toggleYear(item.year)"
           >
             <span class="year-text">{{ item.year }}</span>
@@ -53,6 +54,7 @@
                 :style="{ '--i': si }"
                 :class="{ active: isActive(item.year, season) }"
                 :disabled="isDisabled(item, season)"
+                :title="isDisabled(item, season) ? '该季度尚未到达' : ''"
                 :aria-current="isActive(item.year, season) ? 'true' : undefined"
                 @click="pick(item.year, season)"
               >
@@ -150,6 +152,12 @@ function isActive(year, season) {
 // 禁用项完全由数据驱动（哪些季度不可选由后端/上层决定）
 function isDisabled(item, season) {
   return Array.isArray(item.disabled) && item.disabled.includes(season)
+}
+
+/** 整年都不可选（四个季全是未来）→ 年份行也灰掉禁用（展开没有意义） */
+function isYearDisabled(item) {
+  const list = Array.isArray(item?.disabled) ? item.disabled : []
+  return list.length >= seasons.length
 }
 
 function pick(year, season) {
@@ -404,6 +412,11 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 }
 .season-chip:disabled {
   opacity: 0.35;
+  cursor: not-allowed;
+}
+/* 整年都没得选（四个季全是未来）→ 年份行也灰掉，展开没有意义 */
+.year-row:disabled {
+  opacity: 0.4;
   cursor: not-allowed;
 }
 

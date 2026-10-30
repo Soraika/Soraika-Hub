@@ -164,7 +164,7 @@ export async function ensurePosterSrc(row) {
     const src = img.large || img.common || img.medium || img.small || null
     if (src) {
       setPosterSource(row.id, { src })
-      logger.info({ id: row.id, bgmId: row.bgm_id }, 'img 图源来自 Bangumi（已回写）')
+      logger.info({ id: row.id, bgmId: row.bgm_id, source: 'bgm' }, 'img.src resolved')
     }
     return src
   } catch (err) {
@@ -203,7 +203,7 @@ export function warmPoster(row) {
       if (src) await downloadAndSave(row.id, src)
       warmed.add(row.id)
     } catch (err) {
-      logger.debug({ id: row.id, err: err.message }, 'img 预热失败（不影响请求）')
+      logger.debug({ id: row.id, err: err.message }, 'img.warm fail')
     } finally {
       warming.delete(row.id)
       warmingCount--

@@ -82,7 +82,7 @@ async function loadProfile(mikanId) {
     htmlLength = html?.length ?? 0
     if (attempt < PROFILE_ATTEMPTS) {
       const wait = 500 * 2 ** (attempt - 1)
-      logger.warn({ mikanId, attempt, htmlLength, wait }, 'mikan.profile 空壳页 → 重试')
+      logger.warn({ mikanId, attempt, htmlLength, waitMs: wait }, 'mikan.profile retry')
       await sleep(wait)
     }
   }

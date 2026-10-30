@@ -61,7 +61,7 @@ async function fetchWithTimeOut(fetchUrl, tip, retries = 3, validate = null) {
     }
     if (validate && !validate(html)) {
       logger.warn({ tip, url: finalUrl.href, htmlLength: html.length }, 'mikan.fetch validate-fail');
-      throw new Error('页面内容校验未通过（多半是上游返回了空壳页）');
+      throw new Error(`页面内容校验失败：未解析到预期节点（${tip}）`);
     }
 
     logger.debug(

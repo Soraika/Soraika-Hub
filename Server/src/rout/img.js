@@ -69,7 +69,7 @@ imgRouter.get('/img/anime/:id', async (req, res, next) => {
 
     // ② 定图源：库里存的优先（那是当初选定的那张），没有就问 Bangumi 要一次
     const src = row.poster_src || (await ensurePosterSrc(row))
-    if (!src) throw fail('NOT_FOUND', `id=${id} 没有可用海报（库里没存、Bangumi 也没给）`)
+    if (!src) throw fail('NOT_FOUND', `id=${id} 没有可用海报：库内与 Bangumi 均无封面`)
 
     // ③ 回源 → 校验 → 落盘 → 回写（与列表/详情的后台预热共用同一套实现）
     try {
@@ -78,7 +78,7 @@ imgRouter.get('/img/anime/:id', async (req, res, next) => {
       return res.send(buf)
     } catch (err) {
       // ④ 我们抓不动（防盗链 / 图床挂 / 图已失效）→ 把原图地址交给浏览器自己取
-      logger.warn({ id, src, err: err.message }, 'img 回源失败 → 302 交浏览器')
+      logger.warn({ id, src, err: err.message, action: 'redirect' }, 'img.fetch fail')
       return res.redirect(302, src)
     }
   } catch (err) {

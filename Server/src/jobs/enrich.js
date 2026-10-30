@@ -68,7 +68,7 @@ export async function enrichOne(row, log = logger) {
       // 每分钟白打一次上游，把 worker 的失败计数刷满。
       if (/HTTP 404/.test(String(err?.message || '')) || err?.detail?.status === 404) {
         markBgmMiss(row.id)
-        log.warn({ id: row.id, mikanId: row.mikan_id }, 'worker.enrich mikan-not-found（放弃重试）')
+        log.warn({ id: row.id, mikanId: row.mikan_id, status: 404 }, 'worker.enrich mikan-not-found')
         return 'noBgmId'
       }
       throw err

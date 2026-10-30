@@ -86,6 +86,16 @@
 
 **不重复造轮子**：日志用成熟的 `pino`（logger）+ `pino-http`（请求日志中间件）—— 请求 id、耗时、状态码序列化它们都做好了，别自己写中间件。
 
+**消息文案必须严谨**（这条被用户点过名）：
+
+- 格式固定 `模块.动作 结果`，全小写英文 —— `worker.enrich ok`、`img.fetch fail`、`mikan.profile retry`
+- **消息里不写中文句子、不写箭头、不写"多半/大概/也没给"这类口语**；
+  解释与原因放**字段**或**代码注释**里，例如
+  `log.warn({ id, mikanId, fallback: 'all' }, 'anime.subgroups detail-404')`
+- **错误文案（会回给前端的 `error.message`）同样要严谨**：一句话说清"哪里、什么、怎么办"，
+  不写推测口吻 —— ✅ `页面内容校验失败：未解析到预期节点（AnimeDetailPage）`，
+  ❌ `页面内容校验未通过（多半是上游返回了空壳页）`
+
 - **基础 logger**：`lib/logger.js` 里的 pino 单例；`LOG_LEVEL` 控级别，开发用 `pino-pretty` 单行彩色，`NODE_ENV=production` 输出 JSON 供采集
 - **请求日志**：`pino-http` 挂在 `index.js` 装配处，自动注入 `req.log`（带 requestId），业务代码不手动打印请求信息
 - **服务层接收可选 logger**：签名写 `{ log = logger }`；请求路径传 `req.log`（同一次请求的日志靠 requestId 串起来），后台任务用默认 logger

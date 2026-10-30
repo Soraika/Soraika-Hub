@@ -107,7 +107,7 @@ export async function getAnimeSubgroups(id, { log = logger } = {}) {
     // 而它们的**资源 feed 还活着**（514 / 144 / 12 条）。所以这里退化成「全部字幕组」一项：
     // 前端选它 → `/releases?subgroupId=all` → 全量 feed，照样能取资源（只是没法按组筛）。
     if (/HTTP 404/.test(String(err?.message || ''))) {
-      log.warn({ id, mikanId: row.mikan_id }, 'anime.subgroups detail-404 → 只给「全部字幕组」')
+      log.warn({ id, mikanId: row.mikan_id, fallback: 'all' }, 'anime.subgroups detail-404')
       return { items: [{ id: 'all', name: '全部字幕组', mikanId: '', rssId: '' }], source: 'all-only' }
     }
     log.warn({ id, mikanId: row.mikan_id, err: err.message }, 'anime.subgroups fetch-fail')
@@ -134,9 +134,9 @@ export async function getAnimeSeries(id, { log = logger } = {}) {
     const outcome = await fillSeriesFor(row, { log })
     if (outcome === 'done') {
       row = findById(numId) ?? row
-      log.info({ id: numId }, 'anime.series 现场补齐')
+      log.info({ id: numId, source: 'on-demand' }, 'anime.series fill ok')
     } else {
-      log.debug({ id: numId, outcome }, 'anime.series 现场补齐未成（照现状返回）')
+      log.debug({ id: numId, outcome }, 'anime.series fill skipped')
     }
   }
 
@@ -227,7 +227,7 @@ export async function getSubgroupReleases(id, subgroupRssId, { log = logger } = 
       signature: signature || null,
     }
   } catch (err) {
-    log.warn({ id, rssId: want, err: err.message }, 'anime.releases claim-fail（退回单组 feed）')
+    log.warn({ id, rssId: want, err: err.message, fallback: 'subgroup' }, 'anime.releases claim fail')
     return { ...base, items: own, total: own.length, source: 'subgroup' }
   }
 }

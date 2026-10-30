@@ -36,7 +36,7 @@ function dropLegacySubgroupLinks() {
   if (has('anime_subgroup')) {
     const links = db.prepare('SELECT COUNT(*) AS n FROM anime_subgroup').get().n
     db.exec('DROP TABLE IF EXISTS anime_subgroup')
-    logger.warn({ links }, 'db.migrate drop-anime_subgroup（映射改为每次现取）')
+    logger.warn({ links }, 'db.migrate drop anime_subgroup')
   }
 
   if (has('subgroup')) {
@@ -44,7 +44,7 @@ function dropLegacySubgroupLinks() {
     if (cols.has('anime_id')) {
       const rows = db.prepare('SELECT COUNT(*) AS n FROM subgroup').get().n
       db.exec('DROP TABLE IF EXISTS subgroup') // 老结构：重建为纯字典（schema.sql 会建回来）
-      logger.warn({ rows }, 'db.migrate rebuild-subgroup-dict（老结构重建为纯字典）')
+      logger.warn({ rows }, 'db.migrate rebuild subgroup dict')
     }
   }
 }
