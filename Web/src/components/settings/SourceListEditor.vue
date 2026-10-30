@@ -265,6 +265,21 @@ function reset() {
 .src-btn.danger:hover:not(:disabled) {
   color: var(--danger, #f85149);
 }
+/* 逐条测试的转圈（**必须自带**：`.mini-spinner` 的样式是 FieldControl 的 scoped 样式，
+   作用不到这个组件里 —— 之前"测试全部看不到动画"就是这个原因） */
+.mini-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin var(--dur-slow, 0.9s) linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
 .src-foot {
   display: flex;
   align-items: center;

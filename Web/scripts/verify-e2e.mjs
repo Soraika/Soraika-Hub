@@ -682,6 +682,10 @@ try {
     controlSource.includes("emit('pick-provider'") && controlSource.includes('models: item.models'),
     '选中提供商时把该家的模型名一起带过去（下面的参数自动补齐）',
   )
+  check(
+    controlSource.includes('prov-state') && controlSource.includes('已配置') && controlSource.includes('待填 Key'),
+    '提供商列表用「图标 + 文字 + 颜色」标出状态：已配置 / 待填 Key',
+  )
   check(controlSource.includes('field.models') && controlSource.includes('可用模型'), '模型：从接口读取候选列表')
   check(
     controlSource.includes('class="step-btn"') && controlSource.includes('stepSize'),
@@ -736,8 +740,17 @@ try {
     '多源地址每一行有独立测试状态（不是只给整组一个状态）',
   )
   check(
-    /testField[\s\S]{0,900}state:\s*'testing'/.test(settingsStoreSource),
-    '「测试全部」先把每条置成"测试中"（行上的转圈会动），结果回来再覆盖',
+    /async function testEach[\s\S]{0,900}state:\s*'testing'/.test(settingsStoreSource),
+    '「测试全部」先把每条置成"测试中"（行上的转圈会动），谁先回来谁先变',
+  )
+  check(
+    /async function testEach\(/.test(settingsStoreSource) &&
+      /Promise\.all\([\s\S]{0,400}testSetting\(path, url\)/.test(settingsStoreSource),
+    '「测试全部」是**逐条并发**：谁先回来谁先显示 ms（不等全部测完）',
+  )
+  check(
+    listEditorSource.includes('@keyframes spin') && listEditorSource.includes('.mini-spinner'),
+    '多源列表自带转圈样式（scoped 样式跨组件不生效 —— 之前"测试中看不到动画"就是它）',
   )
   check(
     /canAddCustom[\s\S]{0,260}toLowerCase\(\)/.test(controlSource),

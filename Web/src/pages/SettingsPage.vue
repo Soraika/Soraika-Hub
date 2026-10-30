@@ -113,6 +113,7 @@
                 :models-loading="modelsLoading"
                 :providers="providers"
                 :base-url="aiBaseUrl"
+                :has-key="aiKeyConfigured"
                 :row-tests="rowTests[field.path] || {}"
                 @update="setValue(field.path, $event)"
                 @test="testField(field.path, valueOf(field))"
@@ -264,6 +265,7 @@ const {
   testRow,
   pickProvider,
   aiBaseUrl,
+  aiKeyConfigured,
   setValue,
   revert,
   load,

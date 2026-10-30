@@ -139,10 +139,15 @@ export function useSettings() {
   /** 模型列表：懒加载（点开模型下拉时才向接口要；换供应商后自动刷新） */
   const models = ref([])
   const modelsLoading = ref(false)
-  /** 目前打算用的 AI 接口地址（草稿优先）—— 模型列表要按**它**去取，而不是按已保存的值 */
+  /** 当前接口地址（草稿优先）—— 供应商/模型的候选都按它取 */
   const aiBaseUrl = computed(() => {
     if ('ai.baseUrl' in draft.value) return String(draft.value['ai.baseUrl'] || '')
     return String(fieldByPath.value.get('ai.baseUrl')?.value || '')
+  })
+  /** 这台机器上填没填 Key（草稿优先；后端只回「配没配」不回明文） */
+  const aiKeyConfigured = computed(() => {
+    if ('ai.apiKey' in draft.value) return String(draft.value['ai.apiKey'] || '').trim().length > 0
+    return Boolean(fieldByPath.value.get('ai.apiKey')?.hasValue)
   })
   /** 供应商清单：走社区维护的目录（models.dev，200+ 家），取不到就用后端内置的那份 */
   const providers = ref([])
@@ -425,52 +430,105 @@ export function useSettings() {
    * @param {string} path
    * @param {string} value
    */
-  async function testField(path, value) {
-    if (testStates.value[path] === 'testing') return undefined
-    testStates.value = { ...testStates.value, [path]: 'testing' }
-    testDetails.value = { ...testDetails.value, [path]: '正在连接…' }
+/**
+ * 「测试全部」= **逐条并发**，谁先回来谁先显示
+ * ---------------------------------------------------------------------------
+ * 为什么不复用后端那个批量接口：它是**串行**测完才一次性返回，
+ * 结果是"点了之后一片空白，两秒后所有行一起变"。这里每个地址各发一次请求，
+ * 谁先通谁先出 ms，行上的转圈也能各自走完。
+ */
+async function testEach(path, urls) {
+  const startedAt = Date.now()
+  testStates.value = { ...testStates.value, [path]: 'testing' }
+  testDetails.value = { ...testDetails.value, [path]: '正在逐个测试…' }
 
-    /* 「测试全部」：先把**每条**都置成"测着呢"，行上的转圈才会动起来；
-       结果回来后由下面的 sources 合并覆盖。 */
-    const urls = String(value || '')
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean)
-    if (urls.length) {
-      const pending = {}
-      for (const url of urls) pending[url] = { state: 'testing', detail: '正在连接…', ms: null }
-      rowTests.value = { ...rowTests.value, [path]: { ...(rowTests.value[path] || {}), ...pending } }
-    }
+  const pending = {}
+  for (const url of urls) pending[url] = { state: 'testing', detail: '正在连接…', ms: null }
+  rowTests.value = { ...rowTests.value, [path]: { ...(rowTests.value[path] || {}), ...pending } }
 
-    try {
-      const res = await testSetting(path, value)
-      testStates.value = { ...testStates.value, [path]: res.ok ? 'success' : 'error' }
-      // 成功就说「成功 + 通过条数 + 耗时」（绿），别把 200 这种状态码甩给使用者看；
-      // 失败才需要具体原因（带上状态码，方便排错）。耗时统一成 `1s 234ms` 这种写法。
-      testDetails.value = { ...testDetails.value, [path]: describeTest(res) }
-
-      /* 「测试全部」也要把**每条的结果落到行上**（图标 + ms），
-         否则用户只看到底下一句「1/2 通过」，不知道是哪条挂了。 */
-      if (Array.isArray(res.sources) && res.sources.length) {
-        const rows = {}
-        for (const item of res.sources) {
-          rows[item.base] = {
-            state: item.ok ? 'success' : 'error',
-            detail: item.ok
-              ? `成功 · ${formatDuration(item.ms)}`
-              : `失败：${item.reason || `HTTP ${item.status}`}（${formatDuration(item.ms)}）`,
-            ms: item.ms ?? null,
-          }
+  const results = []
+  await Promise.all(
+    urls.map(async (url) => {
+      const put = (entry) => {
+        rowTests.value = {
+          ...rowTests.value,
+          [path]: { ...(rowTests.value[path] || {}), [url]: entry },
         }
-        rowTests.value = { ...rowTests.value, [path]: { ...(rowTests.value[path] || {}), ...rows } }
       }
-      return res
-    } catch (err) {
-      testStates.value = { ...testStates.value, [path]: 'error' }
-      testDetails.value = { ...testDetails.value, [path]: err.message }
-      return undefined
-    }
+      try {
+        const res = await testSetting(path, url)
+        put({
+          state: res.ok ? 'success' : 'error',
+          detail: describeTest(res),
+          ms: res.ms ?? null,
+        })
+        results.push({ base: url, ...res })
+      } catch (err) {
+        put({ state: 'error', detail: err.message, ms: null })
+        results.push({ base: url, ok: false, status: 0, ms: 0, reason: err.message })
+      }
+    }),
+  )
+
+  const passed = results.filter((r) => r.ok).length
+  const ok = passed > 0
+  testStates.value = { ...testStates.value, [path]: ok ? 'success' : 'error' }
+  testDetails.value = {
+    ...testDetails.value,
+    [path]: ok
+      ? `成功 · ${passed}/${urls.length} 通过 · 累计 ${formatDuration(Date.now() - startedAt)}`
+      : `失败：${urls.length} 个地址都不通`,
   }
+  return { ok, status: 0, ms: Date.now() - startedAt, detail: `${passed}/${urls.length} 通过`, sources: results }
+}
+
+/**
+ * 测试某个地址通不通（设置页每行右边的插头按钮）
+ * 用「输入框里的值」测（还没保存也能先试）；结果状态供按钮显示插头/转圈/对勾/叉
+ * @param {string} path
+ * @param {string} value
+ */
+async function testField(path, value) {
+  if (testStates.value[path] === 'testing') return undefined
+
+  const urls = String(value || '')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  // 多源列表：逐条并发，结果各自落到自己的行上
+  if (urls.length > 1) return testEach(path, urls)
+
+  testStates.value = { ...testStates.value, [path]: 'testing' }
+  testDetails.value = { ...testDetails.value, [path]: '正在连接…' }
+
+  try {
+    const res = await testSetting(path, value)
+    testStates.value = { ...testStates.value, [path]: res.ok ? 'success' : 'error' }
+    // 成功就说「成功 + 通过条数 + 耗时」（绿），别把 200 这种状态码甩给使用者看；
+    // 失败才需要具体原因（带上状态码，方便排错）。耗时统一成 `1s 234ms` 这种写法。
+    testDetails.value = { ...testDetails.value, [path]: describeTest(res) }
+
+    /* 单条也要把结果落到"那一行"上（有些 list 字段只有一条地址走这条路径） */
+    if (Array.isArray(res.sources) && res.sources.length) {
+      const rows = {}
+      for (const item of res.sources) {
+        rows[item.base] = {
+          state: item.ok ? 'success' : 'error',
+          detail: item.ok
+            ? `成功 · ${formatDuration(item.ms)}`
+            : `失败：${item.reason || `HTTP ${item.status}`}（${formatDuration(item.ms)}）`,
+          ms: item.ms ?? null,
+        }
+      }
+      rowTests.value = { ...rowTests.value, [path]: { ...(rowTests.value[path] || {}), ...rows } }
+    }
+    return res
+  } catch (err) {
+    testStates.value = { ...testStates.value, [path]: 'error' }
+    testDetails.value = { ...testDetails.value, [path]: err.message }
+    return undefined
+  }
+}
 
   /**
    * 导出并下载
@@ -501,6 +559,7 @@ export function useSettings() {
     providerModels,
     pickProvider,
     aiBaseUrl,
+    aiKeyConfigured,
     rowTests,
     testRow,
     loading,

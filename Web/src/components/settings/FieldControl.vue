@@ -339,7 +339,15 @@
           type="button"
           @click="chooseProvider(item)"
         >
-          <span class="provider-name">{{ item.name }}</span>
+          <span class="provider-name">
+            {{ item.name }}
+            <!-- 状态用「图标 + 文字 + 颜色」三重区分：选中的那家配没配 Key 一眼可见 -->
+            <span v-if="isCurrentProvider(item)" class="prov-state" :class="hasKey ? 'ok' : 'todo'">
+              <IconCircleCheck v-if="hasKey" :size="12" />
+              <IconAlertCircle v-else :size="12" />
+              {{ hasKey ? '已配置' : '待填 Key' }}
+            </span>
+          </span>
           <span class="provider-url">{{ item.baseUrl }}</span>
         </button>
         <p v-if="!providerMatches.length && !canAddCustom" class="pop-empty">没有匹配 —— 换个关键词</p>
@@ -361,6 +369,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import {
   IconAdjustmentsHorizontal,
+  IconAlertCircle,
   IconChevronDown,
   IconCircleCheck,
   IconCircleX,
@@ -405,6 +414,8 @@ const props = defineProps({
   providers: { type: Array, default: () => [] },
   /** 当前生效的接口地址（自定义 / 按地址反查名字用） */
   baseUrl: { type: String, default: '' },
+  /** 这台机器上到底填没填 Key（决定列表里显示「已配置」还是「待填 Key」） */
+  hasKey: { type: Boolean, default: false },
   /** 多源列表里每一行的测试结果：url → { state, detail } */
   rowTests: { type: Object, default: () => ({}) },
 })
@@ -1494,8 +1505,30 @@ function step(dir) {
   gap: 2px;
 }
 .provider-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: inherit;
   font-size: 0.8rem;
+}
+/* 「已配置 / 待填 Key」：图标 + 文字 + 颜色，三重区分 */
+.prov-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 0.64rem;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.prov-state.ok {
+  color: var(--status-success, #3fb950);
+  background: color-mix(in srgb, var(--status-success, #3fb950) 16%, transparent);
+}
+.prov-state.todo {
+  color: var(--status-warning, #d29922);
+  background: color-mix(in srgb, var(--status-warning, #d29922) 16%, transparent);
 }
 .provider-url {
   color: var(--text-tertiary);
