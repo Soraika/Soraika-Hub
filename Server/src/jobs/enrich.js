@@ -142,7 +142,7 @@ async function applySubject(bgmId, row, log, startedAt) {
   const movieSeriesId = isMovieOnlySeries(row.id)
   if (movieSeriesId) {
     try {
-      renumberMovieSeries(movieSeriesId, { log })
+      await renumberMovieSeries(movieSeriesId, { log })
     } catch (err) {
       log.warn({ id: row.id, seriesId: movieSeriesId, err: err.message }, 'worker.enrich renumber fail')
     }

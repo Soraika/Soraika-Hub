@@ -22,10 +22,18 @@
 import { pathToFileURL } from 'node:url'
 import { classifySeries } from '../api/pages/ai.js'
 import { loadStoredSettings } from '../api/pages/settings.js'
-import { fetchRelatedSubjects } from '../api/sources/bgm.js'
+import { fetchRelatedSubjects, fetchSubject } from '../api/sources/bgm.js'
 import { config } from '../config.js'
 import { db, val } from '../db/index.js'
-import { ensureBgmStub, findByBgmIds, listSeriesMembers, resetSeriesPositions, setSeriesMeta, setSeriesPosition } from '../db/anime.js'
+import {
+  ensureBgmStub,
+  findByBgmIds,
+  listSeriesMembers,
+  resetSeriesPositions,
+  setSeriesMeta,
+  setSeriesPosition,
+  updateAirDate,
+} from '../db/anime.js'
 import { logger } from '../lib/logger.js'
 import { pickRepresentative, walkSeries } from '../lib/series.js'
 import { SEASON_START_MONTH } from '../lib/season.js'
@@ -101,9 +109,39 @@ function ensureChainStubs(chain, libMap, { log } = {}) {
  * 排序键：`air_date`（YYYY-MM）→ 退到「年 + 季」→ 都没有的排最后，同键按 bgm_id 升序。
  * 这个排序是**确定性的**：两个进程同时重排得到的顺序一致，所以不怕并发。
  */
-export function renumberMovieSeries(seriesId, { log = logger } = {}) {
-  const rows = listSeriesMembers(seriesId)
+/**
+ * 给「全剧场版系列」里缺上映日期的成员补一次 date（Bangumi 条目 1 次/条）
+ * ---------------------------------------------------------------------------
+ * 为什么放在这里而不是等档案队列：剧场版系列**就是按上映日期排**的，
+ * 少了几个日期就只能把它们排到最后 —— 看起来就是"乱排"（实测哆啦A梦 1981~1989 那几部）。
+ * 单次最多补 40 条（一个剧场版系列通常二三十部），失败不算错，下一趟再来。
+ */
+async function fillMissingDates(seriesId, { log = logger } = {}) {
+  const missing = listSeriesMembers(seriesId).filter((r) => !r.air_date && r.bgm_id).slice(0, 40)
+  let filled = 0
+  for (const row of missing) {
+    try {
+      const subject = await fetchSubject(row.bgm_id)
+      const date = subject?.date || subject?.air_date || null
+      if (!date) continue
+      updateAirDate(row.id, date) // extra.year 没传 → 不会覆盖排期归属，只写 air_date
+      filled++
+    } catch (err) {
+      log?.warn?.({ id: row.id, bgmId: row.bgm_id, err: err.message }, 'series.date fail')
+    }
+  }
+  if (filled) log?.info?.({ seriesId, filled, missing: missing.length }, 'series.date fill')
+  return filled
+}
+
+export async function renumberMovieSeries(seriesId, { log = logger } = {}) {
+  let rows = listSeriesMembers(seriesId)
   if (rows.length < 2) return 0
+  // 缺上映日期的先补上：剧场版系列就是按上映日期排的，没日期只能瞎排
+  if (rows.some((r) => !r.air_date)) {
+    const filled = await fillMissingDates(seriesId, { log })
+    if (filled) rows = listSeriesMembers(seriesId)
+  }
   const rank = (r) => {
     const d = String(r.air_date || '')
     if (/^\d{4}-\d{2}/.test(d)) return Number(d.slice(0, 4)) * 100 + Number(d.slice(5, 7))
@@ -305,7 +343,7 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
     })
   }
   // 全剧场版系列：按**整条系列**重排（本次走链没看到的成员也要归位，见函数注释）
-  if (movieOnly) renumberMovieSeries(seriesId, { log })
+  if (movieOnly) await renumberMovieSeries(seriesId, { log })
 
   log.info(
     {

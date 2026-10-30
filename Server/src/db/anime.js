@@ -196,6 +196,10 @@ export const findById = (id) => stmt.byId.get(val(id)) ?? null
 /** 出图接口落地本地缓存后回写路径 */
 export const setPosterPath = (id, posterPath) => stmt.updatePosterPath.run(val(posterPath), Date.now(), val(id))
 
+/** 只写首播日期（系列重排前补日期用：不打乱排期归属 year/season） */
+export const updateAirDate = (id, date) =>
+  db.prepare('UPDATE anime SET air_date = ?, updated_at = ? WHERE id = ?').run(val(date), Date.now(), val(id))
+
 /**
  * 出图接口回写图源与缓存路径（任一传 null = 不改那一项）
  * 两处用到：① 现场问 Bangumi 拿到封面 → 把 `poster_src` 存下来（这条上游请求一辈子只花一次）

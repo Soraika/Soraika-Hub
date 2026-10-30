@@ -195,6 +195,11 @@ try {
       /renumberMovieSeries/.test(readFileSync(new URL('../src/jobs/enrich.js', import.meta.url), 'utf8')),
     '全剧场版判据落库（series_all_movies），档案补到 air_date 时自动重排',
   )
+  /* 排之前先把缺的日期补上 —— 剧场版系列按上映日期排，缺日期就只能被扔到最后（看着就是乱排） */
+  check(
+    /fillMissingDates/.test(seriesJobSource) && /updateAirDate/.test(animeDbSource),
+    '剧场版系列重排前补缺失的上映日期（不准「没日期就排最后」）',
+  )
 
   const { toAnimeDetail } = await import('../src/api/mappers/anime.js')
   const dtoNoSeason = toAnimeDetail({ id: 1, title: 'x', year: null, season: null, air_date: '2004-10-05' })
