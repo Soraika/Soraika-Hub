@@ -197,6 +197,12 @@ try {
       /fetchSubgroupReleases\(row\.mikan_id\)/.test(animePageSource),
     '取资源用 RSS 字幕组 id（/subgroups 的 id）；不传参数即全量 feed',
   )
+  /* 老番的详情页可能被 Mikan 拿掉（实测 龙珠超 547 / 怪物弹珠 624 / 幻境 2547 全 404），
+     但资源 feed 还活着 → 退化成一个「全部字幕组」，照样能取资源。 */
+  check(
+    /detail-404/.test(animePageSource) && /source: 'all-only'/.test(animePageSource),
+    'Mikan 详情页 404 → 退化「全部字幕组」（资源 feed 还在：龙珠超实测 514 条）',
+  )
 
   if (subgroupData.items.length) {
     const firstSg = subgroupData.items[0]

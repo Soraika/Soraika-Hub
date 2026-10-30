@@ -72,7 +72,7 @@ export async function getAnimeDetail(id, { log = logger } = {}) {
  * （`/releases?subgroupId=<id>`）—— 所以服务端不再存「(作品, 字幕组) → rss id」那张映射表。
  * 顺手把组名记进字典（`subgroup` 表，纯名字缓存，写失败不影响返回）。
  * 抓不到 → 空列表（不存关系，也就没有兜底可给），面板显示空态。
- * @returns {Promise<{ items: Array<{id:number,name:string,mikanId:string,rssId:string}>, source: 'mikan'|'none' }>}
+ * @returns {Promise<{ items: Array<{id:number|string,name:string,mikanId:string,rssId:string}>, source: 'mikan'|'all-only'|'none' }>}
  */
 export async function getAnimeSubgroups(id, { log = logger } = {}) {
   const row = findById(id)
@@ -102,6 +102,14 @@ export async function getAnimeSubgroups(id, { log = logger } = {}) {
     log.debug({ id, total: items.length, source: 'mikan' }, 'anime.subgroups ok')
     return { items, source: 'mikan' }
   } catch (err) {
+    // Mikan 详情页 404 = 条目在 Mikan 列表里还在、但**详情页被拿掉了**
+    // （实测 龙珠超 547 / 怪物弹珠 624 / 星球大战幻境 2547 —— 季度列表仍有，详情页 404）。
+    // 而它们的**资源 feed 还活着**（514 / 144 / 12 条）。所以这里退化成「全部字幕组」一项：
+    // 前端选它 → `/releases?subgroupId=all` → 全量 feed，照样能取资源（只是没法按组筛）。
+    if (/HTTP 404/.test(String(err?.message || ''))) {
+      log.warn({ id, mikanId: row.mikan_id }, 'anime.subgroups detail-404 → 只给「全部字幕组」')
+      return { items: [{ id: 'all', name: '全部字幕组', mikanId: '', rssId: '' }], source: 'all-only' }
+    }
     log.warn({ id, mikanId: row.mikan_id, err: err.message }, 'anime.subgroups fetch-fail')
     return { items: [], source: 'none' }
   }
