@@ -19,7 +19,8 @@ import { pathToFileURL } from 'node:url'
 import { fetchSubject } from '../api/sources/bgm.js'
 import { fetchAnimeProfile } from '../api/sources/mikan.js'
 import { config } from '../config.js'
-import { applyBgmMeta, rememberSubgroups, stats } from '../db/anime.js'
+import { applyBgmMeta, isMovieOnlySeries, rememberSubgroups, stats } from '../db/anime.js'
+import { renumberMovieSeries } from './series.js'
 import {
   claimNextArchive,
   claimNextMissingBgm,
@@ -137,6 +138,15 @@ async function applySubject(bgmId, row, log, startedAt) {
     }),
   )
   markBgmChecked(row.id)
+  // 刚补到 air_date 的行如果属于「全剧场版系列」→ 重排一次（按上映日期）
+  const movieSeriesId = isMovieOnlySeries(row.id)
+  if (movieSeriesId) {
+    try {
+      renumberMovieSeries(movieSeriesId, { log })
+    } catch (err) {
+      log.warn({ id: row.id, seriesId: movieSeriesId, err: err.message }, 'worker.enrich renumber fail')
+    }
+  }
 
   log.info(
     {

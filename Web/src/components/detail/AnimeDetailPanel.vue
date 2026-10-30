@@ -145,7 +145,10 @@
             />
           </section>
 
-          <section class="card">
+          <!-- AI 标签位：只有当前字幕组**真的取到资源**时才出现。
+               0 条资源时既没东西可筛、也没有可解析的名字 —— 摆一排标签（外加「共 0 条资源」）
+               只会让人以为坏了。 -->
+          <section v-if="releaseItems.length" class="card">
             <AiSlot
               :state="aiState"
               :tags="aiTags"

@@ -185,8 +185,17 @@ try {
     '全剧场版系列：AI 判 allMovies → 番外按年占季位 + 命名风格 volume',
   )
 
-  /* 「放送」这一行：没有排期字段（扫描行 / 系列里的骨架行）时用首播日期推，
-     否则从系列里点进老番/剧场版，整行会消失。 */
+  /* 「全剧场版系列」的判据要落库（`series_all_movies`）：后续走链会因「根名已有」跳过 AI，
+     判据丢了番外就会被清零；档案补齐写进 air_date 时还要靠它触发重排。 */
+  check(
+    /series_all_movies/.test(
+      readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8'),
+    ) &&
+      /isMovieOnlySeries/.test(animeDbSource) &&
+      /renumberMovieSeries/.test(readFileSync(new URL('../src/jobs/enrich.js', import.meta.url), 'utf8')),
+    '全剧场版判据落库（series_all_movies），档案补到 air_date 时自动重排',
+  )
+
   const { toAnimeDetail } = await import('../src/api/mappers/anime.js')
   const dtoNoSeason = toAnimeDetail({ id: 1, title: 'x', year: null, season: null, air_date: '2004-10-05' })
   const dtoBoth = toAnimeDetail({ id: 2, title: 'y', year: 2026, season: '夏', air_date: '2026-07-05' })

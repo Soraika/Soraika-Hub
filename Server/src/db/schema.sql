@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS anime (
   naming_style      TEXT,          -- season（同名续季 → S01）/ volume（异名平行作 → 01 名字）；只写代表行
   series_root_title TEXT,          -- 系列总名（顶层目录名）；只写代表行
   series_checked_at INTEGER,       -- 算过系列信息的时间；NULL = 待算
+  series_all_movies INTEGER,       -- 1 = 整条系列都是剧场版（AI 判定；存下来别丢）
 
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL  -- 缓存新鲜度判定用它

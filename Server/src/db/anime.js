@@ -284,6 +284,7 @@ const seriesStmt = {
       series_relation   = COALESCE(?, series_relation),
       naming_style      = COALESCE(?, naming_style),
       series_root_title = COALESCE(?, series_root_title),
+      series_all_movies = COALESCE(?, series_all_movies),
       series_checked_at = COALESCE(?, series_checked_at),
       updated_at        = ?
     WHERE id = ?
@@ -294,6 +295,8 @@ const seriesStmt = {
     WHERE series_id = ?
     ORDER BY series_index IS NULL, series_index ASC, id ASC
   `),
+  /** 清掉整个系列的季位（重排前用；有部分唯一索引，必须先清再写） */
+  clearPositions: db.prepare('UPDATE anime SET series_index = NULL WHERE series_id = ? AND series_index IS NOT NULL'),
   /**
    * 链位写入：**覆盖**语义（不用 COALESCE）
    * ---------------------------------------------------------------------------
@@ -324,7 +327,8 @@ const seriesStmt = {
  * 写一部作品的系列信息（只传要更新的字段；传 null 不覆盖已有值）
  * @param {number} id 作品主键
  * @param {{ seriesId?:number, seriesIndex?:number|null, seriesRelation?:string,
- *           namingStyle?:string, seriesRootTitle?:string, seriesCheckedAt?:number }} [meta]
+ *           namingStyle?:string, seriesRootTitle?:string, seriesAllMovies?:number,
+ *           seriesCheckedAt?:number }} [meta]
  */
 export function setSeriesMeta(id, meta = {}) {
   const now = Date.now()
@@ -334,6 +338,7 @@ export function setSeriesMeta(id, meta = {}) {
     val(meta.seriesRelation),
     val(meta.namingStyle),
     val(meta.seriesRootTitle),
+    val(meta.seriesAllMovies),
     val(meta.seriesCheckedAt ?? now),
     now,
     val(id),
@@ -342,6 +347,25 @@ export function setSeriesMeta(id, meta = {}) {
 
 /** 同系列的全部作品（正传在前、按链位；番外在后） */
 export const listSeriesMembers = (seriesId) => seriesStmt.bySeries.all(val(seriesId))
+
+/**
+ * 清掉整个系列的季位（重排前必须先清：季位上有部分唯一索引，直接改会撞约束）
+ * @returns {number} 清掉的行数
+ */
+export const resetSeriesPositions = (seriesId) => seriesStmt.clearPositions.run(val(seriesId)).changes
+
+/**
+ * 这条作品所在的系列是不是「整条都是剧场版」（AI 判定，标志存在代表行上）
+ * 用途：档案补齐刚写进 `air_date` 时触发一次重排 —— 剧场版系列就是按上映日期排的，
+ * 早补晚补都能对回原位。
+ * @returns {number|null} 是的话返回 series_id，否则 null
+ */
+export function isMovieOnlySeries(rowId) {
+  const row = stmt.byId.get(val(rowId))
+  if (!row?.series_id) return null
+  const rep = stmt.byId.get(val(row.series_id))
+  return Number(rep?.series_all_movies) === 1 ? row.series_id : null
+}
 
 /**
  * 写链位（**覆盖** `series_index` / `series_relation`）
@@ -402,7 +426,7 @@ export function findByBgmIds(bgmIds = []) {
   const placeholders = ids.map(() => '?').join(',')
   return db
     .prepare(`SELECT id, bgm_id, title, title_cn, series_id, series_index, series_relation,
-                     naming_style, series_root_title, air_date, year, season
+                     naming_style, series_root_title, series_all_movies, air_date, year, season
                 FROM anime WHERE bgm_id IN (${placeholders})`)
     .all(...ids.map((v) => val(v)))
 }

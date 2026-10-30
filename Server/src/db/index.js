@@ -124,6 +124,9 @@ const MIGRATIONS = {
     { column: 'naming_style', ddl: 'TEXT' },
     { column: 'series_root_title', ddl: 'TEXT' },
     { column: 'series_checked_at', ddl: 'INTEGER' },
+    // 「整条系列都是剧场版」的判定结果（AI 给的 allMovies）—— 存下来，
+    // 否则后续走链因为「根名已有」跳过 AI，会把这个判据丢掉 → 番外又被清零。
+    { column: 'series_all_movies', ddl: 'INTEGER' },
   ],
 }
 

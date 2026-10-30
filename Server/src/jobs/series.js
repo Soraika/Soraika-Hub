@@ -25,7 +25,7 @@ import { loadStoredSettings } from '../api/pages/settings.js'
 import { fetchRelatedSubjects } from '../api/sources/bgm.js'
 import { config } from '../config.js'
 import { db, val } from '../db/index.js'
-import { ensureBgmStub, findByBgmIds, setSeriesMeta, setSeriesPosition } from '../db/anime.js'
+import { ensureBgmStub, findByBgmIds, listSeriesMembers, resetSeriesPositions, setSeriesMeta, setSeriesPosition } from '../db/anime.js'
 import { logger } from '../lib/logger.js'
 import { pickRepresentative, walkSeries } from '../lib/series.js'
 import { SEASON_START_MONTH } from '../lib/season.js'
@@ -89,6 +89,47 @@ function ensureChainStubs(chain, libMap, { log } = {}) {
   }
   if (created.length) log?.info?.({ count: created.length, sample: created.slice(0, 5) }, 'series.stub create')
   return created
+}
+
+/**
+ * 「全剧场版系列」按**整条系列**重排季位（不是只排本次走链看到的那些）
+ * ---------------------------------------------------------------------------
+ * 为什么必须按整条系列排：某部剧场版可能是**别的走链**写进来的（它自己那趟只看到自己附近的两三部），
+ * 那趟写完后 `series_index` 是 NULL，本次走链即使知道 allMovies 也覆盖不到它 ——
+ * 实测《哆啦A梦：新・大雄的海底鬼岩城》就卡在 index=NULL（其余 33 部都是 1..33）。
+ *
+ * 排序键：`air_date`（YYYY-MM）→ 退到「年 + 季」→ 都没有的排最后，同键按 bgm_id 升序。
+ * 这个排序是**确定性的**：两个进程同时重排得到的顺序一致，所以不怕并发。
+ */
+export function renumberMovieSeries(seriesId, { log = logger } = {}) {
+  const rows = listSeriesMembers(seriesId)
+  if (rows.length < 2) return 0
+  const rank = (r) => {
+    const d = String(r.air_date || '')
+    if (/^\d{4}-\d{2}/.test(d)) return Number(d.slice(0, 4)) * 100 + Number(d.slice(5, 7))
+    const y = Number(r.year)
+    if (!y) return Number.MAX_SAFE_INTEGER
+    return y * 100 + (SEASON_START_MONTH[r.season] ?? 1)
+  }
+  const sorted = [...rows].sort((a, b) => rank(a) - rank(b) || Number(a.bgm_id || 0) - Number(b.bgm_id || 0))
+  const now = Date.now()
+  let written = 0
+  // 整段重排放一个事务里：中间状态（全 NULL）不能被并发的另一趟走链看到，否则两趟交叉写会乱
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    resetSeriesPositions(seriesId) // 先清：季位上有部分唯一索引
+    for (const [i, r] of sorted.entries()) {
+      setSeriesPosition(r.id, { seriesIndex: i + 1, seriesRelation: '剧场版', seriesCheckedAt: now })
+      written++
+    }
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    log?.warn?.({ seriesId, err: err.message }, 'series.renumber fail')
+    return 0
+  }
+  log?.info?.({ seriesId, count: sorted.length, written }, 'series.renumber movies')
+  return written
 }
 
 /**
@@ -188,7 +229,7 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
   //   · 链头本身是剧场版（被降级、不给季位）时，后面的正传不该从 2 开始（实测《弦音》）
   //   · **整条系列都是剧场版**时（AI 判 allMovies：哆啦A梦剧场版 31 部），番外也按年排进季位，
   //     否则一半是 S01..S25、另一半全是「番外」，看着就是坏的
-  const movieOnly = ai.allMovies === true && (extras.length > 0 || chain.some((n) => n.demoted))
+  const movieOnly = ai.allMovies === true || Number(rootRow?.series_all_movies) === 1
   /** 排序键：air_date（YYYY-MM）优先，退到 年+季；都没有的排最后 */
   const dateRank = (row) => {
     const d = String(row?.air_date || '')
@@ -258,9 +299,13 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
       // 全剧场版系列强制 volume：归档目录是「哆啦A梦剧场版/01 大雄的恐龙」，不是 S01
       namingStyle: movieOnly ? 'volume' : ai.namingStyle || rootRow?.naming_style,
       seriesRootTitle: rootName,
+      // AI 判过的「全是剧场版」要落库：后续走链会因「根名已有」跳过 AI，判据不能丢
+      seriesAllMovies: ai.allMovies === true ? 1 : null,
       seriesCheckedAt: now,
     })
   }
+  // 全剧场版系列：按**整条系列**重排（本次走链没看到的成员也要归位，见函数注释）
+  if (movieOnly) renumberMovieSeries(seriesId, { log })
 
   log.info(
     {
