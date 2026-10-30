@@ -25,7 +25,7 @@ import { loadStoredSettings } from '../api/pages/settings.js'
 import { fetchRelatedSubjects } from '../api/sources/bgm.js'
 import { config } from '../config.js'
 import { db, val } from '../db/index.js'
-import { findByBgmIds, setSeriesMeta } from '../db/anime.js'
+import { ensureBgmStub, findByBgmIds, setSeriesMeta, setSeriesPosition } from '../db/anime.js'
 import { logger } from '../lib/logger.js'
 import { pickRepresentative, walkSeries } from '../lib/series.js'
 
@@ -53,6 +53,41 @@ const stmt = {
   claim: db.prepare('UPDATE anime SET series_checked_at = -1 WHERE id = ? AND series_checked_at IS NULL'),
   /** 放回队列（这次没算成）：-1 → NULL，否则它会永远卡在"处理中" */
   release: db.prepare('UPDATE anime SET series_checked_at = NULL WHERE id = ? AND series_checked_at = -1'),
+}
+
+/**
+ * 给「链上确实存在、但库里没有」的正传成员建骨架行
+ * ---------------------------------------------------------------------------
+ * 场景：《死神 千年血战篇》的上游 `前传` 是 2004 年的《BLEACH》。
+ * Mikan 的季度页对 2004 年返回空壳（扫不到），所以库里没有那一行 →
+ * 只写「已在库」的成员时，季位就从 S02 开始（用户看到「没有 S1」）。
+ * 实测 494 个多成员系列里有 **160 个**属于这种情况。
+ *
+ * 只补正传链（番外是剧场版/OVA，缺了不影响季位）；单趟最多 20 个，
+ * 万一关系成网也不会一次灌进几百行。新行 `series_checked_at` 已置为当前时间，
+ * 所以不会再排一次「自己走链」的队。
+ * @returns {Array<{id:number,bgmId:string}>} 本次新建的行
+ */
+const MAX_STUBS_PER_WALK = 20
+function ensureChainStubs(chain, libMap, { log } = {}) {
+  const created = []
+  for (const node of chain) {
+    if (libMap.has(node.id)) continue
+    if (created.length >= MAX_STUBS_PER_WALK) {
+      log?.warn?.({ bgmId: node.id, cap: MAX_STUBS_PER_WALK }, 'series.stub cap')
+      continue
+    }
+    const stub = ensureBgmStub({
+      bgmId: node.id,
+      title: node.nameCn || node.name || null,
+      titleCn: node.nameCn || null,
+    })
+    if (!stub) continue
+    libMap.set(node.id, stub)
+    created.push({ id: stub.id, bgmId: node.id, title: stub.title })
+  }
+  if (created.length) log?.info?.({ count: created.length, sample: created.slice(0, 5) }, 'series.stub create')
+  return created
 }
 
 /**
@@ -95,13 +130,23 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
   /* ② 链上/番外里「已经在库」的成员 —— 代表行从这里选（链上最靠前的那个） */
   const libRows = findByBgmIds([...chain.map((n) => n.id), ...extras.map((e) => e.id)])
   const libMap = new Map(libRows.map((r) => [String(r.bgm_id), r]))
+
+  /* ②b 链上「缺的环节」补骨架行 —— 否则季位整体前移（最典型：S01 不见了）
+     只补**正传链**（番外是剧场版/OVA，缺了不影响季位）；单趟最多补 20 个，防关系成网时跑飞。 */
+  const stubs = ensureChainStubs(chain, libMap, { log })
+
   const rep = pickRepresentative(chain, libMap)
   const repRow = rep ? libMap.get(rep.id) : null
   const seriesId = repRow?.series_id || repRow?.id || row.id
 
-  /* ③ 已有系列的根名/风格就直接复用（新季出现时**零 AI 调用**）；缺了才问 AI */
+  /* ③ 根名/风格：随便哪个成员身上有就复用（**零 AI 调用**）；一个都没有才问 AI。
+     不能只看代表行 —— 补了骨架行之后代表行会变成新行，它身上没有根名。 */
+  const rootRow =
+    [repRow, ...libMap.values()].find((r) => r?.series_root_title && r?.naming_style) ??
+    [repRow, ...libMap.values()].find((r) => r?.series_root_title) ??
+    null
   let ai = { namingStyle: null, rootTitle: '', extras: [] }
-  if (!repRow?.naming_style || !repRow?.series_root_title) {
+  if (!rootRow?.naming_style || !rootRow?.series_root_title) {
     try {
       ai = await classifySeries({ chain, extras, log })
     } catch (err) {
@@ -121,12 +166,14 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
    * 否则后算的会把对方的 `series_id` / `series_index` 覆盖成混合状态（实测踩过：
    * 混出「两个 index=1」的系列）。这里只记录冲突，不报错 —— 属于可接受的数据现实。
    */
-  const writeMember = (libRow, meta) => {
+  const writeMember = (libRow, meta, { position = false } = {}) => {
     if (libRow.series_id && String(libRow.series_id) !== String(seriesId)) {
       conflicts.push({ id: libRow.id, kept: libRow.series_id, wanted: seriesId })
       return
     }
-    setSeriesMeta(libRow.id, { seriesId, ...meta })
+    // 正传链位 / 番外类别 → **覆盖**写（重排季位要生效）；根名等 → COALESCE 写（不抹掉已有值）
+    if (position) setSeriesPosition(libRow.id, { seriesId, ...meta })
+    else setSeriesMeta(libRow.id, { seriesId, ...meta })
   }
 
   for (const node of chain) {
@@ -142,25 +189,30 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
             seriesRelation: node.index === 1 ? null : '续集', // 链头没有「相对前驱」的关系
             seriesCheckedAt: now,
           },
+      { position: true },
     )
   }
   for (const item of extras) {
     const libRow = libMap.get(item.id)
     if (!libRow) continue
-    writeMember(libRow, {
-      // 代码判出来的类别优先（剧场版/总集篇/OVA 是按名字认的，比 AI 稳）；
-      // 没有就用 AI 的归类，再没有落「其他」。
-      seriesRelation: item.category || extraRelation.get(item.id) || '其他',
-      seriesCheckedAt: now,
-    })
+    writeMember(
+      libRow,
+      {
+        // 番外一律不给季位（清掉可能存在的旧值），类别代码判的优先（按名字认的比 AI 稳）
+        seriesIndex: null,
+        seriesRelation: item.category || extraRelation.get(item.id) || '其他',
+        seriesCheckedAt: now,
+      },
+      { position: true },
+    )
   }
   // 根名兜底：AI 对「单部作品（链上只有它自己）」经常返回空 rootTitle ——
   // 这时用作品自己的展示名（title_cn 优先），总比顶层目录叫「未归类」强。
   // 注意：日志里报的必须是**最终落库的那个值**，否则会看到「日志说空、库里其实有」的假象。
-  const rootName = ai.rootTitle || repRow?.series_root_title || repRow?.title_cn || repRow?.title || ''
+  const rootName = ai.rootTitle || rootRow?.series_root_title || repRow?.title_cn || repRow?.title || ''
   if (repRow) {
     writeMember(repRow, {
-      namingStyle: ai.namingStyle || repRow.naming_style,
+      namingStyle: ai.namingStyle || rootRow?.naming_style,
       seriesRootTitle: rootName,
       seriesCheckedAt: now,
     })
@@ -175,7 +227,8 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
       chain: chain.length,
       extras: extras.length,
       inLibrary: libMap.size,
-      namingStyle: ai.namingStyle || repRow?.naming_style || null,
+      stubs: stubs.length,
+      namingStyle: ai.namingStyle || rootRow?.naming_style || null,
       rootTitle: rootName,
       ...(conflicts.length ? { conflicts } : {}),
       ms: Date.now() - startedAt,

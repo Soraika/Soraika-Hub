@@ -150,6 +150,23 @@ try {
     '名字判定：剧场版/总集篇/OVA 不算正传（不给季位），普通续季不受影响',
   )
 
+  /* 系列链上**缺的环节**要补骨架行（否则季位整体前移、S01 消失）
+     —— 实测《死神 千年血战篇》：前传是 2004 年的《BLEACH》，Mikan 赛季页对 2004 返回空壳扫不到，
+     库里没有那一行 → 只写「已在库」的成员时季位从 S02 开始。 */
+  const seriesJobSource = readFileSync(new URL('../src/jobs/series.js', import.meta.url), 'utf8')
+  const animeDbSource = readFileSync(new URL('../src/db/anime.js', import.meta.url), 'utf8')
+  check(
+    /ensureChainStubs\(chain, libMap/.test(seriesJobSource) &&
+      /ensureBgmStub/.test(animeDbSource) &&
+      /MAX_STUBS_PER_WALK/.test(seriesJobSource),
+    '链上缺的成员建骨架行（只有 bgm_id + 名字），并有单趟上限防关系成网',
+  )
+  /* 骨架行补进来之后季位要整体重排 → 链位必须是**覆盖**写（COALESCE 会留下旧值 → 两个 index=1） */
+  check(
+    /setSeriesPosition/.test(seriesJobSource) && /updatePosition/.test(animeDbSource),
+    '链位覆盖写（补进头部后季位重排）；根名仍用 COALESCE（不抹掉已有值）',
+  )
+
   /* ── 字幕组（资源区第一级）与资源列表（第二级）──────────────────────── */
   const sgRes = await get(`/api/anime/${card.id}/subgroups`)
   const subgroupData = sgRes.body?.data

@@ -294,6 +294,30 @@ const seriesStmt = {
     WHERE series_id = ?
     ORDER BY series_index IS NULL, series_index ASC, id ASC
   `),
+  /**
+   * 链位写入：**覆盖**语义（不用 COALESCE）
+   * ---------------------------------------------------------------------------
+   * 为什么必须覆盖：走链时补进「缺的头部」（骨架行）之后，所有成员的季位都要往后挪一位。
+   * 若沿用 COALESCE，老值会留着 → 骨架行和新头两个都拿到 index=1（实测就会这样）。
+   */
+  updatePosition: db.prepare(`
+    UPDATE anime SET
+      series_id         = COALESCE(?, series_id),
+      series_index      = ?,
+      series_relation   = ?,
+      series_checked_at = COALESCE(?, series_checked_at),
+      updated_at        = ?
+    WHERE id = ?
+  `),
+  /**
+   * 骨架行：只有 bgm_id + 名字（**没有 mikan_id / 年份 / 季度**）
+   * 冲突就什么都不做（已经存在说明这条本来就在库）—— 由调用方再读回来。
+   */
+  insertStub: db.prepare(`
+    INSERT INTO anime (bgm_id, title, title_cn, source, series_checked_at, created_at, updated_at)
+    VALUES (?, ?, ?, 'bgm', ?, ?, ?)
+    ON CONFLICT(bgm_id) DO NOTHING
+  `),
 }
 
 /**
@@ -320,6 +344,52 @@ export function setSeriesMeta(id, meta = {}) {
 export const listSeriesMembers = (seriesId) => seriesStmt.bySeries.all(val(seriesId))
 
 /**
+ * 写链位（**覆盖** `series_index` / `series_relation`）
+ * ---------------------------------------------------------------------------
+ * 与 `setSeriesMeta`（COALESCE、不覆盖）分工：
+ *   · 根名 / 命名风格 / 番外 → `setSeriesMeta`（谁都不许把已有根名抹掉）
+ *   · 正传链位 → 这里（链上补进新的头部后，季位必须整体重排，不能保留旧值）
+ * @param {number} id
+ * @param {{ seriesId?:number, seriesIndex?:number|null, seriesRelation?:string|null, seriesCheckedAt?:number }} [meta]
+ */
+export function setSeriesPosition(id, meta = {}) {
+  const now = Date.now()
+  return seriesStmt.updatePosition.run(
+    val(meta.seriesId),
+    meta.seriesIndex ?? null,
+    meta.seriesRelation ?? null,
+    val(meta.seriesCheckedAt),
+    now,
+    val(id),
+  )
+}
+
+/**
+ * 建「骨架行」：链上确实存在、但我们库里没有的成员（BGM 有、Mikan 没有条目）
+ * ---------------------------------------------------------------------------
+ * 为什么必须建：系列链只把**已在库**的成员写进系列，所以缺了第一季时，
+ * 后面的季位会整体前移（S02 变成"第一个"→ 用户看到"没有 S1"）。实测《死神 千年血战篇》：
+ * 上游 前传 → bgm=1600《BLEACH》(2004，Mikan 赛季页对 2004 返回空壳，扫不到) → 库里没有。
+ * 骨架行只有 `bgm_id` + 名字（`mikan_id` 为空）→
+ *   · 不会进首页排期（排期按 year/season 过滤，骨架行两者都空）
+ *   · 会被「档案补齐」队列自动补上评分/标签/简介（触发①b 的谓词就是 bgm_id 有、档案缺）
+ *   · 资源区为空（Mikan 上它本来就没有条目）—— 面板显示「这部暂时没有资源」
+ * `series_checked_at` 直接写成当前时间：它已经在**本次**走链里被处理，不该再排一次队。
+ * @param {{ bgmId:string, title?:string|null, titleCn?:string|null, seriesCheckedAt?:number }} params
+ * @returns {object|null} 落库后的行（已存在则返回已有行）
+ */
+export function ensureBgmStub({ bgmId, title, titleCn = null, seriesCheckedAt = null } = {}) {
+  const id = String(bgmId ?? '').trim()
+  if (!id) return null
+  const existing = stmt.byBgmId.get(val(id))
+  if (existing) return existing
+  const now = Date.now()
+  const name = String(title ?? '').trim() || `BGM ${id}`
+  seriesStmt.insertStub.run(val(id), val(name), val(titleCn), val(seriesCheckedAt ?? now), now, now)
+  return stmt.byBgmId.get(val(id)) ?? null
+}
+
+/**
  * 按 bgm_id 批量取「库里已有哪些」—— 走链时用它判断链上成员是否已在库
  * ---------------------------------------------------------------------------
  * IN 列表长度不固定，所以这条 SQL 是**动态拼**的（与上面那些固定 stmt 不同）；
@@ -331,6 +401,8 @@ export function findByBgmIds(bgmIds = []) {
   if (!ids.length) return []
   const placeholders = ids.map(() => '?').join(',')
   return db
-    .prepare(`SELECT id, bgm_id, title, title_cn, series_id FROM anime WHERE bgm_id IN (${placeholders})`)
+    .prepare(`SELECT id, bgm_id, title, title_cn, series_id, series_index, series_relation,
+                     naming_style, series_root_title
+                FROM anime WHERE bgm_id IN (${placeholders})`)
     .all(...ids.map((v) => val(v)))
 }
