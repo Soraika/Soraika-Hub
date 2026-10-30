@@ -52,6 +52,57 @@ function dropLegacySubgroupLinks() {
 dropLegacySubgroupLinks()
 
 /**
+ * 系列季位的**唯一性护栏**（一次性、可重入）
+ * ---------------------------------------------------------------------------
+ * 为什么需要：同一系列可能被**两条不同的链**写（BGM 的关系是局部的：《我的英雄学院》
+ * 剧场版之间互连、TV 之间互连），而且两个进程（API 内联 worker + 独立回填 CLI）可能
+ * 同时给同一系列算季位 —— 都从 NULL 起步时各写各的编号，结果出现「两个 index=1」。
+ *
+ * 做法：先按 `(series_id, series_index)` 去重（同组保留 id 最小的那条，其余置 NULL），
+ * 再建**部分唯一索引** —— 之后重复写入会直接报约束错误（被 fillSeriesFor 的 try 兜住，
+ * 只会让那条重试，不会污染数据）。
+ */
+function ensureSeriesPositionUnique() {
+  const dupes = db
+    .prepare(
+      `SELECT series_id, series_index, COUNT(*) c FROM anime
+        WHERE series_id IS NOT NULL AND series_index IS NOT NULL
+        GROUP BY series_id, series_index HAVING c > 1`,
+    )
+    .all()
+  if (dupes.length) {
+    const fix = db.prepare(
+      `UPDATE anime SET series_index = NULL
+        WHERE series_id = ? AND series_index = ? AND id <> (
+          SELECT MIN(id) FROM anime WHERE series_id = ? AND series_index = ?
+        )`,
+    )
+    db.exec('BEGIN')
+    try {
+      let cleared = 0
+      for (const d of dupes) {
+        cleared += fix.run(d.series_id, d.series_index, d.series_id, d.series_index).changes
+      }
+      db.exec('COMMIT')
+      logger.warn({ groups: dupes.length, cleared }, 'db.migrate dedupe series_index')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      logger.error({ err: err.message }, 'db.migrate dedupe fail')
+    }
+  }
+  try {
+    db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_anime_series_pos
+         ON anime(series_id, series_index) WHERE series_index IS NOT NULL`,
+    )
+  } catch (err) {
+    logger.warn({ err: err.message }, 'db.migrate series pos index fail')
+  }
+}
+
+ensureSeriesPositionUnique()
+
+/**
  * 轻量迁移 —— 给**已存在**的库补新列（**必须在建表之前跑**，见下方注释）
  * ---------------------------------------------------------------------------
  * schema.sql 里写的是 CREATE TABLE IF NOT EXISTS：表已存在时那句会被跳过，

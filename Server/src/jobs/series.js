@@ -172,29 +172,47 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
       return
     }
     // 正传链位 / 番外类别 → **覆盖**写（重排季位要生效）；根名等 → COALESCE 写（不抹掉已有值）
-    if (position) setSeriesPosition(libRow.id, { seriesId, ...meta })
-    else setSeriesMeta(libRow.id, { seriesId, ...meta })
+    try {
+      if (position) setSeriesPosition(libRow.id, { seriesId, ...meta })
+      else setSeriesMeta(libRow.id, { seriesId, ...meta })
+    } catch (err) {
+      // 季位上有部分唯一索引：两个进程同时算同一系列时，晚到的那个会撞索引。
+      // 这不是错误，只说明「别人已经占了这个季位」→ 放弃这次写入（不重试、不污染数据）。
+      conflicts.push({ id: libRow.id, reason: 'position-unique', err: err.message })
+    }
   }
 
   // 季位按「本次真正能写的成员」连续编号 —— 不直接用走链给的序号。两个原因：
   //   · 补骨架行有单趟上限（超上限的节点建不出来）→ 用链序号会留空洞（实测蜡笔小新剧场版 24/33）
   //   · 链头本身是剧场版（被降级、不给季位）时，后面的正传不该从 2 开始（实测《弦音》）
+  const positions = new Map()
   let seq = 0
   for (const node of chain) {
+    if (!libMap.has(node.id)) continue // 没写进库（超上限 / 写库失败）→ 不占季位
+    if (node.demoted) continue
+    positions.set(node.id, ++seq)
+  }
+  /**
+   * 同一系列可能被**多条不同的链**写到（BGM 的关系是局部的：《我的英雄学院》剧场版之间互连、
+   * TV 之间互连，两条链的「第 1 个」不是同一行）。所以季位一律**只填不改**（COALESCE）：
+   * 谁先算出来算谁的，后来的只补空字段 —— 永不产生「两个 index=1」。
+   * 需要整体重排时（链上补进了新的头部）走一次性修复：清空该系列的系列字段让它重算，
+   * 第一趟走链会把季位一次性写对。
+   */
+  for (const node of chain) {
     const libRow = libMap.get(node.id)
-    if (!libRow) continue // 没写进库（超上限 / 写库失败）→ 不占季位
-    const position = node.demoted ? null : ++seq
+    if (!libRow) continue
+    const position = node.demoted ? null : (positions.get(node.id) ?? null)
     writeMember(
       libRow,
       // 起点自己是剧场版/OVA（用户直接点开的）→ 不给季位，按番外类别写
-      node.demoted
-        ? { seriesRelation: node.demoted, seriesCheckedAt: now }
+      node.demoted || position == null
+        ? { seriesRelation: node.demoted || libRow.series_relation || '续集', seriesCheckedAt: now }
         : {
             seriesIndex: position,
             seriesRelation: position === 1 ? null : '续集', // 链头没有「相对前驱」的关系
             seriesCheckedAt: now,
           },
-      { position: true },
     )
   }
   for (const item of extras) {
