@@ -1,54 +1,47 @@
 # TODO（按优先级）
 
-> 背景与决策见 **`docs/ARCHITECTURE.md`**（§10 是路线图）。这里只放**还没做**的、可执行的事项 —— 做完就删掉本条目。
+> 背景与决策见 **`docs/ARCHITECTURE.md`**（§7 关键决策 / §8 踩过的坑）。
+> 这里只放**还没做**的、可执行的事项 —— 做完就删掉本条目。
 
 ---
 
-## P0 · 数据完整性
+## P0 · 数据完整性（收尾确认，约 10 分钟）
 
-### P0-1 确认档案补齐跑完
-`needArchive` 归零后：`curl /api/health` 看 `withScore` 占比，并抽查 3 部老番的评分/标签/简介；
-顺便确认 `coverage.subgroupDict` 在涨（= 「顺手抓字幕组」在工作）。
-
----
-
-## P1 · AI v9（一次调用三类产物）
-
-- [ ] **合并调用**：标签 + 集数 + **格式特征** 一次拿齐（现在是 2~3 次独立调用）
-- [ ] **缓存 key 加 prompt 内容 hash + model**（换模型/改提示词不再命中旧结果 —— CONVENTIONS §9）
-- [ ] 修四处"对不上"：
-  - [ ] `season` 没往下传（`classifyReleaseTags` 的上下文里缺季）
-  - [ ] `AI_TOOLS` 的 `inputSchema` 缺 `animeTitle` / `season`
-  - [ ] `TYPE_ORDER` 里是 `revision`，但 prompt/标签写的是 `version`（对不上会落到 `other`）
-  - [ ] `VALID_TYPES` 漏音频类标签
+- [ ] `needArchive` 归零后抽查 3 部老番（2015 秋 / 2018 冬 / 2021 夏）：
+      评分、标签、简介、字幕组、资源区都在
+- [ ] 确认 `coverage.subgroupDict` 还在涨（= 「同时补字幕组」在工作）
 
 ---
 
-## P2 · 下载闭环
+## P1 · 下载闭环（最大件，需要 qB 真机配合）
 
 - [ ] `qb` 接入：选中资源 → 加种 → 进度 → 归档目录（`{根名}/S01/…`，规则见 CONVENTIONS §10.5）
 - [ ] 下载页：按季 / 按系列列「已下 / 缺哪集」
+- [ ] 资源列表的「下载」按钮现在是禁用占位（`ReleaseList`）→ 接通后启用
+
+> 现状：`qb.base` / `qb.apiKey` 已能在设置页配好并「测试连接」（按 version 返回判断），
+> 后端只差 `rout/qb.js` + `api/pages/qb.js`；`clients/Qb.js` 已有的请求封装可直接复用。
 
 ---
 
-## P3 · 体验
+## P2 · 体验
 
-- [ ] 搜索页（复用 `useAnimeDetail` 打开面板）
-- [ ] 接 `vue-router` 替换现在「侧栏 key → 页面组件」的临时映射
+- [ ] 搜索页（复用 `useAnimeDetail` 打开面板），后端加 `/api/anime?q=`
+- [ ] 接 `vue-router` 替换现在「侧栏 key → 页面组件」的临时映射（面板/页面可直达 URL）
 
 ---
 
-## P4 · 设置页二级页面：事件 × AI 提供商 的画板（**先不做**，已排期）
+## P3 · 设置页二级页面：事件 × AI 提供商 的画板（**先不做**）
 
 > 目标：把业务抽象出来，做成「画布 + 连线」的形状 —— 左侧是**事件**（解析资源标签、解析集数、
-> 系列归一、生成合集名…），右侧是**AI 提供商/模型**，连线表示「这个事件用哪家的哪个模型」。
+> 系列归一…），右侧是**AI 提供商/模型**，连线表示「这个事件用哪家的哪个模型」。
 > 设置页只保留入口（「高级配置 → 编排」），真正的画板放在二级页面。
 
-前置条件（这些已经在这次改造里铺好了）：
-- 供应商目录可枚举（`GET /api/ai/providers`，models.dev，带模型名）
-- 每个 AI 能力有独立的入口与缓存 key（`classifyReleaseTags` / `classifyEpisodes` /
-  `classifyGroupTags` / `classifyReleaseFormat` / `classifySeries`）
-- 配置支持整份导出/导入（画板内容可以直接落到 `ai.bindings` 这样的一个配置项里）
+前置条件（已经铺好）：
+- 供应商目录可枚举（`GET /api/ai/providers`，models.dev，200 家、带模型名）
+- 每个 AI 能力有独立入口（`classifyReleaseTags` / `classifyEpisodes` / `classifyGroupTags` /
+  `classifyReleaseFormat` / `classifySeries`）；标签与集数已经合并成**一次调用**
+- 配置支持整份导出/导入（画板内容可以整个塞进 `ai.bindings`）
 
 落地顺序建议：
 1. 配置层：`ai.bindings = { [事件]: { baseUrl, apiKey?, model, maxTokens? } }`（缺省回落 `ai.*`）
@@ -56,3 +49,10 @@
 3. UI：二级页面画布（节点 = 事件/供应商，连线 = 绑定）；先做「列表 + 下拉」的过渡版
 4. 验收：`verify-ai` 增加「同一事件按绑定选不同模型」的断言
 
+---
+
+## 已完成（留个索引，别再翻回来）
+
+- AI v9：标签 + 集数**合并成一次调用**（v7）；缓存 key 带 prompt hash + model；四处对不上已修
+- 设置页：时长统一毫秒 / 多列滚轮 / 时刻两列滚轮 / 多源可拖拽 + 逐条并发测试 / 提供商选名字 + 状态徽章
+- 数据源：多地址 + 故障切换（默认只配一个，死镜像会在启动时被摘掉）

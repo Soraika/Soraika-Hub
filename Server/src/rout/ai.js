@@ -113,7 +113,10 @@ aiRouter.post('/ai/classify/tags', async (req, res, next) => {
 /** POST /api/ai/classify/episodes —— 便利直连，body: { title, titles } */
 aiRouter.post('/ai/classify/episodes', async (req, res, next) => {
   try {
-    res.json({ ok: true, data: await classifyEpisodes(req.body?.title, titlesOf(req.body), { log: req.log }) })
+    res.json({ ok: true, data: await classifyEpisodes(req.body?.title, titlesOf(req.body), {
+      log: req.log,
+      season: req.body?.season ?? '',
+    }) })
   } catch (err) {
     next(err)
   }

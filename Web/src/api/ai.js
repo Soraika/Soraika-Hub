@@ -50,6 +50,6 @@ export function classifyReleaseTags(titles, { animeTitle = '', season = '' } = {
  * @returns {Promise<{ rawName:string, season:number, episodes:Record<string, number|string|null>,
  *                     model:string, batches:number, cached:boolean, ms:number }>}
  */
-export function classifyEpisodes(animeTitle, titles) {
-  return apiPost('/api/ai/classify/episodes', { title: animeTitle, titles }, { timeout: 180000 })
+export function classifyEpisodes(animeTitle, titles, { season = '' } = {}) {
+  return apiPost('/api/ai/classify/episodes', { title: animeTitle, titles, season }, { timeout: 180000 })
 }

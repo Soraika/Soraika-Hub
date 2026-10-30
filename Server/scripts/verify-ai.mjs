@@ -119,7 +119,31 @@ try {
 
   /* ── 能力层静态检查：改了 prompt 却不升版本，会被缓存挡住（看起来「提示词没生效」）── */
   const aiPageSource = readFileSync(new URL('../src/api/pages/ai.js', import.meta.url), 'utf8')
-  check(/TAG_PROMPT_VERSION = 'v6'/.test(aiPageSource), '提示词版本是 v6（禁掉修版信息，避免与本地规则出的重复）')
+  check(
+    /BUNDLE_PROMPT_VERSION = 'v7'/.test(aiPageSource),
+    '提示词版本是 v7（合并调用：标签 + 集数一次拿齐）',
+  )
+  /* 合并调用：**一次 prompt 同时要三类产物**，旧的两个独立 prompt 必须已经删掉 */
+  check(
+    /const BUNDLE_SYSTEM_PROMPT = `[\s\S]{0,1200}"tags"/.test(aiPageSource) &&
+      /"rawName"/.test(aiPageSource) &&
+      /"episodes"/.test(aiPageSource) &&
+      !/EPISODE_SYSTEM_PROMPT/.test(aiPageSource) &&
+      !/TAG_SYSTEM_PROMPT/.test(aiPageSource),
+    'AI 合并调用：一次 prompt 同时产 tags / rawName / season / episodes（旧的两个 prompt 已合并）',
+  )
+  /* 缓存 key 必须带上 prompt 内容 hash + 模型名（换模型/改提示词不能命中旧结果） */
+  check(
+    /const bundleCacheKey = \(animeTitle, list\)/.test(aiPageSource) &&
+      /PROMPT_HASH\(BUNDLE_SYSTEM_PROMPT\)/.test(aiPageSource) &&
+      /config\.ai\.model/.test(aiPageSource),
+    '缓存 key 带「版本 + 模型 + prompt 内容 hash + 番名 + 文件名」—— 换模型/改提示词都不命中旧结果',
+  )
+  /* 修订版标签的 type 必须是 version（早先 TYPE_ORDER 里写成 revision，排序会 NaN） */
+  check(
+    /const TYPE_ORDER = \{ version: 0/.test(aiPageSource),
+    'TYPE_ORDER 用 `version`（与生成的标签 type 一致，排序不会失效）',
+  )
   check(
     /function dropCovered\(tags\)/.test(aiPageSource) && /const tags = dropCovered\(/.test(aiPageSource),
     '标签去重：去掉「被别的标签覆盖」的冗余项（HEVC-10bit 之于 HEVC、简繁内封字幕 之于 简繁内封）',
@@ -129,13 +153,7 @@ try {
       /mapLimit\(batches, limit/.test(aiPageSource) &&
       /config\.ai\.concurrency/.test(aiPageSource) &&
       !/list\.slice\(0, config\.ai\.maxTitles\)/.test(aiPageSource),
-    '标签解析**全量分批**，批间并发按「并发上限」配置 —— 不再截断成"只分析前 N 条"',
-  )
-  check(
-    /const batches = chunk\(list, EPISODE_BATCH\)/.test(aiPageSource) &&
-      !/pickTitles/.test(aiPageSource) &&
-      /mapLimit\(batches, limit/.test(aiPageSource),
-    '集数解析同样**全量分批**，批间并发按「并发上限」配置（旧版 pickTitles 会截断成前 120 条）',
+    '全量分批（标签与集数共用），批间并发按「并发上限」配置 —— 不再截断成"只分析前 N 条"',
   )
   /* 缓存 TTL 要跟着配置走：传**函数**而不是死值 ——
      缓存实例是模块加载时建的，传死值的话设置页改完不生效（要重启进程）。 */
@@ -148,11 +166,11 @@ try {
   )
   check(
     /animeTitle/.test(aiPageSource) && /const context = \[animeTitle/.test(aiPageSource),
-    '解析标签时带上作品上下文（番剧名 / 季）——模型得知道在分析什么',
+    '解析时带上作品上下文（番剧名 / 季）——模型得知道在分析什么',
   )
   check(
-    /eps:\$\{EPISODE_PROMPT_VERSION\}/.test(aiPageSource),
-    '集数缓存 key 也带提示词版本（同一个坑不踩第二次）',
+    /tagCache\.set\(key, result\)/.test(aiPageSource) && /episodeCache\.set\(key, result\)/.test(aiPageSource),
+    '同一份结果写进两个缓存（标签 30m / 集数 24h），各自按自己的 TTL 命中',
   )
 
   /* ── 降级：没启用时调用要明确说「未配置」───────────────────────────── */

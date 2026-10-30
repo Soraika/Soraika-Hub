@@ -34,9 +34,10 @@ export function useEpisodes() {
   /**
    * @param {string} animeTitle 作品标题（帮模型认清季数）
    * @param {string[]} titles 这一批资源文件名（一批最多 120 条）
-   * @param {{ merge?: boolean }} [options] merge=true 时累加到已有结果（「显示更多」拉下一批）
+   * @param {{ merge?: boolean, season?: string|number }} [options]
+   *   merge=true 时累加到已有结果（「显示更多」拉下一批）；season 只做消歧（进 prompt，不进缓存 key）
    */
-  async function load(animeTitle, titles, { merge = false } = {}) {
+  async function load(animeTitle, titles, { merge = false, season: seasonHint = '' } = {}) {
     const list = (titles || []).filter(Boolean)
     if (!animeTitle || !list.length) return
 
@@ -54,7 +55,7 @@ export function useEpisodes() {
     state.value = 'loading'
     error.value = null
     try {
-      const res = await classifyEpisodes(animeTitle, list)
+      const res = await classifyEpisodes(animeTitle, list, { season: seasonHint })
       if (myToken !== token) return // 已经切到别的字幕组/作品了
       cache.set(key, res)
       episodes.value = merge ? { ...res.episodes, ...episodes.value } : res.episodes || {}

@@ -5,7 +5,7 @@
  * 启动时 index.js 调 loadStoredSettings()：先回落 .env 快照，再套用库里的覆盖项 ——
  * 所以改完设置**不用重启**即生效（改的就是同一个 config 对象），这也是「store 在库里」的好处。
  */
-import { config } from '../../config.js'
+import { config, defaultConfig } from '../../config.js'
 import { clearSettings, listSettings, setSettings, settingsMeta } from '../../db/settings.js'
 import { fail } from '../../lib/errors.js'
 import { logger } from '../../lib/logger.js'
@@ -59,6 +59,27 @@ export function fillMissingSettings({ log = logger } = {}) {
   return filled
 }
 
+/**
+ * 摘掉「已知不可用」的镜像地址（升级迁移）
+ * ---------------------------------------------------------------------------
+ * 旧版本的默认值是 `mikanime.tv + mikanani.me`，而 `mikanani.me` 实测**完全不响应**
+ * （8 秒超时）：主站一抖，故障切换就去撞它，每次失败多等 20 秒 ——
+ * 用户看到的就是"首页切季一直转圈 / 打不开"。
+ * 存进库里的旧值不会跟着代码默认值变，所以这里主动清一次（只清这一个已知死地址，
+ * 用户自己加的其它地址不动）。清完如果空了就回落新默认。
+ */
+const DEAD_MIRRORS = ['https://mikanani.me']
+
+function pruneDeadMirrors({ log = logger } = {}) {
+  const list = Array.isArray(config.mikan.bases) ? config.mikan.bases : []
+  const kept = list.filter((base) => !DEAD_MIRRORS.includes(String(base).replace(/\/+$/, '')))
+  if (kept.length === list.length) return
+  const next = kept.length ? kept : [defaultConfig.mikan.bases[0]]
+  applyValues({ 'mikan.bases': next })
+  setSettings({ 'mikan.bases': next })
+  log.info({ removed: list.length - kept.length, next }, 'settings.mirror prune')
+}
+
 /** 启动时调用：把库里存过的覆盖项应用上，再静默补齐缺的项 */
 export function loadStoredSettings({ log = logger } = {}) {
   const stored = listSettings()
@@ -74,6 +95,7 @@ export function loadStoredSettings({ log = logger } = {}) {
   const count = applyValues(stored)
   if (count) log.info({ count, keys: Object.keys(stored) }, 'settings.load ok')
   fillMissingSettings({ log })
+  pruneDeadMirrors({ log })
   return count
 }
 

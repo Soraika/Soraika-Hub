@@ -26,8 +26,10 @@ import { normalizeSignature } from '../../lib/release-match.js'
 import { createMemCache } from '../../cache/mem.js'
 import { chatJson } from '../sources/ai.js'
 
-/** 标签类型 → 展示顺序（version=修订版 / res=分辨率 / codec=编码 / sub=字幕 / source=片源） */
-const TYPE_ORDER = { revision: 0, res: 1, codec: 2, sub: 3, source: 4, other: 5 }
+/** 标签类型 → 展示顺序（version=修订版 / res / codec / sub / source / audio / other）
+ *  注意：**修订版的 type 就是 `version`** —— 早先这里写的是 `revision`，而生成标签时用的是
+ *  `'version'`，于是排序里 `TYPE_ORDER['version']` 是 undefined → 比较函数返回 NaN，排序失效。 */
+const TYPE_ORDER = { version: 0, res: 1, codec: 2, sub: 3, source: 4, audio: 5, other: 6 }
 const VALID_TYPES = new Set(Object.keys(TYPE_ORDER))
 
 /** 标签 30 分钟 / 集数 24 小时（都可配，**改完立即生效**），都按内容哈希缓存 */
@@ -105,117 +107,140 @@ const tagUserPrompt = (batch, context) =>
 
 /**
  * 提示词版本 —— 改动提示词时必须一起改它。
- * 缓存 key 里带上版本，否则改了 prompt 旧结果仍会命中，看起来「提示词没生效」。
+ * 缓存 key 里带上版本 + prompt 内容 hash + 模型名，三者任一变化都不会命中旧结果。
  * v3：标签之外多给一批「信息性特征」（info），供界面只读展示 —— **已废弃**，见 v4。
- * v4：**去掉 info**。让模型总结「这批资源的整体特征」，产出的多半是废话
- *     （「均为 XX 字幕组作品」——列表本来就都是同一个组），还每次都要花钱；
- *     集数这类能从文件名算出来的，改由前端按规则算（`Web/src/utils/episode.js` 的 releaseHighlights）。
- * v5：**放宽"整批一样就不返回"** —— 旧版那条让"只有一条/整批同格式"时一个标签都没有，
- *     界面上看着像"没识别出来"（实际是模型老实遵守了指令）。
- *     现在整批一致的维度**也要返回**并标 `all: true`，由前端当"只读特征"展示（不可点、不参与筛选）。
- * v6：明说**修版信息（v2 / 修正版 / Rework / Repack）不要返回** —— 那条由本地规则出，
- *     模型再给一条 `v2 修订版` 就是重复项（而且它 type 是 source，去重规则按类型分，
- *     清不掉，只能从源头禁掉）。
+ * v4：**去掉 info**（模型总结的"整体特征"多半是废话，还每次花钱）。
+ * v5：整批一致的维度**也要返回**并标 `all: true`（否则"只有一条/整批同格式"时一个标签都没有）。
+ * v6：明说**修版信息（v2 / 修正版 / Rework / Repack）不要返回**（那条由本地规则出）。
+ * v7：**合并调用** —— 标签 + 纯番名 + 季 + 每条集数**一次拿齐**（原来是 2 次独立调用，
+ *     token 与延迟都是两倍；而且两次调用看到的上下文不一样，季数还会对不上）。
  */
-const TAG_PROMPT_VERSION = 'v6'
+const BUNDLE_PROMPT_VERSION = 'v7'
 
-const TAG_SYSTEM_PROMPT = `你是动漫资源文件名解析专家。任务：从文件名列表里，找出**所有值得展示的维度**。
+/** prompt 内容 hash：改提示词但忘了升版本号时，缓存也不会命中旧结果 */
+const PROMPT_HASH = (text) => createHash('sha1').update(text).digest('hex').slice(0, 12)
+
+const BUNDLE_SYSTEM_PROMPT = `你是动漫资源文件名解析专家。一次给出三类产物：筛选标签、作品元信息、每条资源的集数。
 
 只返回 JSON：
 {
   "tags": [
     { "display": "给人看的标签名", "match": ["文件名里实际出现的写法1", "写法2"], "type": "类型", "all": false }
-  ]
+  ],
+  "rawName": "纯番名（去掉「第二季 / S2 / Season 2 / 第2期」这类季数标识）",
+  "season": 数字季度,
+  "episodes": { "原文文件名": 集数数字 或 "起始-结束"（合集）或 null（判断不了 / OVA / 剧场版） }
 }
 
-每条候选都要判断"它能不能区分资源"，但**两种都要返回**：
+【tags】找出**所有值得展示的维度**，每条都要判断"它能不能区分资源"，但**两种都要返回**：
 - 能区分（all: false）：不同资源在这条上确实不一样，用户点一下能筛掉一部分
-  （例：一半 1080P、一半 720P；一半内封简繁、一半繁日）
 - 整批一致（all: true）：这批资源的取值**完全相同**。仍然要返回 —— 界面会把它当
-  "整批特征"只读展示，不会做成可点的筛选项（例：整批都是 WEB-DL 1080p、整批都是简繁内封）
-- 反过来更要避免的：**什么都返回**。字幕组名、番剧名、发布时间、容器格式（MP4/MKV）、
-  音频编码（AAC/FLAC）、单集/合集信息、**修版信息（v2 / 修正版 / Rework / Repack）**——
+  "整批特征"只读展示，不会做成可点的筛选项
+- 更要避免的：**什么都返回**。字幕组名、番剧名、发布时间、容器格式（MP4/MKV）、
+  音频编码（AAC/FLAC）、单集/合集信息、**修版信息（v2 / 修正版 / Rework / Repack）** ——
   这些一律不返回（另有逻辑处理，返回了就是重复项）
 - 同一维度的不同取值要**分开返回**（「1080P」与「720P」是两条），不要合并成一条
 - 排序：能区分的（all: false）排前面、整批一致的排后面；同组内按展示价值排
-
-type 取值：
-- res：分辨率/画质（1080P、720P、BDRip…）
-- codec：编码/位深（HEVC、AVC、10bit…）
-- sub：字幕语言/形式（简繁内封、简繁、繁日…）
-- source：片源/平台（BD、WebRip、WEB-DL、CATCHPLAY、B-Global…）
-- other：其它值得展示的维度
-
-其它要求：
+- type 取值：res（分辨率/画质）、codec（编码/位深）、sub（字幕语言/形式）、
+  source（片源/平台）、other（其它值得展示的维度）
 - display 做归一化：1920x1080 / FHD / 1080p 统一成「1080P」；WEB-DL / WebDL 统一成「WEB-DL」
-- match 必须从输入文件名里**逐字摘抄**实际写法（大小写照抄）——前端靠字符串包含来筛；
-  all: true 的条目 match 也给（描述用），但前端不会拿它做筛选
-- 只返回 JSON，不要 Markdown`
+- match 必须从输入文件名里**逐字摘抄**实际写法（大小写照抄）—— 前端靠字符串包含来筛
+
+【rawName / season】
+- rawName：给到的作品标题去掉季数标识后返回；标题缺失时从文件名里取番名部分
+- season：标题里有「第X季 / S3 / 第2期」就用它；没有则按集数连续性推断；再不行给 1
+
+【episodes】
+- key 必须与输入的文件名**逐字一致**，一条不漏
+- 集数只给数字；合集给 "1-12" 这种范围字符串；判断不了就给 null
+
+只返回 JSON，不要 Markdown。`
+
+/** 拼一次请求的 user prompt：带作品上下文（番名 / 季），让模型知道自己在分析什么 */
+const bundleUserPrompt = (batch, context) =>
+  `${context ? `作品：${context}\n\n` : ''}分析下面 ${batch.length} 条资源文件名：\n\n${batch
+    .map((t, i) => `${i + 1}. ${t}`)
+    .join('\n')}`
 
 /**
- * 资源文件名 → 筛选标签
+ * 缓存 key：**版本 + 模型 + prompt 内容 hash + 番名 + 文件名** 都参与
  * ---------------------------------------------------------------------------
- * · **全量分析**：有多少条文件名就分析多少条 —— 切批（单批内部常数）、
- *   批间按 `ai.concurrency` 并发跑完，各批结果合并去重（同名标签的 `match` 取并集，筛得更全）
- * · **带作品上下文**：把番剧名 / 季一起给模型（它得知道在分析什么，才分得清"这是字幕组名"
- *   还是"这是片源"）
- * · `all`（整批一致）由**后端按全量数据重算**：单批模型的判断覆盖不了全量，
- *   而 `all` 的语义恰恰是"覆盖全部资源"
- * @param {string[]} titles 资源文件名列表
- * @param {{ log?: object, animeTitle?: string, season?: string|number }} [options]
- * @returns {Promise<{ tags: Array<{name:string,type:string,all:boolean,match:string[]}>,
- *                     model:string, cached:boolean, ms:number,
- *                     analyzed:number, batches:number }>}
+ * 早先只带「版本 + 文件名」——换模型、或改了提示词却忘了升版本号时，
+ * 旧结果会继续命中（表现出来就是"改了没生效"）。现在三个要素都进 key。
+ * **季不参与 key**：同一个番名 + 同一批文件名，问一次就够了；
+ * 把季写进 key 会让「标签带季、集数不带季」变成两次调用（合并调用的意义就没了）。
  */
-export async function classifyReleaseTags(titles, { log = logger, animeTitle = '', season = '' } = {}) {
-  // 去重 + 去空，但**不截断**（全量）
-  const list = [...new Set((titles || []).map((t) => String(t || '').trim()).filter(Boolean))]
+const bundleCacheKey = (animeTitle, list) =>
+  [BUNDLE_PROMPT_VERSION, config.ai.model, PROMPT_HASH(BUNDLE_SYSTEM_PROMPT), hashOf([animeTitle, ...list])].join(':')
+
+/**
+ * **一次调用拿三类产物**：标签 + 纯番名/季 + 每条集数
+ * ---------------------------------------------------------------------------
+ * 全量分批（单批 `ai.maxTitles` 条，批间按 `ai.concurrency` 并发），结果合并：
+ *   · 标签：同名把 `match` 合起来，`all` 由**全量**重算（单批模型判断覆盖不了全部）
+ *   · 番名 / 季：以**第一批**为准（同一部作品不会各有各的季）
+ *   · 集数：逐条合并，认不出就给 null（宁缺勿错）
+ * 结果同时写进两个缓存（标签 30 分钟 / 集数 24 小时），各自按自己的 TTL 命中。
+ */
+async function classifyBundle(titles, { log = logger, animeTitle = '', season = '', kind = 'tags' } = {}) {
+  const list = uniqueTitles(titles)
   if (!list.length) throw fail('BAD_REQUEST', 'titles 需要是非空的文件名数组')
 
   const context = [animeTitle, season ? `第 ${season} 季` : ''].filter(Boolean).join(' · ')
-  const key = `tags:${TAG_PROMPT_VERSION}:${hashOf([context, ...list])}`
-  const cached = tagCache.get(key)
+  const key = bundleCacheKey(String(animeTitle || '').trim(), list)
+  const cache = kind === 'episodes' ? episodeCache : tagCache
+  const cached = cache.get(key)
   if (cached) {
-    log.debug({ titles: list.length, tags: cached.tags.length }, 'ai.tags cache-hit')
+    log.debug({ titles: list.length, kind }, 'ai.bundle cache-hit')
     return { ...cached, cached: true }
   }
 
-  /* 全量分批：单批大小是内部常数（默认 120，一次 prompt 别太大），
-     超过就切多批、批间按 `ai.concurrency` 并发跑完（**并发上限**是设置页里那个旋钮）。
-     旧实现是 `list.slice(0, maxTitles)` —— 只分析前 120 条，几百条资源的后半截
-     直接没进过模型，用户看到的就是"怎么就这么点标签"。 */
+  const startedAt = Date.now()
   const batchSize = Math.max(1, config.ai.maxTitles || 40)
   const batches = chunk(list, batchSize)
   const limit = Math.min(Math.max(1, Number(config.ai.concurrency) || 1), 8)
 
   const runs = await mapLimit(batches, limit, async (batch) => {
     const { parsed, model, ms } = await chatJson({
-      system: TAG_SYSTEM_PROMPT,
-      user: tagUserPrompt(batch, context),
+      system: BUNDLE_SYSTEM_PROMPT,
+      user: bundleUserPrompt(batch, context),
       log,
     })
-    return { tags: Array.isArray(parsed?.tags) ? parsed.tags : [], model, ms }
+    return { parsed: parsed || {}, model, ms }
   })
 
   const model = runs[runs.length - 1]?.model || config.ai.model
-  const ms = runs.reduce((sum, run) => sum + (run.ms || 0), 0)
 
-  // 收进 Map：同名标签把 match 合起来（不同批各看到的写法合并，前端按包含匹配更全）
+  /* ① 标签：同名合并 match；all 按全量重算 */
   const merged = new Map()
-  for (const run of runs) {
-    for (const raw of run.tags) {
+  const episodes = {}
+  let rawName = String(animeTitle || '').trim()
+  let seasonNo = 1
+
+  for (const [index, run] of runs.entries()) {
+    for (const raw of Array.isArray(run.parsed?.tags) ? run.parsed.tags : []) {
       const name = String(raw?.display || '').trim()
       if (!name) continue
-      const match = (Array.isArray(raw?.match) ? raw.match : [name])
-        .map((m) => String(m || '').trim())
-        .filter(Boolean)
+      const match = (Array.isArray(raw?.match) ? raw.match : [name]).map((m) => String(m || '').trim()).filter(Boolean)
       const hit = merged.get(name)
       if (hit) hit.match = [...new Set([...hit.match, ...match])]
       else merged.set(name, { name, type: VALID_TYPES.has(raw?.type) ? raw.type : 'other', match })
     }
+
+    // 番名 / 季以第一批为准
+    if (index === 0) {
+      if (run.parsed?.rawName) rawName = String(run.parsed.rawName).trim()
+      if (Number(run.parsed?.season) > 0) seasonNo = Number(run.parsed.season)
+    }
+
+    for (const [name, value] of Object.entries(run.parsed?.episodes || {})) {
+      // 集数归一：数字 / "1-12" / null，别的写法一律丢掉（宁缺勿错）
+      if (value === null) episodes[name] = null
+      else if (typeof value === 'number') episodes[name] = value
+      else if (typeof value === 'string' && /^\d{1,4}(-\d{1,4})?$/.test(value.trim())) episodes[name] = value.trim()
+    }
   }
 
-  // all 按**全量**重算：写法能命中每一条才算"整批一致"（单批的判断覆盖不了全量）
   const lowers = list.map((t) => t.toLowerCase())
   const tags = dropCovered(
     [...merged.values()]
@@ -227,7 +252,7 @@ export async function classifyReleaseTags(titles, { log = logger, animeTitle = '
   ).sort(
     (a, b) =>
       Number(a.all) - Number(b.all) ||
-      TYPE_ORDER[a.type] - TYPE_ORDER[b.type] ||
+      (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9) ||
       a.name.localeCompare(b.name),
   )
 
@@ -237,115 +262,73 @@ export async function classifyReleaseTags(titles, { log = logger, animeTitle = '
   const revised = list.filter((title) => revisionOf(title) >= 2).length
   if (revised) tags.unshift({ name: '修订版', type: 'version', kind: 'revision', count: revised, match: [] })
 
-  const result = { tags, model, ms, analyzed: list.length, batches: batches.length }
+  const result = {
+    tags,
+    rawName,
+    season: seasonNo,
+    episodes,
+    model,
+    ms: Date.now() - startedAt,
+    analyzed: list.length,
+    batches: batches.length,
+  }
   tagCache.set(key, result)
+  episodeCache.set(key, result)
   log.info(
-    { titles: list.length, tags: tags.length, batches: batches.length, model, ms },
-    'ai.tags ok',
+    { titles: list.length, tags: tags.length, episodes: Object.keys(episodes).length, batches: batches.length, model, ms: result.ms },
+    'ai.bundle ok',
   )
   return { ...result, cached: false }
+}
+
+/**
+ * 资源文件名 → 筛选标签（**合并调用**里的 tags 那一部分）
+ * @param {string[]} titles 资源文件名列表
+ * @param {{ log?: object, animeTitle?: string, season?: string|number }} [options]
+ * @returns {Promise<{ tags: Array<{name:string,type:string,all:boolean,match:string[]}>,
+ *                     model:string, cached:boolean, ms:number,
+ *                     analyzed:number, batches:number }>}
+ */
+export async function classifyReleaseTags(titles, options = {}) {
+  const { tags, model, ms, analyzed, batches, cached } = await classifyBundle(titles, { ...options, kind: 'tags' })
+  return { tags, model, ms, analyzed, batches, cached }
 }
 
 
 /* ── ② 集数 / 季 / 纯番名解析 ───────────────────────────────────────────── */
 
 /**
- * 提示词版本（与标签同一个道理）：集数缓存 24 小时，不带版本的话改完 prompt
- * 旧结果还会继续命中一整天，看起来「怎么改都没生效」。
- */
-const EPISODE_PROMPT_VERSION = 'v1'
-
-const EPISODE_SYSTEM_PROMPT = `你是动漫资源文件名解析专家。从文件名里提取下载与重命名需要的结构化信息。
-
-只返回 JSON：
-{
-  "rawName": "纯番名（去掉「第二季 / S2 / Season 2 / 第2期」这类季数标识）",
-  "season": 数字季度,
-  "episodes": { "原文文件名": 集数数字 或 "起始-结束"（合集）或 null（判断不了 / OVA / 剧场版） }
-}
-
-规则：
-- episodes 的 key 必须与输入的文件名**逐字一致**
-- 集数只给数字；合集给 "1-12" 这种范围字符串；判断不了就给 null
-- season：标题里有「第X季 / S3 / 第2期」就用它；没有则按集数连续性推断；再不行给 1
-- rawName 用给到的作品标题去掉季数标识后返回；标题缺失时从文件名里取番名部分
-- 只返回 JSON，不要 Markdown`
-
-/**
- * 集数每批几条 —— 20 条一批：比 10 条少一半往返（120 条 = 6 批 ≈ 3 秒），
- * prompt 也还小（20 个文件名），不会把一次请求撑大。
- */
-const EPISODE_BATCH = 20
-
-/**
- * 资源文件名 → 纯番名 / 季 / 每条资源的集数
+ * 资源文件名 → 纯番名 / 季 / 每条资源的集数（**合并调用**里的那部分）
  * ---------------------------------------------------------------------------
- * · **全量**：有多少条文件名就解析多少条（不再 `slice(0, maxTitles)` 截断），
- *   按 `EPISODE_BATCH` 条一批、批间按 `ai.concurrency` 并发跑完
- * · 番名 / 季以**第一批**的结果为准（同一部作品的资源不会各有各的季）
+ * 与 `classifyReleaseTags` 走**同一次模型调用**（v7 起合并）：命中缓存时零成本，
+ * 没命中时一次拿齐三类产物 —— 所以「先解析标签、再解析集数」不会变成两次调用。
+ * 番名 / 季以第一批为准；集数逐条合并（认不出给 null）。
  * @param {string} animeTitle 作品标题（帮模型认清季数）
  * @param {string[]} titles 资源文件名列表
  * @returns {Promise<{ rawName:string, season:number, episodes:Record<string, number|string|null>,
  *                     model:string, batches:number, analyzed:number, cached:boolean, ms:number }>}
  */
-export async function classifyEpisodes(animeTitle, titles, { log = logger } = {}) {
+export async function classifyEpisodes(animeTitle, titles, options = {}) {
+  const { log = logger } = options
   const list = uniqueTitles(titles)
   if (!list.length) throw fail('BAD_REQUEST', 'titles 需要是非空的文件名数组')
 
-  const title = String(animeTitle || '').trim()
-  const key = `eps:${EPISODE_PROMPT_VERSION}:${hashOf([title, ...list])}`
-  const cached = episodeCache.get(key)
-  if (cached) {
-    log.debug({ titles: list.length }, 'ai.episodes cache-hit')
-    return { ...cached, cached: true }
+  const bundle = await classifyBundle(list, {
+    ...options,
+    log,
+    animeTitle: String(animeTitle || '').trim(),
+    kind: 'episodes',
+  })
+  return {
+    rawName: bundle.rawName,
+    season: bundle.season,
+    episodes: bundle.episodes,
+    model: bundle.model,
+    batches: bundle.batches,
+    analyzed: bundle.analyzed,
+    cached: bundle.cached,
+    ms: bundle.ms,
   }
-
-  const startedAt = Date.now()
-  const batches = chunk(list, EPISODE_BATCH)
-
-  // 批间并发可配（默认 3）：串行在几百条资源时要等几十个来回，太慢；无脑并发又会被限流
-  const limit = Math.min(Math.max(1, Number(config.ai.concurrency) || 1), 8)
-  const runs = await mapLimit(batches, limit, (batch) =>
-    chatJson({
-      system: EPISODE_SYSTEM_PROMPT,
-      user: `作品标题：${title || '（无）'}\n\n文件名：\n${batch.map((t, n) => `${n + 1}. ${t}`).join('\n')}`,
-      log,
-    }),
-  )
-
-  let rawName = title || ''
-  let season = 1
-  const episodes = {}
-  for (const [index, res] of runs.entries()) {
-    // 季与番名以第一批为准（同一部作品的资源不会各有各的季）
-    if (index === 0) {
-      if (res.parsed?.rawName) rawName = String(res.parsed.rawName).trim()
-      if (Number(res.parsed?.season) > 0) season = Number(res.parsed.season)
-    }
-
-    for (const [name, value] of Object.entries(res.parsed?.episodes || {})) {
-      // 集数归一：数字 / "1-12" / null，别的写法一律丢掉（宁缺勿错）
-      if (value === null) episodes[name] = null
-      else if (typeof value === 'number') episodes[name] = value
-      else if (typeof value === 'string' && /^\d{1,4}(-\d{1,4})?$/.test(value.trim())) episodes[name] = value.trim()
-    }
-  }
-
-  const result = {
-    rawName,
-    season,
-    episodes,
-    model: runs[runs.length - 1]?.model || config.ai.model,
-    batches: batches.length,
-    analyzed: list.length,
-    ms: Date.now() - startedAt,
-  }
-  episodeCache.set(key, result)
-  log.info(
-    { titles: list.length, batches: batches.length, matched: Object.keys(episodes).length, model: result.model, ms: result.ms },
-    'ai.episodes ok',
-  )
-  return { ...result, cached: false }
 }
 
 /* ── ③ 系列归一（命名风格 / 系列总名 / 番外归类）─────────────────────────────

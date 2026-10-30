@@ -33,6 +33,8 @@ export const AI_TOOLS = [
           items: { type: 'string' },
           description: '资源文件名列表，例如 ["[LoliHouse] 番名 - 01 [1080P][简繁]"]',
         },
+        animeTitle: { type: 'string', description: '作品标题（帮助模型分清字幕组名 / 片源 / 番名）' },
+        season: { type: 'string', description: '季（如「秋」或 2），同样用于消歧' },
       },
       required: ['titles'],
       additionalProperties: false,
@@ -45,6 +47,7 @@ export const AI_TOOLS = [
       type: 'object',
       properties: {
         title: { type: 'string', description: '作品标题（面板上的番名，帮助判断季数）' },
+        season: { type: 'string', description: '季（如「秋」或 2）' },
         titles: { type: 'array', items: { type: 'string' }, description: '资源文件名列表' },
       },
       required: ['titles'],
@@ -73,7 +76,10 @@ export async function callAiTool(name, args = {}, { log = logger } = {}) {
         season: args.season ?? '',
       })
     case 'anime_episode_meta':
-      return classifyEpisodes(args.title, normalizeTitles(args.titles), { log })
+      return classifyEpisodes(args.title, normalizeTitles(args.titles), {
+        log,
+        season: args.season ?? '',
+      })
     default:
       // 清单加了但忘了接实现时，错误要指出来是哪一条
       throw fail('INTERNAL', `工具 ${name} 还没有接上实现`)

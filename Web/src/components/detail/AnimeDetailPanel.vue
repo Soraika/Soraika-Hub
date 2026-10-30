@@ -376,7 +376,8 @@ async function ensureParsed(limit = AI_BATCH) {
   const animeTitle = props.data?.title || ''
   await Promise.allSettled([
     loadAiTags(activeSubgroupId.value, batch, animeTitle, { merge: !first }),
-    loadEpisodes(animeTitle, batch, { merge: !first }),
+    // 季一起给（与标签解析同一份上下文 → 服务端能命中同一份合并结果，省一次模型调用）
+    loadEpisodes(animeTitle, batch, { merge: !first, season: data.value?.season?.season ?? '' }),
   ])
 }
 

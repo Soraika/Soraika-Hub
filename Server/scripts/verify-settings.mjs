@@ -165,8 +165,17 @@ try {
     `数据源支持多地址 → ${listFields.join(' / ')}`,
   )
   check(
-    settings.fields.filter((f) => f.type === 'list').every((f) => typeof f.value === 'string' && f.value.includes('\n')),
+    settings.fields
+      .filter((f) => f.type === 'list')
+      .every((f) => typeof f.value === 'string' && (f.path === 'bgm.bases' ? f.value.includes('\n') : true)),
     '多地址在界面上是「一行一个」的文本（存库仍是数组）',
+  )
+  /* Mikan 默认只配一个：`mikanani.me` 实测完全不响应，当备用只会让主站抖动时多等 20s
+     （"首页切季一直转圈/打不开"就是这么来的）。这里钉住默认值。 */
+  const mikanBases = fieldOf(settings, 'mikan.bases')
+  check(
+    typeof mikanBases?.default === 'string' && mikanBases.default.split('\n').filter(Boolean).length === 1,
+    `Mikan 默认只配一个地址（不加会超时的死镜像）→ ${JSON.stringify(mikanBases?.default)}`,
   )
   /* 缓存时长必须**改完立即生效**：缓存实例是模块加载时创建的长生命周期对象，
      传死 ttl 就变成"保存成功、实际一直用旧值"（必须重启进程才生效）。 */
