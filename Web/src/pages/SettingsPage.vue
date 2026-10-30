@@ -112,14 +112,12 @@
                 :models="models"
                 :models-loading="modelsLoading"
                 :providers="providers"
-                :custom-providers="customProviders"
                 :base-url="aiBaseUrl"
                 :row-tests="rowTests[field.path] || {}"
                 @update="setValue(field.path, $event)"
                 @test="testField(field.path, valueOf(field))"
                 @test-row="testRow(field.path, $event)"
                 @pick-provider="pickProvider"
-                @save-custom-provider="addCustomProvider"
                 @load-models="loadModels"
               />
 
@@ -264,9 +262,7 @@ const {
   testField,
   rowTests,
   testRow,
-  customProviders,
   pickProvider,
-  addCustomProvider,
   aiBaseUrl,
   setValue,
   revert,
@@ -363,7 +359,14 @@ onMounted(load)
 .settings {
   /* 工具页不要楷体：base.css 把 h1~h4 交给了 --font-ui（霞鹜文楷），这里压回正文体 */
   font-family: var(--font-body);
+  /* 父级 `.main-content` 是 `height:100vh; overflow:hidden` —— 页面自己必须是滚动容器，
+     否则超出一屏的部分**直接被裁掉、也滚不动**（"每日更新时刻 / 数据源被挡住"就是这个）。 */
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding-bottom: 72px;
+  /* 滚动到锚点时给吸顶栏留位置（跳转 / 键盘聚焦不要被顶栏盖住） */
+  scroll-padding-top: 72px;
 }
 
 /* 吸顶栏：底色与底线交给全局 .topbar-surface（与首页/发现页同一套），这里只管定位与留白 */

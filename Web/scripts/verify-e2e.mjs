@@ -649,17 +649,29 @@ try {
     controlSource.includes('commitEdit') && controlSource.includes('editText'),
     '交互界面里的数值输入失焦/回车即提交，解析不了就回滚',
   )
+  /* 设置页**自己必须能滚**：父级 `.main-content` 是 height:100vh + overflow:hidden，
+     页面不设 height/overflow 的话，超出一屏的字段（每日更新时刻、数据源）会被直接裁掉。 */
+  check(
+    /\.settings\s*\{[^}]*height:\s*100%/s.test(settingsSource) &&
+      /\.settings\s*\{[^}]*overflow-y:\s*auto/s.test(settingsSource),
+    '设置页是滚动容器（height:100% + overflow-y:auto）—— 一屏外的字段能滚到，不会被裁',
+  )
+  check(
+    /\.fields\s*\{[^}]*container-type:\s*inline-size/s.test(settingsSource) &&
+      /@container \(min-width:\s*520px\)[\s\S]{0,120}\.field\.wide/s.test(settingsSource),
+    '「宽字段占两格」按**容器宽度**判断（容器查询）—— 只有一格时不再被顶出卡片',
+  )
+
   /* AI 提供商：**选名字**（目录 199 家 + 自定义），带搜索；不是填 URL 的下拉 */
   check(
     controlSource.includes("field.type === 'provider'") &&
       controlSource.includes('providerMatches') &&
       controlSource.includes('pop-search') &&
-      controlSource.includes('添加自定义'),
-    'AI 提供商是「选提供商」：带搜索的目录 + 列表末尾「添加自定义」（点开才输入名称）',
+      controlSource.includes('自定义'),
+    'AI 提供商是「选提供商」：带搜索的目录 + 最后一行「自定义」（选了就自己填地址）',
   )
   check(
-    controlSource.includes("emit('pick-provider'") && controlSource.includes("emit('save-custom-provider'") &&
-      controlSource.includes('models: item.models'),
+    controlSource.includes("emit('pick-provider'") && controlSource.includes('models: item.models'),
     '选中提供商时把该家的模型名一起带过去（下面的参数自动补齐）',
   )
   check(controlSource.includes('field.models') && controlSource.includes('可用模型'), '模型：从接口读取候选列表')

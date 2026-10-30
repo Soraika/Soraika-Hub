@@ -98,6 +98,8 @@ onBeforeUnmount(() => bind(false))
   position: fixed;
   z-index: 60;
   min-width: 180px;
+  /* 内容再宽也不许超出视口（不然靠右的字段一展开，左边就被顶出屏幕） */
+  max-width: min(92vw, 440px);
   overflow-y: auto;
   padding: 8px;
   border: 1px solid var(--border);

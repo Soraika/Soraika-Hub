@@ -273,30 +273,17 @@
           <span class="provider-name">{{ item.name }}</span>
           <span class="provider-url">{{ item.baseUrl }}</span>
         </button>
-        <p v-if="!providerMatches.length" class="pop-empty">没找到 —— 换个关键词，或直接添加自定义</p>
+        <p v-if="!providerMatches.length" class="pop-empty">没找到 —— 换个关键词，或选下面的「自定义」</p>
 
-        <!-- **列表最后一行就是「添加」**：点它才出现名称输入（不再在底部常驻一个输入框 + 按钮） -->
-        <div v-if="addingCustom" class="pop-add">
-          <input
-            ref="customInput"
-            v-model="newProviderName"
-            class="pop-input"
-            type="text"
-            spellcheck="false"
-            placeholder="自定义名称（例如：我家网关）"
-            @keyup.enter="createCustom"
-            @keyup.esc="cancelCustom"
-          />
-          <button class="src-btn success" type="button" title="保存" @click="createCustom">
-            <IconCheck :size="15" />
-          </button>
-          <button class="src-btn" type="button" title="取消" @click="cancelCustom">
-            <IconX :size="15" />
-          </button>
-        </div>
-        <button v-else class="opt wide provider add" type="button" @click="startCustom">
-          <span class="provider-name"><IconPlus :size="14" /> 添加自定义</span>
-          <span class="provider-url">给当前接口地址起个名字</span>
+        <!-- 列表最后一行固定是「自定义」：选中它，下面的「接口地址」就由你自己填 -->
+        <button
+          class="opt wide provider add"
+          :class="{ on: isCustom }"
+          type="button"
+          @click="chooseCustom"
+        >
+          <span class="provider-name"><IconPencil :size="14" /> 自定义</span>
+          <span class="provider-url">自己填接口地址</span>
         </button>
       </div>
     </PopoverPanel>
@@ -310,15 +297,13 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import {
   IconAdjustmentsHorizontal,
-  IconCheck,
   IconChevronDown,
   IconCircleCheck,
   IconCircleX,
   IconClock,
   IconEye,
+  IconPencil,
   IconPlugConnected,
-  IconPlus,
-  IconX,
 } from '@tabler/icons-vue'
 import PopoverPanel from '@/components/ui/PopoverPanel.vue'
 import SourceListEditor from './SourceListEditor.vue'
@@ -354,14 +339,12 @@ const props = defineProps({
   modelsLoading: { type: Boolean, default: false },
   /** 供应商清单（来自 /api/ai/providers；取不到时是内置清单） */
   providers: { type: Array, default: () => [] },
-  /** 自定义提供商：[{ name, baseUrl }]（来自 ai.customProviders） */
-  customProviders: { type: Array, default: () => [] },
-  /** 当前生效的接口地址（新建自定义时用它） */
+  /** 当前生效的接口地址（自定义 / 按地址反查名字用） */
   baseUrl: { type: String, default: '' },
   /** 多源列表里每一行的测试结果：url → { state, detail } */
   rowTests: { type: Object, default: () => ({}) },
 })
-const emit = defineEmits(['update', 'test', 'test-row', 'pick-provider', 'save-custom-provider', 'load-models'])
+const emit = defineEmits(['update', 'test', 'test-row', 'pick-provider', 'load-models'])
 
 /**
  * 多源地址：界面是数组、存库是换行文本（`mikan.bases` 的线上格式没变）
@@ -370,20 +353,18 @@ const emit = defineEmits(['update', 'test', 'test-row', 'pick-provider', 'save-c
 const listItems = computed(() => String(props.value ?? '').split('\n'))
 const onListUpdate = (items) => emit('update', items.join('\n'))
 
-/* ── 提供商：目录（models.dev）+ 自定义 ──────────────────────────────────
+/* ── 提供商：目录（models.dev）+「自定义」 ────────────────────────────────
    下拉里是 **199 家 + 自定义**，所以必须有搜索框（滚一屏找一个供应商不现实）。
-   选中 = 同时写「提供商名」与「接口地址」；「新建自定义」= 把**当前地址**起个名字。 */
+   选目录里的 → 自动填好下面的「接口地址」，并按那家的模型列表补齐「模型」；
+   选「自定义」→ 什么都不填，地址由使用者自己写。 */
+const CUSTOM_NAME = '自定义'
 const providerQuery = ref('')
-const newProviderName = ref('')
-const addingCustom = ref(false)
-const customInput = ref(null)
 const normBase = (url) => String(url || '').trim().toLowerCase().replace(/\/+$/, '')
 
-/** 自定义排前面（自己配的通常就是最常用的那个）；目录项带上它自带的模型名 */
-const providerList = computed(() => [
-  ...props.customProviders.map((p) => ({ name: p.name, baseUrl: p.baseUrl, models: [] })),
-  ...props.providers.map((p) => ({ name: p.name, baseUrl: p.baseUrl, models: p.models || [] })),
-])
+/** 目录项带上各自的模型名（用于自动补齐模型） */
+const providerList = computed(() =>
+  props.providers.map((p) => ({ name: p.name, baseUrl: p.baseUrl, models: p.models || [] })),
+)
 
 const providerMatches = computed(() => {
   const q = providerQuery.value.trim().toLowerCase()
@@ -393,7 +374,9 @@ const providerMatches = computed(() => {
   return list.slice(0, 80)
 })
 
-/** 行内显示的名字：优先用存下来的提供商名，其次按地址反查，最后「未选择」 */
+const isCustom = computed(() => String(props.value || '').trim() === CUSTOM_NAME)
+
+/** 行内显示的名字：存下来的名字 → 按地址反查 → 「未选择」 */
 const providerLabel = computed(() => {
   const name = String(props.value || '').trim()
   if (name) return name
@@ -406,29 +389,16 @@ const isCurrentProvider = (item) =>
   (Boolean(props.value) && item.name === String(props.value).trim())
 
 function chooseProvider(item) {
-  // 选提供商时把"这一家自己带的模型名"一起带过去，让下面的模型能自动补齐
+  // 把"这一家自己带的模型名"一起带过去，让下面的模型能自动补齐
   emit('pick-provider', { name: item.name, baseUrl: item.baseUrl, models: item.models || [] })
   providerQuery.value = ''
   close()
 }
 
-function startCustom() {
-  addingCustom.value = true
+/** 「自定义」= 只记个名字，地址留给使用者自己填 */
+function chooseCustom() {
+  emit('pick-provider', { name: CUSTOM_NAME, baseUrl: '', models: [] })
   providerQuery.value = ''
-  nextTick(() => customInput.value?.focus())
-}
-
-function cancelCustom() {
-  addingCustom.value = false
-  newProviderName.value = ''
-}
-
-function createCustom() {
-  const name = newProviderName.value.trim()
-  if (!name) return
-  emit('save-custom-provider', { name, baseUrl: props.baseUrl })
-  newProviderName.value = ''
-  addingCustom.value = false
   close()
 }
 
@@ -1430,7 +1400,7 @@ function step(dir) {
   flex-direction: column;
   gap: 2px;
 }
-/* 列表里最后一行「添加自定义」：虚线框 + 图标，一眼看出是"新增"而不是某个供应商 */
+/* 列表里最后一行「自定义」：虚线框 + 铅笔图标，一眼看出是"自己填"而不是某家供应商 */
 .opt.add {
   margin-top: 2px;
   border: 1px dashed var(--border);
@@ -1440,39 +1410,16 @@ function step(dir) {
   border-color: var(--accent);
   color: var(--accent);
 }
+.opt.add.on {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
 .opt.add .provider-name {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-}
-/* 展开后的"填名称"一行（贴着列表底部，不再单独占一块） */
-.pop-add {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-  padding: 4px;
-  border: 1px dashed var(--accent);
-  border-radius: var(--radius-sm);
-}
-.pop-input {
-  flex: 1;
-  min-width: 0;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 0.76rem;
-}
-.pop-input:focus {
-  border-color: var(--accent);
-  outline: none;
-}
-.pop-link:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 /* 提供商未选时给个灰字，别让它看着像已配置 */
 .value-btn.empty .value-text {

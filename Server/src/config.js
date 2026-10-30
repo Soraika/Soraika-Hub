@@ -100,10 +100,8 @@ export const config = {
   ai: {
     baseUrl: trimSlash('https://api.deepseek.com/v1'),
     apiKey: '',
-    /** 只用于界面显示"用的是哪家"（真正生效的是 baseUrl）；从目录或自定义里选出来的名字 */
+    /** 只用于界面显示"用的是哪家"（真正生效的是 baseUrl）；目录里的名字或「自定义」 */
     provider: '',
-    /** 自定义提供商：[{ name, baseUrl }] —— 给某个地址起个名字，下次能在下拉里直接选 */
-    customProviders: [],
     model: 'deepseek-chat',
     /** 单次调用超时：模型思考慢，比抓网页给得宽 */
     timeoutMs: 60000,

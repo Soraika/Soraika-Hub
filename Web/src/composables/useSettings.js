@@ -163,33 +163,15 @@ export function useSettings() {
   const providerModels = computed(() => matchedProvider.value?.models ?? [])
 
   /**
-   * 自定义提供商：`[{ name, baseUrl }]`
-   * 草稿里可能是数组、也可能是用户手改的 JSON 字符串（高级模式下的文本框）—— 两种都认。
-   */
-  const customProviders = computed(() => {
-    const path = 'ai.customProviders'
-    const raw = path in draft.value ? draft.value[path] : fieldByPath.value.get(path)?.value
-    const pick = (arr) => arr.filter((p) => p && p.name && p.baseUrl)
-    if (Array.isArray(raw)) return pick(raw)
-    if (typeof raw === 'string' && raw.trim()) {
-      try {
-        const parsed = JSON.parse(raw)
-        return Array.isArray(parsed) ? pick(parsed) : []
-      } catch {
-        return [] // 手改坏了就先当没有（保存时后端会拦下来）
-      }
-    }
-    return []
-  })
-
-  /**
-   * 选提供商 = **同时**写「提供商名」（界面显示）与「接口地址」（真正生效），
+   * 选提供商 = 写「提供商名」（界面显示）+「接口地址」（真正生效），
    * 并把**下面的参数一起补齐**：模型不在这一家的列表里就换成它推荐的那个
    * （优先 `chat` / `flash` / `mini` 这类适合批量分类的；否则取第一个）。
+   * 选「自定义」时 `baseUrl` 为空 → 只记名字，地址留给使用者自己填。
    */
   function pickProvider({ name, baseUrl, models: modelList }) {
     setValue('ai.provider', name || '')
-    if (baseUrl) setValue('ai.baseUrl', baseUrl)
+    if (!baseUrl) return
+    setValue('ai.baseUrl', baseUrl)
 
     const list = Array.isArray(modelList) ? modelList : []
     const current = String(
@@ -200,22 +182,6 @@ export function useSettings() {
         list.find((m) => /chat/i.test(m)) || list.find((m) => /flash|mini|turbo/i.test(m)) || list[0]
       setValue('ai.model', preferred)
     }
-  }
-
-  /**
-   * 新建自定义提供商：把**当前地址**存成这个名字（同名则更新地址）
-   * 用户原话："提供商可以新建自定义，然后输入名称就可以了" —— 地址他已经在上面填过了。
-   */
-  function addCustomProvider({ name, baseUrl }) {
-    const cleanName = String(name || '').trim()
-    const cleanUrl = String(baseUrl || '').trim()
-    if (!cleanName) return { ok: false, message: '先给它起个名字' }
-    if (!cleanUrl) return { ok: false, message: '当前没有接口地址，先去高级里填一个' }
-    const next = customProviders.value.filter((p) => p.name !== cleanName)
-    next.push({ name: cleanName, baseUrl: cleanUrl })
-    setValue('ai.customProviders', next)
-    pickProvider({ name: cleanName, baseUrl: cleanUrl })
-    return { ok: true }
   }
 
 
@@ -504,9 +470,7 @@ export function useSettings() {
     providers,
     loadProviders,
     providerModels,
-    customProviders,
     pickProvider,
-    addCustomProvider,
     aiBaseUrl,
     rowTests,
     testRow,

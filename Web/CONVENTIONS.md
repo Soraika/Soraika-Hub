@@ -34,8 +34,8 @@
     列按量级自动选、可滚可拖；滚动停下后按各列求和换算成毫秒提交。
     不要让用户「心算毫秒」或「敲 1m 30s」——时长的量级从 350ms 到 7 天，滚轮才是对的手感；
   - 其它数值：`[−] 输入 [＋]`（按数量级 1 / 10 / 100 步进）；
-  - **AI 的「提供商」是选名字**（目录 199 家 + 自定义，带搜索），不是填 URL 的下拉；
-    新建自定义 = 把**当前地址**起个名字（`ai.customProviders`），选中时同时写 `ai.provider` 与 `ai.baseUrl`；
+  - **AI 的「提供商」是选名字**（目录 199 家 + 最后一行「自定义」，带搜索），不是填 URL 的下拉；
+    选目录里的 → 自动填 `ai.baseUrl` 并按那家的模型列表补齐 `ai.model`；选「自定义」→ 地址自己填；
   - 多源地址是**可拖拽的有序列表**（`SourceListEditor`）：拖/上下移排序、增删、每条单独测、一键全测；
   - 弹层**与输入框同宽**（`PopoverPanel` 的 `width="anchor"`）。
   - 步长按量级（秒级 1s、分钟级 30s、小时级 5m、次数类 1），别让人按上千次；
@@ -54,8 +54,8 @@
 - **基础模式里不许塞 advanced 项 —— 哪怕它被改过**（"改过的也显示"会让基础悄悄变成全部，
   使用者就会问"为什么基础里还有每条间隔"）；
 - 被收起的项里有改过的，就在顶栏「高级」按钮上挂**角标**（`高级 ③`）交代，别让人找不到自己改过什么；
-- 基础模式现在就是这 9 项：`mikan.bases` / `bgm.bases` / `ai.provider` / `ai.apiKey` / `ai.model` /
-  `worker.dailyAt` / `worker.fetchSubgroups` / `qb.base` / `qb.apiKey`；
+- 基础模式现在就是这 10 项：`mikan.bases` / `bgm.bases` / `ai.provider` / `ai.apiKey` / `ai.model` /
+  `ai.baseUrl` / `worker.dailyAt` / `worker.fetchSubgroups` / `qb.base` / `qb.apiKey`；
   **`verify-settings` 有断言钉住"基础项 ≤ 10 且必须是这几项"**。
 
 ## 5. 导出只留一个入口
