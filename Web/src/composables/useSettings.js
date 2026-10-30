@@ -404,16 +404,16 @@ export function useSettings() {
   async function testRow(path, url) {
     const key = String(url || '').trim()
     if (!key) return
-    const put = (state, detail) => {
+    const put = (state, detail, ms) => {
       rowTests.value = {
         ...rowTests.value,
-        [path]: { ...(rowTests.value[path] || {}), [key]: { state, detail } },
+        [path]: { ...(rowTests.value[path] || {}), [key]: { state, detail, ms: ms ?? null } },
       }
     }
     put('testing', '正在连接…')
     try {
       const res = await testSetting(path, key)
-      put(res.ok ? 'success' : 'error', describeTest(res))
+      put(res.ok ? 'success' : 'error', describeTest(res), res.ms)
     } catch (err) {
       put('error', err.message)
     }

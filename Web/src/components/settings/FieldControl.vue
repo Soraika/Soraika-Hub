@@ -137,8 +137,10 @@
       </template>
 
       <!-- 后缀区 -->
+      <!-- 测试连接：只给**单个地址**的字段（多源列表每条自己能测、底部还有「测试全部」，
+           再挂一个总按钮就是第三个入口，纯冗余） -->
       <button
-        v-if="field.type === 'url' || field.type === 'list'"
+        v-if="field.type === 'url'"
         class="suffix-btn"
         :class="testState"
         type="button"
@@ -267,7 +269,7 @@
 
     <!-- 弹层⑤：提供商目录 —— **搜索就是上面那个输入框本身**；
          输入的名字目录里没有时，最后一行变成「＋ 添加「我输入的名字」」 -->
-    <PopoverPanel :open="panel === 'provider'" align="right" label="选择提供商" @close="close">
+    <PopoverPanel :open="panel === 'provider'" width="anchor" align="right" label="选择提供商" @close="close">
       <p class="pop-title">
         提供商
         <span class="pop-note">{{ providerList.length }} 个</span>
@@ -1446,5 +1448,9 @@ function step(dir) {
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: 0.68rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

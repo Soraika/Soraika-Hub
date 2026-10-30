@@ -33,7 +33,7 @@
           @input="edit(index, $event.target.value)"
         />
 
-        <!-- 单独测这一条：坏掉的地址能立刻定位到 -->
+        <!-- 单独测这一条：坏掉的地址能立刻定位到；测完就在图标旁边显示延迟 -->
         <button
           class="src-btn"
           :class="stateOf(url)"
@@ -47,6 +47,9 @@
           <IconCircleX v-else-if="stateOf(url) === 'error'" :size="15" />
           <IconPlugConnected v-else :size="15" />
         </button>
+        <!-- 状态后面直接给数字：成功 = 延迟，失败 = 失败（原因在 title 里） -->
+        <span v-if="stateOf(url) === 'success'" class="src-ms">{{ msOf(url) }}ms</span>
+        <span v-else-if="stateOf(url) === 'error'" class="src-ms fail">失败</span>
 
         <button class="src-btn" type="button" :disabled="index === 0" title="上移" @click="move(index, -1)">
           <IconArrowUp :size="14" />
@@ -114,6 +117,10 @@ const overIndex = ref(-1)
 
 const stateOf = (url) => props.tests?.[url]?.state || 'idle'
 const detailOf = (url) => props.tests?.[url]?.detail || ''
+const msOf = (url) => {
+  const ms = props.tests?.[url]?.ms
+  return typeof ms === 'number' ? ms : 0
+}
 
 function edit(index, value) {
   const next = [...props.items]
@@ -241,6 +248,18 @@ function reset() {
   color: var(--success, #3fb950);
 }
 .src-btn.error {
+  color: var(--danger, #f85149);
+}
+/* 测完直接给数字：延迟 / 失败 —— 不用点 tooltip 才知道通不通、多快 */
+.src-ms {
+  min-width: 42px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  text-align: right;
+  user-select: none;
+}
+.src-ms.fail {
   color: var(--danger, #f85149);
 }
 .src-btn.danger:hover:not(:disabled) {

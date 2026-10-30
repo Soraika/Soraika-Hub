@@ -702,6 +702,14 @@ try {
     '多源地址可增删，每条可单独测，也能一键全测',
   )
   check(
+    listEditorSource.includes('src-ms') && listEditorSource.includes('msOf'),
+    '每条地址测完就在图标旁显示延迟（成功 `23ms` / 失败「失败」），不用点 tooltip',
+  )
+  check(
+    !/v-if="field\.type === 'url' \|\| field\.type === 'list'"/.test(controlSource),
+    '多源列表不再挂字段级「测试连接」按钮（每条能测 + 底部测试全部，第三个入口是冗余）',
+  )
+  check(
     controlSource.includes('SourceListEditor') && controlSource.includes("items.join('\\n')"),
     '多源地址用列表编辑器（界面是数组，存库仍是换行文本 —— 线上格式没变）',
   )
