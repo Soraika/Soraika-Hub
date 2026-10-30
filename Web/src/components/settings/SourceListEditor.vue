@@ -256,7 +256,7 @@ function reset() {
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: 0.7rem;
-  text-align: right;
+  text-align: left;
   user-select: none;
 }
 .src-ms.fail {

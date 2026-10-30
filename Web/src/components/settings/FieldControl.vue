@@ -943,7 +943,10 @@ function step(dir) {
 .shell input.num {
   font-family: var(--font-mono);
   font-size: 0.84rem;
-  text-align: right;
+  /* 左对齐：和地址 / 文本 / 提供商这些行**同一起点**。
+     早先数值右对齐是为了"一列数字对齐读数"，但一列里只有个别行是数字，
+     结果是"只有这几行贴着右边"，看着比不齐更乱。 */
+  text-align: left;
 }
 /* 密钥掩码：等距点号，一眼看出「已配置」而不是空白 */
 /* 行首图标列已**取消**：只有一部分行配得起图标，其余行就得留白占位，
@@ -1061,8 +1064,8 @@ function step(dir) {
   border-color: var(--accent);
   outline: none;
 }
-/* 单位气泡在行内按钮里靠右对齐（一列字段的单位能对齐着读） */
-.value-btn .unit {
+/* 单位胶囊贴在行尾（输入框撑满、胶囊落在最后） */
+.shell .unit {
   margin-left: auto;
 }
 /* 弹层底部的说明（人话写法 + 单位） */

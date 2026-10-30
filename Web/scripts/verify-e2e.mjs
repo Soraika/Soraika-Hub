@@ -638,8 +638,8 @@ try {
     '弹层里支持鼠标滚轮 + 左右拖动微调',
   )
   check(
-    /\.value-btn \.unit\s*\{[^}]*margin-left:\s*auto/s.test(controlSource) && controlSource.includes('.step-unit'),
-    '单位气泡在行内靠右对齐（一列字段的单位能对齐着读）',
+    /\.shell \.unit\s*\{[^}]*margin-left:\s*auto/s.test(controlSource) && controlSource.includes('class="unit pill pill-muted"'),
+    '单位胶囊贴在行尾（输入框左对齐、数值/单位不各贴一边）',
   )
   check(
     controlSource.includes('width="anchor"') &&
@@ -803,7 +803,10 @@ try {
     /\/\* 后缀按钮/.test(controlSource) && controlSource.includes('class="suffix-btn"'),
     '测试连接 / 显示隐藏 / 可视化选择统一放在输入框后缀区（各种类型对齐一致）',
   )
-  check(/\.shell input\.num\s*\{[^}]*text-align:\s*right/s.test(controlSource), '数值右对齐（一列数字在同一基线上）')
+  check(
+    /\.shell input\.num\s*\{[^}]*text-align:\s*left/s.test(controlSource),
+    '所有输入框一律左对齐（数值/时长也左对齐，和地址/文本行同一起点）',
+  )
   check(
     controlSource.includes('hourWheel') && !settingsSource.includes('hourWheel'),
     '时刻控件实现在 FieldControl 里（页面只摆结构，不碰控件）',
