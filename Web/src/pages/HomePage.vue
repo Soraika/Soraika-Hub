@@ -78,7 +78,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import SeasonPicker from '@/components/common/SeasonPicker.vue'
 import SearchBox from '@/components/common/SearchBox.vue'
 import MetroNav from '@/components/common/MetroNav.vue'
@@ -147,6 +147,22 @@ const { activeIndex, progress, scrollToIndex } = useScrollSpy({
   ids: () => DAY_ORDER.map((day) => `day-${day}`),
   offset: 108, // 判定线：吸顶栏底部附近（与 .day-section 的 scroll-margin-top 对齐）
 })
+
+  /**
+   * 切季成功后把列表滚回顶部
+   * ---------------------------------------------------------------------------
+   * 不滚的话，用户原本停在「周六」那一段，切到卡片更少的季就**看着像没加载**
+   * （其实列表已经换了，只是视野停在了空白处）。
+   */
+  watch(
+    () => props.season?.label,
+    (next, prev) => {
+      if (!prev || !next || next === prev) return // 首屏/同一季不动
+      nextTick(() => {
+        scrollHost.value?.scrollTo({ top: 0, behavior: 'smooth' })
+      })
+    },
+  )
 
 function onSelectSeason(year, season) {
   // 只上抛，由容器去请求新季 —— 页面不再持有选中季（选中季以服务端返回的为准）

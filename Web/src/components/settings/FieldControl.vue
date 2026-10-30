@@ -1,5 +1,5 @@
 <template>
-  <div class="control" :class="{ 'is-boolean': field.type === 'boolean' }">
+  <div ref="controlEl" class="control" :class="{ 'is-boolean': field.type === 'boolean' }">
     <!-- 布尔：滑动开关（无需弹层） -->
     <template v-if="field.type === 'boolean'">
       <button
@@ -182,6 +182,7 @@
     <!-- 弹层①：时刻 —— 两列滚轮（时 / 分），拖拽 + 滚轮都能选 -->
     <PopoverPanel
       :open="panel === 'time'"
+      :anchor="controlEl"
       width="anchor"
       align="right"
       :label="`${field.label} 选择`"
@@ -243,6 +244,7 @@
          · 其它数值：`[−] 输入 [＋]`，可滚轮 / 拖动微调 -->
     <PopoverPanel
       :open="panel === 'number'"
+      :anchor="controlEl"
       width="anchor"
       align="right"
       :label="`${field.label} 调整`"
@@ -302,7 +304,7 @@
     </PopoverPanel>
 
     <!-- 弹层③：模型列表（从接口实时获取，取不到则回落手动输入） -->
-    <PopoverPanel :open="panel === 'models'" align="right" label="选择模型" @close="close">
+    <PopoverPanel :open="panel === 'models'" :anchor="controlEl" align="right" label="选择模型" @close="close">
       <p class="pop-title">
         可用模型
         <button class="pop-link" type="button" @click="$emit('load-models')">刷新</button>
@@ -325,7 +327,7 @@
 
     <!-- 弹层⑤：提供商目录 —— **搜索就是上面那个输入框本身**；
          输入的名字目录里没有时，最后一行变成「＋ 添加「我输入的名字」」 -->
-    <PopoverPanel :open="panel === 'provider'" width="anchor" align="right" label="选择提供商" @close="close">
+    <PopoverPanel :open="panel === 'provider'" :anchor="controlEl" width="anchor" align="right" label="选择提供商" @close="close">
       <p class="pop-title">
         提供商
         <span class="pop-note">{{ providerList.length }} 个</span>
@@ -482,6 +484,8 @@ function chooseCustom() {
 
 const MASK = '••••••••••••'
 const inputId = computed(() => `f-${props.field.path}`)
+/** 弹层的锚点：就是这一格（弹层已 Teleport 到 body，得显式告诉它"贴着谁"） */
+const controlEl = ref(null)
 const placeholder = computed(() => {
   const field = props.field
   if (field.placeholder) return field.placeholder

@@ -647,6 +647,16 @@ try {
       readFileSync(new URL('../src/components/ui/PopoverPanel.vue', import.meta.url), 'utf8').includes('getBoundingClientRect'),
     '弹层与字段同宽，且用 fixed + 锚点坐标定位（不会被滚动容器的 overflow 裁掉）',
   )
+  /* 踩过：`.fields { container-type: inline-size }` 会让 fixed 相对**容器**定位，
+     视口坐标算出来的 top/left 整体偏移 → 弹层被甩到屏幕外（"箭头转了但没弹窗"）。
+     正解是 Teleport 到 body + 显式锚点。 */
+  const popoverSource = readFileSync(new URL('../src/components/ui/PopoverPanel.vue', import.meta.url), 'utf8')
+  check(
+    popoverSource.includes('<Teleport to="body">') &&
+      popoverSource.includes('props.anchor') &&
+      /:anchor="controlEl"/.test(controlSource),
+    '弹层 Teleport 到 body 并显式传锚点（否则 container-type 会把 fixed 的坐标算歪）',
+  )
   check(
     !controlSource.includes('常用时长') && !/pop-hint[^>]*>[\s\S]{0,80}单位 \{/.test(controlSource),
     '弹层底部不再堆「单位 ms · 也可以直接写单位」这类说明，只留换算结果',

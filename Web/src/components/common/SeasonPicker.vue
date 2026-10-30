@@ -141,8 +141,20 @@ function close(refocus = false) {
   if (refocus) triggerEl.value?.focus()
 }
 
+/**
+ * 展开某一年的季度胶囊
+ * ---------------------------------------------------------------------------
+ * **点击只会展开、不会折叠**：之前再点一次同一年会收起来，看起来就像"点不开"
+ * （用户的心智是"点一下就能选"）。要收起请点别的年份或点外部关闭。
+ * 展开后把整块滚进可视区 —— 年份多的时候（2012~今年）胶囊可能落在面板折叠线以下，
+ * 那样点下去"像是在空地上点"，什么都发生不了。
+ */
 function toggleYear(year) {
-  expandedYear.value = expandedYear.value === year ? null : year
+  expandedYear.value = year
+  nextTick(() => {
+    const block = panelEl.value?.querySelector(`.year-row[data-year="${year}"]`)?.closest('.year-block')
+    block?.scrollIntoView({ block: 'nearest' })
+  })
 }
 
 function isActive(year, season) {

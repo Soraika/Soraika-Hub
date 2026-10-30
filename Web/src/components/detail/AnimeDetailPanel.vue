@@ -21,7 +21,7 @@
 
       <!-- ── 详情：key 带上作品主键（换一部就重新挂载，组件内的局部状态跟着归零） -->
       <div v-else-if="data" :key="'detail-' + data.id" class="detail">
-          <header class="detail-header">
+          <header ref="headerEl" class="detail-header">
             <PosterImage
               class="detail-poster"
               :src="data.poster"
@@ -63,6 +63,8 @@
               v-if="series && series.items.length > 1"
               class="series-popover"
               :open="seriesOpen"
+              :anchor="headerEl"
+              width="anchor"
               label="同系列作品"
               @close="seriesOpen = false"
             >
@@ -289,6 +291,9 @@ const releaseInfo = computed(() => {
  * 没有合集却摆着「合集」按钮，点下去必然是空的，那是假控件（旧版就是这个条件）。
  * 判断用文件名规则（utils/episode.js），不额外花一次 AI 调用。
  */
+/** 系列弹层的锚点（弹层 Teleport 到 body 了，得显式告诉它"贴着谁"） */
+const headerEl = ref(null)
+
 const hasBatchReleases = computed(() => releaseItems.value.some((item) => isBatchEpisode(episodeOf(item.title))))
 
 /**
