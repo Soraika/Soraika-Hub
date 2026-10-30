@@ -343,7 +343,10 @@ try {
   const listEmpty = await renderToString(
     createSSRApp({ render: () => h(ReleaseList, { items: [], state: 'empty' }) }),
   )
-  check(listEmpty.includes('这个字幕组暂时没有资源'), '资源空态正常')
+  check(
+    listEmpty.includes('这部暂时没有资源'),
+    '资源空态正常（中性文案：没有字幕组时不该说"这个字幕组"）',
+  )
 
   /* ── ④d AI 标签筛选资源（面板「AI 位 → 资源列表」的联动）──────────── */
   const filterItems = [

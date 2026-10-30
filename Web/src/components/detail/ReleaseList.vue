@@ -64,7 +64,7 @@
         retry-text="重试"
         @retry="$emit('retry')"
       />
-      <p v-else-if="state === 'empty'" key="empty" class="empty">这个字幕组暂时没有资源</p>
+      <p v-else-if="state === 'empty'" key="empty" class="empty">这部暂时没有资源</p>
       <div v-else-if="!filtered.length" key="nomatch" class="empty">
         没有符合所选标签的资源
         <button class="clear-filter" type="button" @click="$emit('clear-filter')">清除筛选</button>
