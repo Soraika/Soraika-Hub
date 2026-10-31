@@ -21,7 +21,7 @@
       <ul v-else key="list" class="list">
         <li v-for="item in items" :key="item.hash" class="item">
           <!-- 集数区与资源列表同一套（56px 竖条 + 斜体数字）：两边切着看时位置不跳 -->
-          <span class="ep" :class="{ batch: isBatch(item.episode), unknown: !item.episode }">
+          <span class="ep" :class="{ batch: isBatchEpisode(item.episode), unknown: !item.episode }">
             {{ item.episode || '—' }}
           </span>
 

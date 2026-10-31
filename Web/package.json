@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "verify:e2e": "node scripts/verify-e2e.mjs",
     "verify:picker": "node scripts/verify-picker.mjs",
-    "verify": "npm run build && npm run verify:e2e && npm run verify:picker"
+    "verify:panel": "node scripts/verify-panel.mjs",
+    "verify": "npm run build && npm run verify:e2e && npm run verify:panel && npm run verify:picker"
   },
   "dependencies": {
     "@phosphor-icons/vue": "^2.2.1",

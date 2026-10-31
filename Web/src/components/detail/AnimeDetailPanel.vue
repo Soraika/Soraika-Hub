@@ -467,6 +467,15 @@ const AI_BATCH = 120
 const parsedCount = ref(0)
 
 /**
+ * 季提示（给 AI 消歧用）
+ * ---------------------------------------------------------------------------
+ * 详情 DTO 里没有单独的「季」字段，但有成品文案 `seasonText`（`2026 夏` / `2004 秋`）——
+ * 取最后一段就是季。**不要再写 `data.value?.season?.season`**：那个字段根本不存在，
+ * 脚本里也没有 `data` 这个变量，运行到「显示更多」时会抛 `data is not defined`。
+ */
+const seasonHintOf = () => String(props.data?.seasonText || '').trim().split(/\s+/).pop() || ''
+
+/**
  * 保证「展示到第 limit 条」所需的批次都解析过（标签、集数各一批）
  * ---------------------------------------------------------------------------
  * · **增量**：只把还没解析过的那一段（120 条一批）发出去，结果是**累加**不是重来
@@ -488,12 +497,15 @@ async function ensureParsed(limit = AI_BATCH) {
   await Promise.allSettled([
     loadAiTags(activeSubgroupId.value, batch, animeTitle, { merge: !first }),
     // 季一起给（与标签解析同一份上下文 → 服务端能命中同一份合并结果，省一次模型调用）
-    loadEpisodes(animeTitle, batch, { merge: !first, season: data.value?.season?.season ?? '' }),
+    // 季提示取「2026 夏」的最后一段：DTO 里没有单独的季字段，但 seasonText 够用来消歧
+    loadEpisodes(animeTitle, batch, { merge: !first, season: seasonHintOf() }),
   ])
 }
 
-// 资源列表一就绪就先解析**第一批**；换字幕组后 releaseItems 被替换 → 从头再来
+// 资源列表一就绪就先解析**第一批**；换字幕组后 releaseItems 被替换 → 从头再来。
+// 下载页模式直接跳过：那边是「盘上已有的文件」，没有可筛的标签，也不该拿文件名去花 AI 的钱。
 watch([releaseState, releaseItems], ([state]) => {
+  if (isDownloads.value) return
   if (state !== 'ready' || activeSubgroupId.value == null) return
   parsedCount.value = 0
   ensureParsed(AI_BATCH)
