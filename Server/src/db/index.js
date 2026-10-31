@@ -100,8 +100,6 @@ function ensureSeriesPositionUnique() {
   }
 }
 
-ensureSeriesPositionUnique()
-
 /**
  * 轻量迁移 —— 给**已存在**的库补新列（**必须在建表之前跑**，见下方注释）
  * ---------------------------------------------------------------------------
@@ -153,9 +151,13 @@ ensureColumns()
  * （如 `CREATE INDEX idx_anime_series ON anime(series_id)`），老库的 anime 表还没这一列时
  * `CREATE TABLE IF NOT EXISTS` 会被跳过、索引却照建 → 直接报 `no such column`。
  * 顺序：dropLegacySubgroupLinks → 补列 → schema.sql ✅
+ * 季位唯一索引也放在最后（`ensureSeriesPositionUnique`）：全新库里 anime 还没建出来时
+ * 进去建索引会直接报 `no such table: anime`（verify-settings 用临时库启动就踩到了）。
  */
 const schemaSql = readFileSync(resolve(import.meta.dirname, 'schema.sql'), 'utf8')
 db.exec(schemaSql)
+
+ensureSeriesPositionUnique()
 
 export const dbFile = dbPath
 
