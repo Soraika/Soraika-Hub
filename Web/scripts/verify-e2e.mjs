@@ -1164,8 +1164,8 @@ try {
     '界面/交互约定记在 Web/CONVENTIONS.md（含旧版基准、不重复表达、静默、字幕组两个 id）',
   )
   check(
-    listSource.includes('downloadReady') && listSource.includes('DOWNLOAD_HINT') && listSource.includes('下载选中'),
-    '下载按钮已预留（功能未接入 → 禁用 + 说明，位置与层级先定下来）',
+    listSource.includes('downloadReady') && listSource.includes('downloadHint') && listSource.includes('下载选中'),
+    '下载按钮已接通（`downloadReady` 由容器给：qB 没配就禁用并说明原因）',
   )
   check(
     listSource.includes('class="op"') && listSource.includes('IconMagnet') && listSource.includes('IconFileDownload') && listSource.includes('磁力'),
@@ -1194,8 +1194,41 @@ try {
     '全选 = 一个按钮切换「全选 ↔ 取消全选」，范围是当前筛选结果',
   )
   check(
-    /watch\(activeNav, \(\) => closeAnime\(\)\)/.test(appSource),
+    // 换页要收面板；顺带在切到下载页时拉一次下载数据（见 App.vue 的 watch）
+    /watch\(activeNav, \(nav\) => \{[\s\S]{0,120}closeAnime\(\)/.test(appSource),
     '切到别的页面时自动收起详情面板（面板是首页卡片的延伸，回来数据还在）',
+  )
+
+  /* ── 下载页：同一个面板、换一个资源来源 ─────────────────────────────── */
+  const downloadsPageSource = readFileSync(new URL('../src/pages/DownloadsPage.vue', import.meta.url), 'utf8')
+  const downloadListSource = readFileSync(new URL('../src/components/detail/DownloadList.vue', import.meta.url), 'utf8')
+  check(
+    downloadsPageSource.includes('CardGrid') && downloadsPageSource.includes('PosterCard') && downloadsPageSource.includes("$emit('open-anime'"),
+    '下载页与首页同构：卡片墙 + 点海报开面板（交互一致，只换数据源）',
+  )
+  check(
+    downloadsPageSource.includes('versions') && downloadsPageSource.includes('WebAPI'),
+    '下载页顶部同时显示 qB 应用版本与 WebAPI 版本（连到的是哪个 qB 一目了然）',
+  )
+  check(
+    /sections\s*=\s*computed/.test(downloadsPageSource) &&
+      downloadsPageSource.includes('下载中') &&
+      downloadsPageSource.includes('已完成'),
+    '按「下载中 / 已完成 / 异常」分区（正在发生的事排最前）',
+  )
+  check(
+    panelSource.includes("source: { type: String, default: 'mikan' }") &&
+      panelSource.includes('useDownloadedReleases') &&
+      panelSource.includes('<DownloadList'),
+    '面板按 source 切换资源来源（Mikan 资源 ↔ 已下载文件），详情部分完全复用',
+  )
+  check(
+    downloadListSource.includes('progress') && downloadListSource.includes('stateText') && downloadListSource.includes('savePath'),
+    '已下载条目给体积 / 状态 / 进度 / 路径（只读，不复用「还没下」的那套操作）',
+  )
+  check(
+    /emit\('download', list\)/.test(listSource) && /downloadOne\(item\)/.test(listSource),
+    '资源列表能真的发起下载（全选 / 筛选结果 / 单条三个入口都走同一条事件）',
   )
 
   /* 评分：前后端各写一套格式化是最容易分叉的地方，统一用后端的 scoreText */
@@ -1208,10 +1241,12 @@ try {
    * 而组件「写得对」的测试（composable 行为）完全发现不了。所以每个页面都要能空手渲染一次。 */
   const { default: SettingsPage } = await vite.ssrLoadModule('/src/pages/SettingsPage.vue')
   const { default: DiscoverPage } = await vite.ssrLoadModule('/src/pages/DiscoverPage.vue')
+  const { default: DownloadsPage } = await vite.ssrLoadModule('/src/pages/DownloadsPage.vue')
 
   for (const [name, Component] of [
     ['设置页', SettingsPage],
     ['发现页', DiscoverPage],
+    ['下载页', DownloadsPage],
   ]) {
     let html = ''
     let ssrError = null

@@ -9,6 +9,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { fetchAiModels, fetchAiProviders } from '@/api/ai'
+import { fetchQbStatus } from '@/api/downloads'
 import { formatDuration } from '@/utils/duration'
 import {
   exportUrl,
@@ -244,10 +245,34 @@ export function useSettings() {
       data.value = await fetchSettings()
       // 供应商目录单独拉（200+ 家，不能拖慢设置页首屏）
       loadProviders()
+      // qB 连接状态也顺手查一次：进页面就能看到「连到的是哪个 qB」
+      // （应用版本 + WebAPI 版本两个都要，见 api/pages/settings.js 的 testQb）
+      loadQbStatus()
     } catch (err) {
       error.value = err
     } finally {
       loading.value = false
+    }
+  }
+
+  /**
+   * qB 的「已连接」状态
+   * ---------------------------------------------------------------------------
+   * 为什么不在进页面时把「测试连接」跑一遍：那会把 `qb.base` 那行染成绿/红，
+   * 看起来像用户刚点过测试。这里只写 `testDetails`（说明文字），状态留给用户自己点。
+   * 失败就什么都不写（没配 qB 是正常状态，不是错误）。
+   */
+  async function loadQbStatus() {
+    try {
+      const status = await fetchQbStatus()
+      if (!status?.configured) return
+      const { app, api } = status.versions || {}
+      testDetails.value = {
+        ...testDetails.value,
+        'qb.base': app ? `已连接 · ${app}${api ? ` · WebAPI ${api}` : ''}` : '已连接',
+      }
+    } catch {
+      /* 没配 / 连不上：设置页不必为此报错 */
     }
   }
 

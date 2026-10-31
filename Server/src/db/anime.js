@@ -67,6 +67,13 @@ const stmt = {
   byId: db.prepare('SELECT * FROM anime WHERE id = ?'),
   byMikanId: db.prepare('SELECT * FROM anime WHERE mikan_id = ?'),
   byBgmId: db.prepare('SELECT * FROM anime WHERE bgm_id = ?'),
+  /**
+   * 按番名找（下载页用：老种子的标签丢了，只能靠归档目录名认回来）
+   * 只认**完全相等**的中文名或原名 —— 模糊匹配会把「碧蓝之海」和「碧蓝之海 第二季」认错，
+   * 那种错认比「认不出、归到未识别」更糟（会把两部的集数混在一起）
+   */
+  byTitle: db.prepare('SELECT * FROM anime WHERE title_cn = ? OR title = ? LIMIT 1'),
+
   bySeason: db.prepare(`
     SELECT * FROM anime
     WHERE year = ? AND season = ?
@@ -191,6 +198,8 @@ export const countAll = () => stmt.countAll.get().n
 
 export const findByMikanId = (mikanId) => stmt.byMikanId.get(val(mikanId)) ?? null
 export const findByBgmId = (bgmId) => stmt.byBgmId.get(val(bgmId)) ?? null
+/** 按番名（中文名或原名，完全相等）找 —— 下载页把老种子认回作品用 */
+export const findByTitle = (title) => stmt.byTitle.get(val(title), val(title)) ?? null
 /** 按作品主键取（出图接口用） */
 export const findById = (id) => stmt.byId.get(val(id)) ?? null
 /** 出图接口落地本地缓存后回写路径 */

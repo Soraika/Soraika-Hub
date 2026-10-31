@@ -153,12 +153,6 @@ const AI_TEST_TIMEOUT_MS = 15000
  */
 const AI_PROBE_TOKEN = 'SORAOK'
 
-/** 通用探针：光请求根路径看不出服务在不在的，给个真端点 */
-const TEST_TARGET = {
-  /** qBittorrent 的版本端点：返回版本号才算真的通了（未认证是 403，正好能区分开） */
-  'qb.base': (base) => `${base}/api/v2/app/version`,
-}
-
 const trimBase = (base) => String(base).replace(/\/+$/, '')
 
 /**
@@ -240,36 +234,61 @@ function aiReason(status) {
  * 下载（qBittorrent）：**按 version 的返回判断**，不看状态码
  * ---------------------------------------------------------------------------
  * qBittorrent 对未认证的请求也会回 403/200 之类的「像样的」状态码，
- * 只看状态码会把「服务在但 Key 是错的」判成成功。这里要求**真的返回版本号**（`v5.1.2`），
- * 成功时把版本号带回去（用户一眼能看出连到的是哪个 qBittorrent）。
+ * 只看状态码会把「服务在但 Key 是错的」判成成功。这里要求**真的返回版本号**（`v5.2.1`），
+ * 而且**两个版本都取**：`/app/version`（应用）+ `/app/webapiVersion`（WebAPI）。
+ * 只有应用版本时，遇到"接口字段对不上"根本看不出是不是 WebAPI 版本太低；
+ * 成功时两个版本一起带回去（`detail` 给界面直接显示，`versions` 给程序用）。
  */
 async function testQb(baseUrl, log) {
   const startedAt = Date.now()
-  const target = TEST_TARGET['qb.base'](trimBase(baseUrl))
+  const base = trimBase(baseUrl)
   const key = config.qb?.apiKey
+  const target = `${base}/api/v2/app/version`
 
-  try {
-    const res = await fetch(target, {
-      headers: key ? { Authorization: `Bearer ${key}` } : {},
-      signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
-    })
-    const ms = Date.now() - startedAt
-    const text = (await res.text().catch(() => '')).trim()
-    const version = /^v?\d+\.\d+/.test(text) ? text.split(/\s/)[0] : ''
-    if (version) {
-      log.info({ target, status: res.status, ms, version }, 'settings.test done')
-      return { target, ok: true, status: res.status, ms, reason: '', detail: version }
+  /** 取一个纯文本端点；拿不到就回空串（不抛，免得一个失败盖掉另一个的诊断信息） */
+  const readText = async (url) => {
+    try {
+      const res = await fetch(url, {
+        headers: key ? { Authorization: `Bearer ${key}` } : {},
+        signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
+      })
+      const text = (await res.text().catch(() => '')).trim()
+      return { status: res.status, text }
+    } catch (err) {
+      return { status: 0, text: '', error: err }
     }
-    if (res.status === 401 || res.status === 403) {
-      return { target, ok: false, status: res.status, ms, reason: 'API Key 不对（没通过认证）' }
-    }
-    if (res.status >= 500) {
-      return { target, ok: false, status: res.status, ms, reason: `qBittorrent 返回 HTTP ${res.status}` }
-    }
-    return { target, ok: false, status: res.status, ms, reason: '这不是 qBittorrent 的接口（没返回版本号）' }
-  } catch (err) {
-    return { target, ok: false, status: 0, ms: Date.now() - startedAt, reason: reasonOf(err) }
   }
+
+  const app = await readText(target)
+  const ms = Date.now() - startedAt
+
+  const isVersion = (text) => /^v?\d+\.\d+/.test(text)
+  if (isVersion(app.text)) {
+    // 应用版本有了 → 顺手取 WebAPI 版本（两个都显示才算说清"连的是哪个 qB"）
+    const api = await readText(`${base}/api/v2/app/webapiVersion`)
+    const appVersion = app.text.split(/\s/)[0]
+    const apiVersion = isVersion(api.text) ? api.text.split(/\s/)[0] : ''
+    log.info({ target, status: app.status, ms, appVersion, apiVersion }, 'settings.test done')
+    return {
+      target,
+      ok: true,
+      status: app.status,
+      ms: Date.now() - startedAt,
+      reason: '',
+      detail: apiVersion ? `${appVersion} · WebAPI ${apiVersion}` : appVersion,
+      versions: { app: appVersion, api: apiVersion },
+    }
+  }
+  if (app.error) {
+    return { target, ok: false, status: 0, ms, reason: reasonOf(app.error) }
+  }
+  if (app.status === 401 || app.status === 403) {
+    return { target, ok: false, status: app.status, ms, reason: 'API Key 不对（没通过认证）' }
+  }
+  if (app.status >= 500) {
+    return { target, ok: false, status: app.status, ms, reason: `qBittorrent 返回 HTTP ${app.status}` }
+  }
+  return { target, ok: false, status: app.status, ms, reason: '这不是 qBittorrent 的接口（没返回版本号）' }
 }
 
 /** 通用 http 探针（Mikan / Bangumi 这类）：状态码 < 500 算通（401/403 说明服务活着，只是没带凭证） */
@@ -308,7 +327,7 @@ const reasonOf = (err) => {
 async function probeOne(field, base, log) {
   if (field.group === 'ai') return testAi(base, log)
   if (field.group === 'qb') return testQb(base, log)
-  return testHttp(TEST_TARGET[field.path] ? TEST_TARGET[field.path](base) : base, log)
+  return testHttp(base, log)
 }
 
 /**
@@ -356,6 +375,8 @@ export async function testEndpoint(path, value, { log = logger } = {}) {
     detail: usable.length
       ? [bases.length > 1 ? `${usable.length}/${bases.length} 通过` : '', first.detail].filter(Boolean).join(' · ')
       : '',
+    // 服务特有的附加信息原样带回去（qB 的 `versions`：应用版本 + WebAPI 版本）
+    ...(first.versions ? { versions: first.versions } : {}),
     sources: sources.map((s) => ({ base: s.base, ok: s.ok, status: s.status, ms: s.ms, reason: s.reason })),
   }
 }

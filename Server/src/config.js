@@ -89,6 +89,15 @@ export const config = {
   qb: {
     base: '',
     apiKey: '',
+    /**
+     * 归档根目录与分类
+     * ---------------------------------------------------------------------------
+     * 新下载一律落到 `{saveRoot}/{番名}/Season 01`（命名规范见 ARCHITECTURE 决策 38）。
+     * 这两个是可调项（不是必要项）：不同人 NAS 上的挂载路径不一样，分类名也可能沿用旧的。
+     * 老种子在 `/downloads/anime/{番名}/SE01` —— `splitSavePath` 对季目录新旧两种写法都认。
+     */
+    saveRoot: '/downloads/anime',
+    category: 'soraika-hub',
   },
 
   /**

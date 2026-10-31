@@ -33,8 +33,8 @@
           v-if="checked.length"
           class="dl-btn"
           type="button"
-          :aria-disabled="!downloadReady"
-          :title="DOWNLOAD_HINT"
+          :aria-disabled="!downloadReady || downloading"
+          :title="downloadHint"
           @click="downloadChecked"
         >
           <IconDownload :size="13" /> 下载选中 ({{ checked.length }})
@@ -43,12 +43,18 @@
         <button
           class="dl-btn primary"
           type="button"
-          :aria-disabled="!downloadReady"
-          :title="DOWNLOAD_HINT"
+          :aria-disabled="!downloadReady || downloading || !filtered.length"
+          :title="downloadHint"
           @click="downloadFiltered"
         >
           <IconDownload :size="13" />
-          {{ activeTags.length ? `下载筛选结果 (${filtered.length})` : `全部下载 (${filtered.length})` }}
+          {{
+            downloading
+              ? '正在加种…'
+              : activeTags.length
+                ? `下载筛选结果 (${filtered.length})`
+                : `全部下载 (${filtered.length})`
+          }}
         </button>
       </div>
     </div>
@@ -123,14 +129,13 @@
                 >
                   <IconFileDownload :size="14" /> 种子
                 </a>
-                <!-- 下载（预留）：功能接入后把 downloadReady 置 true 即可。
-                     用 aria-disabled 而不是 disabled —— disabled 的元素浏览器不显示 title -->
+                <!-- 下载：单条也能直接加种（不必先勾选） -->
                 <button
                   class="op"
                   type="button"
-                  :aria-disabled="!downloadReady"
-                  :title="DOWNLOAD_HINT"
-                  @click.stop
+                  :aria-disabled="!downloadReady || downloading"
+                  :title="downloadHint"
+                  @click.stop="downloadOne(item)"
                 >
                   <IconDownload :size="14" /> 下载
                 </button>
@@ -183,8 +188,12 @@ const props = defineProps({
   activeTags: { type: Array, default: () => [] },
   /** 资源类型过滤：all | single | batch */
   batchFilter: { type: String, default: 'all' },
+  /** 下载通道可用（面板连上了 qB 才置 true；不可用时按钮只显示说明） */
+  downloadReady: { type: Boolean, default: false },
+  /** 正在加种（按钮显示「正在加种…」并挡住重复点击） */
+  downloading: { type: Boolean, default: false },
 })
-const emit = defineEmits(['retry', 'clear-filter', 'more'])
+const emit = defineEmits(['retry', 'clear-filter', 'more', 'download'])
 
 /**
  * 一屏 = 一批 = **120 条**（与 AI 解析批次对齐）。
@@ -316,11 +325,41 @@ function toggleAll() {
   checked.value = allChecked.value ? [] : filtered.value.map((item) => keyOf(item))
 }
 
-/** 接上下载后置 true，两个按钮自动变可点（结构不用改） */
-const downloadReady = false
-const DOWNLOAD_HINT = '下载功能还没接入（等 qBittorrent 那部分做完）'
-function downloadChecked() {}
-function downloadFiltered() {}
+/**
+ * 下载入口：全部交给面板去调 qB（这里不碰网络、不拼目录）
+ * 三个入口共用一条事件 `download`，参数统一是「要下哪几条」：
+ *   · 下载选中 → 勾选的那些（按当前筛选后的顺序）
+ *   · 全部 / 筛选结果 → 当前筛选结果整批
+ *   · 单条 → 就这一条
+ * 勾选在提交后清空：这批已经进了 qB，再点一次「下载选中」会重复加同一批种子。
+ */
+const downloadHint = computed(() =>
+  props.downloadReady ? '加入 qBittorrent 下载' : '还没连上 qBittorrent（设置 → 下载）',
+)
+
+function send(items) {
+  if (!props.downloadReady || props.downloading) return
+  const list = items.filter(Boolean)
+  if (!list.length) return
+  emit('download', list)
+}
+
+function downloadViewed(list) {
+  send(list)
+  checked.value = []
+}
+
+function downloadChecked() {
+  downloadViewed(filtered.value.filter((item) => checkedSet.value.has(keyOf(item))))
+}
+
+function downloadFiltered() {
+  downloadViewed(filtered.value)
+}
+
+function downloadOne(item) {
+  send([item])
+}
 
 /** 渲染用：集号（AI 优先）+ 合集标记 */
 const visibleItems = computed(() =>

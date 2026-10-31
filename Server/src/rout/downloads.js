@@ -1,0 +1,70 @@
+/**
+ * 下载路由 —— 下载页（卡片墙 + 面板资源区）+ 资源列表的「下载」按钮
+ * ---------------------------------------------------------------------------
+ *   GET  /api/downloads               卡片墙：一部番一张卡（已下几集 / 体积 / 状态）+ 未识别项
+ *   GET  /api/downloads/:animeId      面板：已下载的按字幕组分组
+ *   POST /api/downloads               加种 `{ animeId, subgroup?, season?, items:[{title,magnet|torrentUrl}] }`
+ *   GET  /api/qb/status               qB 状态（两个版本 + 速度）；设置页与下载页顶部用
+ * 业务在 api/pages/downloads.js，这里只做参数整形与信封。
+ */
+import { Router } from 'express'
+import { addDownloads, getAnimeDownloads, getDownloads } from '../api/pages/downloads.js'
+import { qbConfigured, qbTransfer, qbVersions } from '../api/sources/qb.js'
+import { fail } from '../lib/errors.js'
+
+export const downloadsRouter = Router()
+
+/** 解析作品主键（与 /api/anime/:id 同一套校验） */
+function animeIdOf(raw) {
+  const id = Number(raw)
+  if (!Number.isInteger(id) || id <= 0) throw fail('BAD_REQUEST', 'animeId 需要是正整数')
+  return id
+}
+
+/** GET /api/downloads?fresh=1 —— fresh 跳过 4 秒缓存（用户点「刷新」） */
+downloadsRouter.get('/downloads', async (req, res, next) => {
+  try {
+    const fresh = req.query.fresh === '1' || req.query.fresh === 'true'
+    res.json({ ok: true, data: await getDownloads({ fresh }) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/** GET /api/downloads/:animeId —— 面板资源区（字幕组 → 已下的集） */
+downloadsRouter.get('/downloads/:animeId', async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await getAnimeDownloads(animeIdOf(req.params.animeId), { log: req.log }) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/** POST /api/downloads —— 勾选若干条资源加种 */
+downloadsRouter.post('/downloads', async (req, res, next) => {
+  try {
+    const { animeId, subgroup, season, items } = req.body || {}
+    if (!Array.isArray(items) || !items.length) throw fail('BAD_REQUEST', 'items 需要是非空数组')
+    const data = await addDownloads(
+      { animeId: animeIdOf(animeId), subgroup: String(subgroup || ''), season: Number(season) || 1, items },
+      { log: req.log },
+    )
+    res.json({ ok: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * GET /api/qb/status —— 设置页「已连接」那一行 & 下载页顶部
+ * 没配时不报错：`{ configured:false }` 让界面显示引导文案（报错反而像服务坏了）
+ */
+downloadsRouter.get('/qb/status', async (req, res, next) => {
+  try {
+    if (!qbConfigured()) return res.json({ ok: true, data: { configured: false } })
+    const [versions, transfer] = await Promise.all([qbVersions(), qbTransfer().catch(() => null)])
+    res.json({ ok: true, data: { configured: true, versions, transfer } })
+  } catch (err) {
+    next(err)
+  }
+})

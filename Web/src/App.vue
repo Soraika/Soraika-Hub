@@ -25,6 +25,8 @@
       :data="animeDetail"
       :ui-state="panelState"
       :error-text="animeError?.message || ''"
+      :source="panelSource"
+      :download-ready="qbReady"
       @close="closeAnime"
       @retry="retryAnime"
       @open="openAnime"
@@ -47,10 +49,13 @@ import AppSideNav from '@/components/layout/AppSideNav.vue'
 import AnimeDetailPanel from '@/components/detail/AnimeDetailPanel.vue'
 import HomePage from '@/pages/HomePage.vue'
 import DiscoverPage from '@/pages/DiscoverPage.vue'
+import DownloadsPage from '@/pages/DownloadsPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
 import StateBlock from '@/components/ui/StateBlock.vue'
 import { useSchedule } from '@/composables/useSchedule'
 import { useAnimeDetail } from '@/composables/useAnimeDetail'
+import { useDownloads } from '@/composables/useDownloads'
+import { fetchQbStatus } from '@/api/downloads'
 import { currentSeason } from '@/utils/season'
 
 // 导航选中项：当前由本地状态驱动（纯 UI），接 vue-router 后改由路由驱动
@@ -61,6 +66,7 @@ const activeNav = ref('home')
 const PAGES = {
   home: { component: HomePage },
   discover: { component: DiscoverPage },
+  downloads: { component: DownloadsPage },
   settings: { component: SettingsPage },
 }
 
@@ -68,6 +74,10 @@ const page = computed(() => PAGES[activeNav.value] || null)
 
 // ── 首页排期数据（库里优先，后端负责抓取与落库） ──────────────────────────
 const schedule = useSchedule()
+
+// ── 下载页数据（qB 里有什么：卡片墙 + 逐部明细） ──────────────────────────
+// 放在上面的 watch 之前：那个 watch 的首次触发在挂载后，但提前声明读起来更顺
+const downloads = useDownloads()
 
 // ── 详情面板（全站共用一份状态）──────────────────────────────────────────
 // 解构出来是为了模板里能直接写 panelVisible / animeDetail（顶层 ref 自动解包）
@@ -88,8 +98,33 @@ const {
  * 面板是「首页排期卡片」的延伸：跳到发现页/设置页还挂着上一部作品的档案，
  * 既没有来源（那页的卡片点不亮它）又白占右侧空间 —— 换页就收。
  * 与「关掉不清数据」不冲突：数据留着，切回首页再点开是立刻摆回，不会重新请求。
+ *
+ * 顺手做一件事：进下载页才拉下载数据（不在启动时就打一次 qB）。
  */
-watch(activeNav, () => closeAnime())
+watch(activeNav, (nav) => {
+  closeAnime()
+  if (nav === 'downloads' && !downloads.data.value) downloads.load()
+})
+
+/**
+ * qB 通道是否可用 —— 启动查一次，用来决定面板里的「下载」按钮能不能点。
+ * 查不到就当没配（按钮变灰并给说明），不影响其它功能。
+ */
+const qbReady = ref(false)
+onMounted(async () => {
+  try {
+    const status = await fetchQbStatus()
+    qbReady.value = Boolean(status?.configured)
+  } catch {
+    qbReady.value = false
+  }
+})
+
+/**
+ * 面板「资源」区的来源：`mikan` = 未下载的资源列表，`downloads` = 已经下载的文件
+ * 由「从哪个页面点的海报」决定 —— 同一个面板、同一部作品，两种页面看到的东西不同。
+ */
+const panelSource = ref('mikan')
 
 // 数据还没到时，季选先显示：① 上次选过的季（localStorage）② 本机算的当前季
 // —— 服务端返回后会以它算的当前季为准
@@ -112,10 +147,31 @@ const pageProps = computed(() => {
       activeAnimeId: activeAnimeId.value,
       onSelectSeason: (year, season) => schedule.selectSeason(year, season),
       onReload: () => schedule.reload(),
-      onOpenAnime: (item) => openAnime(item.id),
+      // 首页点海报 → 面板读**没下载的资源**（Mikan 现取）
+      onOpenAnime: (item) => {
+        panelSource.value = 'mikan'
+        openAnime(item.id)
+      },
       // TODO(搜索页)：落地后在这里接上跳转（不在前端打 console）
     }
   }
+
+  if (activeNav.value === 'downloads') {
+    return {
+      data: downloads.data.value,
+      uiState: downloads.uiState.value,
+      refreshing: downloads.refreshing.value,
+      activeAnimeId: activeAnimeId.value,
+      // 下载页点海报 → 面板读**已经下载的文件**（同一个面板，换数据源）
+      onOpenAnime: (item) => {
+        panelSource.value = 'downloads'
+        openAnime(item.id)
+      },
+      // 刷新要跳过后端 4 秒缓存（用户点它就是要看最新状态）
+      onReload: () => downloads.load({ fresh: true }),
+    }
+  }
+
   return {}
 })
 

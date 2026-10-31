@@ -96,6 +96,10 @@ export const SETTINGS_FIELDS = [
   // ── 下载 ──
   { path: 'qb.base', env: 'QB_BASE_URL', group: 'qb', section: 'qBittorrent', label: '地址', type: 'url', placeholder: 'http://127.0.0.1:8080' },
   { path: 'qb.apiKey', env: 'QB_API_KEY', group: 'qb', section: 'qBittorrent', label: 'API Key', type: 'secret' },
+  /* 归档：新下载落到 `{归档目录}/{番名}/Season 01`。这两个是「按自己环境调」的项，收进高级；
+     分类名沿用旧系统的 soraika-hub，这样新种子和盘上已有的 176 条在 qB 里还是同一堆。 */
+  { path: 'qb.saveRoot', env: 'QB_SAVE_ROOT', group: 'qb', section: '归档', label: '归档目录', type: 'text', advanced: true, hint: '下载落到这里，按番名建子目录' },
+  { path: 'qb.category', env: 'QB_CATEGORY', group: 'qb', section: '归档', label: '分类', type: 'text', advanced: true, hint: 'qBittorrent 里的分类名' },
 ]
 
 /**

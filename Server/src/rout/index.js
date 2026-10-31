@@ -11,6 +11,7 @@ import { aiCacheStats } from '../api/pages/ai.js'
 import { aiProviderInfo } from '../api/sources/ai.js'
 import { aiRouter } from './ai.js'
 import { animeRouter } from './anime.js'
+import { downloadsRouter } from './downloads.js'
 import { homeRouter } from './home.js'
 import { imgRouter } from './img.js'
 import { settingsRouter } from './settings.js'
@@ -47,6 +48,7 @@ apiRouter.get('/health', (req, res) => {
 
 apiRouter.use(homeRouter)
 apiRouter.use(animeRouter)
+apiRouter.use(downloadsRouter)
 apiRouter.use(aiRouter)
 apiRouter.use(settingsRouter)
 apiRouter.use(imgRouter)

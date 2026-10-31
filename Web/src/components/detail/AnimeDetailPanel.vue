@@ -147,8 +147,8 @@
 
           <!-- AI 标签位：只有当前字幕组**真的取到资源**时才出现。
                0 条资源时既没东西可筛、也没有可解析的名字 —— 摆一排标签（外加「共 0 条资源」）
-               只会让人以为坏了。 -->
-          <section v-if="releaseItems.length" class="card">
+               只会让人以为坏了。下载页模式不解析标签（文件已经在盘上了）。 -->
+          <section v-if="releaseItems.length && !isDownloads" class="card">
             <AiSlot
               :state="aiState"
               :tags="aiTags"
@@ -167,16 +167,33 @@
 
           <section class="card">
             <ReleaseList
+              v-if="!isDownloads"
               :items="releaseItems"
               :episodes="aiEpisodes"
               :state="releaseState"
               :error-text="releasesError?.message || ''"
               :active-tags="aiActiveTags"
               :batch-filter="aiBatchFilter"
+              :download-ready="downloadReady"
+              :downloading="downloading"
               @retry="retryReleases"
               @clear-filter="clearAiTags"
               @more="ensureParsed"
+              @download="onDownload"
             />
+            <!-- 下载页模式：同一个位置换成「已下载的文件」，按字幕组分组 -->
+            <DownloadList
+              v-else
+              :items="releaseItems"
+              :state="releaseState"
+              :size-text="downloadSizeText"
+              @retry="retryReleases"
+            />
+          </section>
+
+          <!-- 加种结果：成功几条、失败几条 + 落到哪个目录（用户最关心的两件事） -->
+          <section v-if="downloadMsg" class="card">
+            <p class="dl-msg" :class="{ bad: downloadFailed }">{{ downloadMsg }}</p>
           </section>
         </div>
     </div>
@@ -191,9 +208,12 @@ import StateBlock from '@/components/ui/StateBlock.vue'
 import DetailSkeleton from './DetailSkeleton.vue'
 import SubgroupBar from './SubgroupBar.vue'
 import ReleaseList from './ReleaseList.vue'
+import DownloadList from './DownloadList.vue'
 import AiSlot from './AiSlot.vue'
 import PopoverPanel from '@/components/ui/PopoverPanel.vue'
 import { useReleases } from '@/composables/useReleases'
+import { useDownloadedReleases } from '@/composables/useDownloadedReleases'
+import { addDownloads } from '@/api/downloads'
 import { useAiTags } from '@/composables/useAiTags'
 import { useEpisodes } from '@/composables/useEpisodes'
 import { useSeries } from '@/composables/useSeries'
@@ -217,8 +237,19 @@ const props = defineProps({
   uiState: { type: String, default: 'loading' },
   /** 失败时的具体文案（ApiError.message） */
   errorText: { type: String, default: '' },
+  /**
+   * 「资源」区读哪个数据源：
+   *   · `mikan`     → Mikan 的资源列表（首页 / 发现 / 搜索点开的都是这个）
+   *   · `downloads` → qB 里**已经下载**的文件（下载页点开的作品）
+   * 详情部分（海报 / 评分 / 简介 / 系列）两边完全一样 —— 只有最下面那一块换来源。
+   */
+  source: { type: String, default: 'mikan' },
+  /** qB 通道是否可用（容器查一次 `/api/qb/status` 后传下来；false 时下载按钮只给说明） */
+  downloadReady: { type: Boolean, default: false },
 })
 const emit = defineEmits(['close', 'retry', 'open'])
+
+const isDownloads = computed(() => props.source === 'downloads')
 
 /**
  * 资源区（字幕组 → 资源列表）由面板自己取数
@@ -226,20 +257,32 @@ const emit = defineEmits(['close', 'retry', 'open'])
  * 这份状态只属于「面板里这一部作品」，关掉面板就没意义 —— 所以不进 App.vue 的全局状态，
  * 也不用 props 传进来（那会逼着容器处理「什么时候清、什么时候重取」的一堆边界）。
  * 容器约定（页面只摆、容器取数）针对的是**页面**；面板这种高内聚交互单元，
- * 取数收在 useReleases 里，组件本身仍然只负责摆。
+ * 取数收在 composable 里，组件本身仍然只负责摆。
+ *
+ * 两种数据源各一个 composable，**接口名保持一致**（subgroups / activeId / releases / state），
+ * 所以模板不用写两套：
+ *   · useReleases            —— Mikan 资源（两级各有自己的 loading / 缓存）
+ *   · useDownloadedReleases  —— 已下载文件（一次请求全拿到，切组是内存操作）
+ * 具体取哪个由 `source` 决定，下面这组 computed 就是对外的统一门面。
  */
-const {
-  subgroups,
-  activeId: activeSubgroupId,
-  subgroupState,
-  releases: releaseItems,
-  releaseState,
-  releasesError,
-  select: selectSubgroup,
-  retry: retryReleases,
-  open: openReleases,
-  reset: resetReleases,
-} = useReleases()
+const mikan = useReleases()
+const downloaded = useDownloadedReleases()
+
+const subgroups = computed(() => (isDownloads.value ? downloaded.subgroups.value : mikan.subgroups.value))
+const subgroupState = computed(() => (isDownloads.value ? downloaded.subgroupState.value : mikan.subgroupState.value))
+const activeSubgroupId = computed(() => (isDownloads.value ? downloaded.activeId.value : mikan.activeId.value))
+const releaseItems = computed(() => (isDownloads.value ? downloaded.releases.value : mikan.releases.value))
+const releaseState = computed(() => (isDownloads.value ? downloaded.releaseState.value : mikan.releaseState.value))
+const releasesError = computed(() => (isDownloads.value ? downloaded.error.value : mikan.releasesError.value))
+/** 当前组的手写体积（下载页模式才有值） */
+const downloadSizeText = computed(() => downloaded.sizeText.value)
+
+function selectSubgroup(id) {
+  return isDownloads.value ? downloaded.select(id) : mikan.select(id)
+}
+function retryReleases() {
+  return isDownloads.value ? downloaded.retry() : mikan.retry()
+}
 
 /**
  * 集数 / 季解析（**AI 逐条**）
@@ -337,23 +380,83 @@ const summaryLong = computed(() => (props.data?.summary?.length ?? 0) > SUMMARY_
 
 
 
+/**
+ * 加种（资源列表里点「下载」）
+ * ---------------------------------------------------------------------------
+ * 服务端负责三件事（见 api/pages/downloads.js）：算归档目录、写标签（`mid` / `sg`）、
+ * 逐条调 qB。前端只负责把「这一部 + 当前字幕组 + 勾了哪些」传上去。
+ * 结果就用一句话交代：成功几条、失败几条（失败的第一条原因也给出来，方便判断是
+ * 磁力失效还是 qB 没连通）。
+ */
+const downloading = ref(false)
+const downloadMsg = ref('')
+const downloadFailed = ref(false)
+/** 季号：系列算过就用季位（S02 → 2），没算过就当第一季（目录落 `Season 01`） */
+const seasonForDownload = computed(() => Number(series.value?.currentIndex) || 1)
+
+async function onDownload(items) {
+  const list = Array.isArray(items) ? items : []
+  if (!list.length || downloading.value || !props.data?.id) return
+
+  downloading.value = true
+  downloadMsg.value = ''
+  downloadFailed.value = false
+  try {
+    const res = await addDownloads({
+      animeId: props.data.id,
+      subgroup: mikan.activeSubgroup.value?.name || '',
+      season: seasonForDownload.value,
+      items: list.map((it) => ({
+        title: it.title,
+        magnet: it.magnet,
+        torrentUrl: it.torrentUrl,
+        episode: it.episode || '',
+      })),
+    })
+    downloadFailed.value = res.failed.length > 0
+    const head = res.added.length
+      ? `已加入 ${res.added.length} 个下载 → ${res.savePath}`
+      : '没有加进任何下载'
+    const tail = res.failed.length
+      ? `；${res.failed.length} 条失败（${res.failed[0].title}：${res.failed[0].reason}）`
+      : ''
+    downloadMsg.value = head + tail
+  } catch (err) {
+    downloadFailed.value = true
+    downloadMsg.value = `加种失败：${err.message}`
+  } finally {
+    downloading.value = false
+  }
+}
+
 // 作品一换（或详情刚到位）：收起简介 + 重取资源区。
 // immediate 是必须的：面板打开时 data 是后到的，不设它没人触发第一次加载。
+// `source` 也在依赖里 —— 同一部作品从首页切到下载页（或反过来）时，
+// 面板内容不变，但底下那块资源要换成另一个来源的数据。
 watch(
-  () => props.data?.id,
-  (id) => {
+  [() => props.data?.id, () => props.source],
+  ([id]) => {
     expanded.value = false
     seriesOpen.value = false
+    downloadMsg.value = ''
     resetSeries()
-    if (id) {
-      openReleases(id)
-      loadSeries(id)
+    if (!id) {
+      mikan.reset()
+      downloaded.reset()
+      return
+    }
+    loadSeries(id)
+    if (isDownloads.value) {
+      mikan.reset() // 换来源时把另一份数据清掉，避免切回来看到旧的
+      downloaded.open(id)
     } else {
-      resetReleases()
+      downloaded.reset()
+      mikan.open(id)
     }
   },
   { immediate: true },
 )
+
 
 /**
  * AI 解析的**批大小** —— 必须与 `ReleaseList` 的 `PAGE_SIZE` 一致。
@@ -738,6 +841,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 .link-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* ── 加种结果：一句话交代（成功 → 正常色，有失败 → 警示色）──────────── */
+.dl-msg {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.dl-msg.bad {
+  color: var(--danger);
 }
 
 /* ── 窄屏：挤不动了改成浮层（仍从右侧滑入），免得主区被压成一条 ────────── */
