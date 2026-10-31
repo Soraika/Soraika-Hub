@@ -100,6 +100,33 @@ export function normalizeSignature(raw, samples = []) {
 }
 
 /**
+ * 组标记「像不像组名」—— 只用于**显示**，不决定是否入库
+ * ---------------------------------------------------------------------------
+ * 为什么需要：库里没有的组标记也要显示出来（不能因为字典没收录就不给标签），
+ * 但文件名开头的方括号并不都是组 —— 也有画质、编码、语言、字幕类型、平台。
+ * 这里用一张小正则把这些明显不是组的挡掉；剩下的就照原样显示标记本身。
+ *
+ * 注意：**不做「猜缩写→组名」**，也不需要。Mikan 没有「统一的组名字段」，
+ * 文件名前缀只是发布者自己写的，同一个组在不同作品里可能写法不同 —— 所以
+ * 猜出来的名字反而不可信，照抄标记最诚实（也不会污染 `subgroup` 字典）。
+ */
+const NON_GROUP_TAG =
+  /^(?:\d{3,4}[pi]|[248]k|uhd|fhd|hd|sd|hevc|h\.?26[45]|avc|x26[45]|av1|aac|flac|ac3|opus|truehd|dts|10bit|8bit|hdr|web-?dl|web-?rip|bd-?rip|bdrip|bd|blu-?ray|remux|mkv|mp4|chs|cht|sc|tc|gb|big5|gbk|jp|jpn|eng|简|繁|简繁|简体|繁体|简日|繁日|简繁日|内封|内嵌|外挂|硬字幕|软字幕|字幕|合集|全集|完结|repack|v2|v3)$/i
+
+/**
+ * 这个组标记能不能当「组名」显示
+ * @param {string} tag 文件名开头的标记（`groupTagOf` 的结果）
+ * @returns {boolean}
+ */
+export function isLikelyGroupTag(tag) {
+  const text = String(tag || '').trim()
+  if (text.length < 2 || text.length > 40) return false
+  if (NON_GROUP_TAG.test(text)) return false
+  if (/^\d+$/.test(text)) return false // 纯数字（集数 / 年份）不是组
+  return /[\p{L}]/u.test(text) // 至少得有一个字母或汉字
+}
+
+/**
  * 从资源文件名里取「组标记」—— 开头第一个 【…】 / […] / （…）
  * ---------------------------------------------------------------------------
  * Mikan 上发布组几乎都写在开头（`【DMHY】【番名】…` / `[c.c动漫][番名]…`），

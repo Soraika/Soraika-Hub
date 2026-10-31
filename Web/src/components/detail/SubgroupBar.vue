@@ -43,8 +43,12 @@ import StateBlock from '@/components/ui/StateBlock.vue'
 defineProps({
   /** [{ id, name, mikanId, rssId }] */
   subgroups: { type: Array, default: () => [] },
-  /** 当前选中的字幕组 id（null = 没选） */
-  activeId: { type: Number, default: null },
+  /**
+   * 当前选中的字幕组 id。
+   * 数字 = Mikan 详情页给的 **该作品下的 rss id**；字符串 = 详情页 404 时由组标记得出的**组名**
+   * （两种都要能选中，所以类型是 Number | String）
+   */
+  activeId: { type: [Number, String], default: null },
   /** loading | error | empty | ready */
   state: { type: String, default: 'loading' },
 })

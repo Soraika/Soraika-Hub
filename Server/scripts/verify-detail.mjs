@@ -265,6 +265,15 @@ try {
       animePageSource.includes('labelByGroupTag'),
     '详情页 404 → 组标记 × 库里组名 映射出字幕组；逐条归类是纯匹配（零额外 token）',
   )
+  /* 库里没有的组标记：**照原样显示**，但不写进字典 —— 文件名前缀不是 Mikan 的统一字段
+     （同一个组在不同作品里写法可能不同），入字典只会跨作品污染；但界面上总得有个标签。 */
+  check(
+    /isLikelyGroupTag/.test(animePageSource) &&
+      /NON_GROUP_TAG/.test(readFileSync(new URL('../src/lib/release-match.js', import.meta.url), 'utf8')) &&
+      /map\[tag\] = tag/.test(animePageSource) &&
+      !/rememberSubgroups\([^)]*\btag\b/.test(animePageSource),
+    '库里没有的组 → 标记照原样显示；不进字典（画质/编码/语言被挡掉）',
+  )
   check(
     animePageSource.includes("source: 'classified'") && animePageSource.includes("name: '全部资源'"),
     '分类成功给真实组名；一条都分不出才退化成「全部资源」',

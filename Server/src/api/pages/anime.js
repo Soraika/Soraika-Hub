@@ -14,7 +14,7 @@
  */
 import { warmPoster } from '../../cache/poster.js'
 import { findById, listSeriesMembers, listSubgroupDict, rememberSubgroups } from '../../db/anime.js'
-import { claimBySignature, groupTagsOf, labelByGroupTag, signatureFromSamples } from '../../lib/release-match.js'
+import { claimBySignature, groupTagsOf, isLikelyGroupTag, labelByGroupTag, signatureFromSamples } from '../../lib/release-match.js'
 import { classifyGroupTags, classifyReleaseFormat } from './ai.js'
 import { enrichOne } from '../../jobs/enrich.js'
 import { fillSeriesFor } from '../../jobs/series.js'
@@ -212,12 +212,14 @@ async function tagNameMap(row, items, { log }) {
   const map = {}
   for (const { tag } of tags) {
     const name = mapped?.[tag] || null
-    if (mapped) {
-      if (name) map[tag] = name // AI 给了库里的组名 → 收
-      continue // AI 可用却对不上 → 不是字幕组（番名/平台/修正…），丢
+    if (name) {
+      map[tag] = name // 字典里认得出这个组 → 用库里的组名（跨作品写法统一）
+      continue
     }
-    // AI 不可用：退化成标记本身，但和番名撞车的不要（那是标题不是组）
-    if (title && (title.includes(tag) || tag.includes(title))) continue
+    if (title && (title.includes(tag) || tag.includes(title))) continue // 是番名，不是组
+    if (!isLikelyGroupTag(tag)) continue // 画质 / 编码 / 语言 / 平台 → 不是组
+    // 库里没有的组：**标记照原样显示，但不入库**
+    // （Mikan 没有「统一的组名字段」，文件名前缀是发布者自己写的，写进字典只会污染）
     map[tag] = tag
   }
   return map
