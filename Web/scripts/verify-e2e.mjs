@@ -1223,8 +1223,15 @@ try {
     '面板按 source 切换资源来源（Mikan 资源 ↔ 已下载文件），详情部分完全复用',
   )
   check(
-    downloadListSource.includes('progress') && downloadListSource.includes('stateText') && downloadListSource.includes('savePath'),
-    '已下载条目给体积 / 状态 / 进度 / 路径（只读，不复用「还没下」的那套操作）',
+    downloadListSource.includes('fileTagsOf') &&
+      downloadListSource.includes('stateText') &&
+      downloadListSource.includes('progress') &&
+      !downloadListSource.includes('savePath'),
+    '已下载条目：集数 + 画质标签 + 体积 + （仅异常时）状态与进度；路径不显示',
+  )
+  check(
+    /title="item\.fileName \|\| item\.name"|:title="item\.fileName \|\| item\.name"/.test(downloadListSource),
+    '完整文件名挂在整行 title 上（不占版面、排错时 hover 可见）',
   )
   check(
     /emit\('download', list\)/.test(listSource) && /downloadOne\(item\)/.test(listSource),

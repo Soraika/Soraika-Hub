@@ -19,29 +19,29 @@
       <p v-else-if="state === 'empty'" key="empty" class="empty">这个字幕组还没有已下载的资源</p>
 
       <ul v-else key="list" class="list">
-        <li v-for="item in items" :key="item.hash" class="item">
-          <!-- 集数区与资源列表同一套（56px 竖条 + 斜体数字）：两边切着看时位置不跳 -->
+        <!-- 整行 title 挂着**完整文件名**：平时不占版面，排错时 hover 就能看到 -->
+        <li v-for="item in items" :key="item.hash" class="item" :title="item.fileName || item.name">
+          <!-- 集数区：与首页资源列表同一套（暖金底 + 斜体衬线 + 56px 竖条） -->
           <span class="ep" :class="{ batch: isBatchEpisode(item.episode), unknown: !item.episode }">
             {{ item.episode || '—' }}
           </span>
 
           <div class="body">
-            <p class="title" :title="item.fileName || item.name">{{ item.fileName || item.name }}</p>
-
+            <!-- 一行说清「这集是什么」：画质 / 字幕 / 片源（从文件名摘，最多 3 个）+ 体积 -->
             <p class="meta">
-              <span class="num">{{ item.sizeText }}</span>
-              <span class="num" :class="stateTone(item.kind)">{{ item.stateText }}</span>
-              <span v-if="item.kind === 'downloading'" class="num">{{ item.progress }}%</span>
-              <span v-else-if="item.season" class="num">第 {{ item.season }} 季</span>
+              <span v-for="tag in tagsOf(item)" :key="tag" class="tag">{{ tag }}</span>
+              <span v-if="item.sizeText" class="num">{{ item.sizeText }}</span>
+              <!-- 只有「不在正常态」才说状态：已完成是这一整块的默认状态，逐条重复是噪音 -->
+              <span v-if="item.kind !== 'done'" class="num" :class="toneOf(item)">{{ item.stateText }}</span>
+              <span v-if="item.kind === 'downloading' && item.progress < 100" class="num">{{ item.progress }}%</span>
             </p>
 
-            <!-- 下载中的给一条进度：已完成的不画空条（空条=噪音） -->
-            <div v-if="item.kind === 'downloading'" class="progress" :title="`${item.progress}%`">
-              <span class="bar" :style="{ width: `${item.progress}%` }" />
+            <!-- 下载中才给进度条 + 速度 / 剩余时间；已完成不画空条 -->
+            <div v-if="item.kind === 'downloading'" class="progress-line">
+              <span class="progress"><span class="bar" :style="{ width: `${item.progress}%` }" /></span>
+              <span v-if="item.speedText" class="speed">{{ item.speedText }}</span>
+              <span v-if="etaText(item)" class="eta">{{ etaText(item) }}</span>
             </div>
-
-            <!-- 路径默认不展开：这是排错信息，不是日常要读的内容 -->
-            <p class="path" :title="item.contentPath || item.savePath">{{ item.savePath }}</p>
           </div>
         </li>
       </ul>
@@ -52,19 +52,26 @@
 <script setup>
 import StateBlock from '@/components/ui/StateBlock.vue'
 import { isBatchEpisode } from '@/utils/episode'
+import { fileTagsOf } from '@/utils/fileTags'
 
 /**
  * 已下载列表（面板「资源」区第二级 —— 下载页模式）
  * ---------------------------------------------------------------------------
- * 与 `ReleaseList` 刻意保持同样的骨架（集数竖条 + 标题 + 元信息行），因为这两块
- * 在同一个面板位置互相替代：结构一致，切换页面时眼睛不用重新找位置。
+ * 与 `ReleaseList` 共用**集数竖条的视觉**（暖金底 / 斜体衬线 / 56px）：两块在同一个位置
+ * 互相替代，位置与字号一致，切换页面时眼睛不用重新找。
  *
- * 但它**不是** ReleaseList 的变体：那边是「还没下的资源」（可勾选、可复制磁力、可加种），
- * 这边是「盘上已有的文件」（只读：体积 / 状态 / 进度 / 路径）。硬塞进一个组件只会
- * 让两边都长出一堆 `v-if`。
+ * 但它**不是** ReleaseList 的变体：那边是「还没下的资源」（可勾选、复制磁力、加种），
+ * 这边是「盘上已有的文件」（只读）。硬塞进一个组件只会让两边都长出一堆 `v-if`。
+ *
+ * 一条只留三件事（其余都是噪音）：
+ *   ① 第几集 —— 集数竖条，扫一眼就够
+ *   ② 这集是什么货 —— 画质 / 字幕 / 片源，从文件名里摘 2~3 个短标签
+ *   ③ 现在什么状态 —— **只在非正常时出现**（下载中给进度与速度；丢失/出错给警示）
+ * 完整文件名挂在整行的 `title` 上（hover 可见）；**保存路径不显示**（那是排错信息，
+ * 要看得去 qB 或文件管理器，摆在面板里只会每行多一行灰字）。
  */
 defineProps({
-  /** [{ hash, name, fileName, episode, season, sizeText, stateText, kind, progress, savePath, contentPath }] */
+  /** [{ hash, name, fileName, episode, season, sizeText, stateText, kind, progress, speedText, eta }] */
   items: { type: Array, default: () => [] },
   /** loading | error | empty | ready */
   state: { type: String, default: 'loading' },
@@ -73,8 +80,25 @@ defineProps({
 })
 defineEmits(['retry'])
 
-/** 状态配色：下载中=强调色，已完成=弱化，异常=警示 */
-const stateTone = (kind) => (kind === 'downloading' ? 'on' : kind === 'done' ? 'ok' : 'bad')
+/** 画质 / 字幕 / 片源标签（最多 3 个）
+ *  改名后的文件常常一点标签都不剩（`相反的你和我 S02E23.mp4`）——
+ *  所以**两个名字一起看**：原始种子名里通常还留着 `[1080p][JPSC]` 这些线索。 */
+const tagsOf = (item) => fileTagsOf(`${item.name || ''} ${item.fileName || ''}`, 3)
+
+/** 状态配色：下载中=强调色，异常=警示 */
+const toneOf = (item) => (item.kind === 'downloading' ? 'on' : 'bad')
+
+/**
+ * 剩余时间：qB 的 `eta` 是秒，`8640000` 表示「算不出来」（没有可用源 / 已暂停）。
+ * 超过 24 小时也只写「>1 天」—— 精确到分钟在这里没有意义。
+ */
+function etaText(item) {
+  const sec = Number(item.eta) || 0
+  if (item.kind !== 'downloading' || sec <= 0 || sec >= 8640000) return ''
+  if (sec >= 86400) return '剩 >1 天'
+  if (sec >= 3600) return `剩 ${Math.round(sec / 3600)} 小时`
+  return `剩 ${Math.max(1, Math.round(sec / 60))} 分`
+}
 </script>
 
 <style scoped>
@@ -98,6 +122,7 @@ const stateTone = (kind) => (kind === 'downloading' ? 'on' : kind === 'done' ? '
   font-size: 0.78rem;
 }
 
+/* ── 列表：每条 = 左侧集数竖条（56px）+ 右侧内容（与首页资源列表同构）──────── */
 .list {
   display: flex;
   flex-direction: column;
@@ -107,77 +132,88 @@ const stateTone = (kind) => (kind === 'downloading' ? 'on' : kind === 'done' ? '
   list-style: none;
 }
 .item {
-  display: flex;
-  gap: 10px;
-  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  min-height: 58px;
+  overflow: hidden; /* 集数区要贴到卡片边，圆角靠这一层裁 */
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-card);
+  background: var(--bg-input);
 }
 
-/* 集数竖条：与 ReleaseList 的 .ep 数值一致（56px / 斜体衬线），换了组件也不跳 */
+/* ── 集数区：**照搬首页资源列表**（暖金底 + 右侧分隔线 + 斜体衬线 1.55rem）────
+   两块在同一个位置互相替代，字号与底色必须一致，否则切页面会「抖一下」。 */
 .ep {
-  flex: 0 0 56px;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  align-self: flex-start;
-  min-height: 30px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 0.86rem;
+  background: color-mix(in srgb, var(--accent-gold) 14%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--accent-gold) 26%, transparent);
+  color: var(--accent-gold);
+  font-family: Georgia, 'Times New Roman', 'Noto Serif SC', serif;
+  font-size: 1.55rem;
   font-style: italic;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  user-select: none;
 }
+/* 合集是范围（01-12），1.55rem 会撑破 56px —— 单独降一档 */
 .ep.batch {
-  font-size: 0.7rem;
+  font-size: 0.95rem;
   font-style: normal;
 }
+/* 取不到集数：显示「—」并弱化，保留列宽（列表不左右跳） */
 .ep.unknown {
   color: var(--text-tertiary);
+  font-style: normal;
 }
 
 .body {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
   min-width: 0;
-  flex: 1;
+  padding: 10px 12px;
+  justify-content: center;
 }
-.title {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 0.78rem;
-  line-height: 1.4;
-  /* 长文件名两行截断：这里是「知道是哪一集」就够，完整名字 hover 看 title */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
+
+/* 元信息一行：标签之间不写点（CSS 加），标签与数字之间用 `·` 分隔 */
 .meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 4px 8px;
   margin: 0;
-  font-size: 0.72rem;
   color: var(--text-tertiary);
+  font-size: 0.7rem;
 }
-.meta .ok {
+.meta .tag {
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
   color: var(--text-secondary);
+  font-size: 0.68rem;
+  line-height: 1.5;
 }
-.meta .on {
+.meta .num.on {
   color: var(--accent);
 }
-.meta .bad {
+.meta .num.bad {
   color: var(--danger);
 }
 
+/* 下载中：进度条 + 速度 / 剩余（已完成不渲染这一行） */
+.progress-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+}
 .progress {
+  flex: 1;
+  min-width: 0;
   height: 4px;
   border-radius: var(--radius-pill);
   background: var(--bg-hover);
@@ -190,16 +226,12 @@ const stateTone = (kind) => (kind === 'downloading' ? 'on' : kind === 'done' ? '
   background: var(--accent);
   transition: width var(--dur-fast);
 }
-
-.path {
-  margin: 0;
-  color: var(--text-tertiary);
-  font-size: 0.68rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  direction: rtl; /* 路径太长时**省略中间**，保住的尾部才是文件名 */
-  text-align: left;
+.speed {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.eta {
+  flex-shrink: 0;
 }
 
 .dl-phase-enter-active,

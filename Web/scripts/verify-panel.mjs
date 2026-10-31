@@ -271,16 +271,28 @@ console.log('— 面板：已下载模式（source=downloads）')
   check(!realErrors(errors).length, '渲染期没有异常', realErrors(errors)[0] || 'ok')
   check(text.includes('樱桃花字幕组'), '字幕组选择条渲染出来了')
   check(!text.includes('正在读下载记录'), '「已下载」不是加载态', text.includes('正在读下载记录') ? '卡在加载 ✗' : 'ok')
-  check(text.includes('相反的你和我 S02E23.mp4'), '已下载条目渲染出来了（文件名）')
 
-  /* 切到第二个组：合集条目（`01-12`）与下载中状态都在那边 —— 顺带验一次切组 */
+  /* 一条只留三件事：集数 / 这集是什么货 / 异常状态；文件名进 title、路径不显示 */
+  check(text.includes('209 MB'), '体积渲染出来了')
+  check(!text.includes('已完成'), '正常条目不再逐条写「已完成」（那是整块的默认状态）')
+  check(!text.includes('/downloads/anime'), '保存路径不再显示（排错信息不进面板）')
+  const firstItem = document.querySelector('.dl-list .item')
+  check(
+    (firstItem?.getAttribute('title') || '').includes('相反的你和我 S02E23.mp4'),
+    '完整文件名挂在整行 title 上（hover 可见）',
+    firstItem?.getAttribute('title') || '（没有 title）',
+  )
+  check(Boolean(firstItem?.querySelector('.ep')), '集数区在（首页同款竖条）')
+
+  /* 切到第二个组：合集条目（`01-12`）+ 画质标签 + 下载中状态 */
   const chip = [...document.querySelectorAll('.subgroups .chip')].find((b) => b.textContent.includes('喵萌奶茶屋'))
   chip?.dispatchEvent(new win.Event('click', { bubbles: true }))
   await new Promise((r) => setTimeout(r, 150))
   const after = (document.body.textContent || '').replace(/\s+/g, ' ')
   check(Boolean(chip), '能点第二个字幕组（切组是内存操作）')
   check(after.includes('01-12'), '合集条目也渲染出来了（isBatchEpisode 生效）')
-  check(after.includes('下载中（无进度）'), '下载中的状态文案渲染出来了')
+  check(after.includes('1080P'), '画质标签从文件名里摘出来了')
+  check(after.includes('下载中（无进度）') && after.includes('94%'), '下载中给状态 + 进度')
   check(!realErrors(errors).length, '切组没有渲染期异常', realErrors(errors)[0] || 'ok')
 }
 
