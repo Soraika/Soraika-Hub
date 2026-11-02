@@ -172,6 +172,23 @@ try {
     /tagCache\.set\(key, result\)/.test(aiPageSource) && /episodeCache\.set\(key, result\)/.test(aiPageSource),
     '同一份结果写进两个缓存（标签 30m / 集数 24h），各自按自己的 TTL 命中',
   )
+  /* 并发合流：面板会同时发 tags + episodes 两个请求，算的是同一个 bundle ——
+     不合流就是**两次模型调用**（实测日志成对出现：5466ms + 5546ms，同一批 36 条）。 */
+  check(
+    /const inflight = new Map\(\)/.test(aiPageSource) &&
+      /const running = inflight\.get\(key\)/.test(aiPageSource) &&
+      /inflight\.set\(key, task\)/.test(aiPageSource) &&
+      /inflight\.delete\(key\)/.test(aiPageSource),
+    '同 key 的在途请求**合流**（一个去问模型，其它搭车）—— 不会并发打两次模型',
+  )
+
+  /* 单批条数直接决定等待时间：模型是逐 token 吐的，一批 120 条实测 18.7s；
+     切成 40 条一批、批间并发后同样的量 ~7s（实测）。这个值被改大就等于把速度改慢。 */
+  const configSource = readFileSync(new URL('../src/config.js', import.meta.url), 'utf8')
+  check(
+    /maxTitles: 40[,]?/.test(configSource) && /concurrency: 3/.test(configSource),
+    '单批 40 条 × 并发 3（批小一点并发才用得上；120 条一批实测 18.7s → 40 条一批约 7s）',
+  )
 
   /* ── 降级：没启用时调用要明确说「未配置」───────────────────────────── */
   const sample = ['[LoliHouse] 番名 - 01 [1080P][简繁][HEVC]', '[LoliHouse] 番名 - 02 [1080P][简繁][HEVC]']
@@ -211,6 +228,32 @@ try {
       check(
         viaCall.body?.data?.isError === false && typeof viaCall.body?.data?.content?.[0]?.text === 'string',
         '/ai/call 返回 MCP 形状（content[] + structured）',
+      )
+
+      /* 并发合流：面板就是**同时**发 tags + episodes（同一番名 + 同一批文件名）。
+         不合流 = 两次模型调用；合流 = 日志里只多一条 `ai.bundle ok`。 */
+      const stamp = Date.now()
+      const freshName = `并发测试${stamp}`
+      const fresh = [`[LoliHouse] ${freshName} - 01 [1080P][简繁]`, `[LoliHouse] ${freshName} - 02 [1080P][简繁]`]
+      const countBundle = () => logs.join('').split('ai.bundle ok').length - 1
+      const before = countBundle()
+      const [tagP, epP] = await Promise.all([
+        call('POST', '/api/ai/classify/tags', { titles: fresh, animeTitle: freshName }),
+        call('POST', '/api/ai/classify/episodes', { title: freshName, titles: fresh }),
+      ])
+      // 子进程 stdout 是异步写的：等它把日志吐出来再数（最多 3 秒）
+      for (let i = 0; i < 30 && countBundle() - before < 1; i++) await new Promise((r) => setTimeout(r, 100))
+      // 再多等一会儿：如果真打了两次，第二条也会在这段时间里出现
+      await new Promise((r) => setTimeout(r, 600))
+      const calls = countBundle() - before
+      check(
+        tagP.body?.data?.analyzed === 2 && epP.body?.data?.analyzed === 2,
+        `并行两个入口都拿到结果（tags ${tagP.body?.data?.analyzed} / episodes ${epP.body?.data?.analyzed}）`,
+      )
+      check(calls === 1, `同 key 的并行请求只问模型 **1** 次（实测 ${calls} 次）`)
+      check(
+        [tagP, epP].filter((r) => r.body?.data?.cached === true).length === 1,
+        '搭车的那一个回报 cached=true（不是重新算的）',
       )
     }
   }

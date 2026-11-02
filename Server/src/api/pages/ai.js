@@ -176,6 +176,19 @@ const bundleCacheKey = (animeTitle, list) =>
   [BUNDLE_PROMPT_VERSION, config.ai.model, PROMPT_HASH(BUNDLE_SYSTEM_PROMPT), hashOf([animeTitle, ...list])].join(':')
 
 /**
+ * 同一个 key 的**在途请求**（并发合流）
+ * ---------------------------------------------------------------------------
+ * 面板会同时发两个请求：`/classify/tags` 和 `/classify/episodes` —— 它们算的是**同一个 bundle**
+ * （同一番名 + 同一批文件名），原来两边都查缓存、都 miss，于是**并发打两次模型**
+ * （实测日志里成对出现：`5466ms` + `5546ms`，同一批 36 条）。
+ * 后果：延迟翻倍（同 key 的并发请求会被供应商排队）、token 翻倍。
+ *
+ * 现在：第一个请求负责真的去问模型，其余同 key 的请求**挂在同一个 Promise 上**，
+ * 拿到结果后各自按 `cached: true` 返回 —— 一次模型调用，两个入口都用得上。
+ */
+const inflight = new Map()
+
+/**
  * **一次调用拿三类产物**：标签 + 纯番名/季 + 每条集数
  * ---------------------------------------------------------------------------
  * 全量分批（单批 `ai.maxTitles` 条，批间按 `ai.concurrency` 并发），结果合并：
@@ -197,90 +210,115 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
     return { ...cached, cached: true }
   }
 
-  const startedAt = Date.now()
-  const batchSize = Math.max(1, config.ai.maxTitles || 40)
-  const batches = chunk(list, batchSize)
-  const limit = Math.min(Math.max(1, Number(config.ai.concurrency) || 1), 8)
+  /* 同 key 已经在问模型了 → 直接搭车（别再发一次） */
+  const running = inflight.get(key)
+  if (running) {
+    log.debug({ titles: list.length, kind }, 'ai.bundle join-inflight')
+    const shared = await running
+    return { ...shared, cached: true }
+  }
 
-  const runs = await mapLimit(batches, limit, async (batch) => {
-    const { parsed, model, ms } = await chatJson({
-      system: BUNDLE_SYSTEM_PROMPT,
-      user: bundleUserPrompt(batch, context),
-      log,
+  const task = (async () => {
+    const startedAt = Date.now()
+    const batchSize = Math.max(1, config.ai.maxTitles || 40)
+    const batches = chunk(list, batchSize)
+    const limit = Math.min(Math.max(1, Number(config.ai.concurrency) || 1), 8)
+
+    const runs = await mapLimit(batches, limit, async (batch) => {
+      const { parsed, model, ms } = await chatJson({
+        system: BUNDLE_SYSTEM_PROMPT,
+        user: bundleUserPrompt(batch, context),
+        log,
+      })
+      return { parsed: parsed || {}, model, ms }
     })
-    return { parsed: parsed || {}, model, ms }
-  })
 
-  const model = runs[runs.length - 1]?.model || config.ai.model
+    const model = runs[runs.length - 1]?.model || config.ai.model
 
-  /* ① 标签：同名合并 match；all 按全量重算 */
-  const merged = new Map()
-  const episodes = {}
-  let rawName = String(animeTitle || '').trim()
-  let seasonNo = 1
+    /* ① 标签：同名合并 match；all 按全量重算 */
+    const merged = new Map()
+    const episodes = {}
+    let rawName = String(animeTitle || '').trim()
+    let seasonNo = 1
 
-  for (const [index, run] of runs.entries()) {
-    for (const raw of Array.isArray(run.parsed?.tags) ? run.parsed.tags : []) {
-      const name = String(raw?.display || '').trim()
-      if (!name) continue
-      const match = (Array.isArray(raw?.match) ? raw.match : [name]).map((m) => String(m || '').trim()).filter(Boolean)
-      const hit = merged.get(name)
-      if (hit) hit.match = [...new Set([...hit.match, ...match])]
-      else merged.set(name, { name, type: VALID_TYPES.has(raw?.type) ? raw.type : 'other', match })
+    for (const [index, run] of runs.entries()) {
+      for (const raw of Array.isArray(run.parsed?.tags) ? run.parsed.tags : []) {
+        const name = String(raw?.display || '').trim()
+        if (!name) continue
+        const match = (Array.isArray(raw?.match) ? raw.match : [name]).map((m) => String(m || '').trim()).filter(Boolean)
+        const hit = merged.get(name)
+        if (hit) hit.match = [...new Set([...hit.match, ...match])]
+        else merged.set(name, { name, type: VALID_TYPES.has(raw?.type) ? raw.type : 'other', match })
+      }
+
+      // 番名 / 季以第一批为准
+      if (index === 0) {
+        if (run.parsed?.rawName) rawName = String(run.parsed.rawName).trim()
+        if (Number(run.parsed?.season) > 0) seasonNo = Number(run.parsed.season)
+      }
+
+      for (const [name, value] of Object.entries(run.parsed?.episodes || {})) {
+        // 集数归一：数字 / "1-12" / null，别的写法一律丢掉（宁缺勿错）
+        if (value === null) episodes[name] = null
+        else if (typeof value === 'number') episodes[name] = value
+        else if (typeof value === 'string' && /^\d{1,4}(-\d{1,4})?$/.test(value.trim())) episodes[name] = value.trim()
+      }
     }
 
-    // 番名 / 季以第一批为准
-    if (index === 0) {
-      if (run.parsed?.rawName) rawName = String(run.parsed.rawName).trim()
-      if (Number(run.parsed?.season) > 0) seasonNo = Number(run.parsed.season)
-    }
+    const lowers = list.map((t) => t.toLowerCase())
+    const tags = dropCovered(
+      [...merged.values()]
+        .map((tag) => ({
+          ...tag,
+          all: lowers.every((title) => tag.match.some((m) => title.includes(m.toLowerCase()))),
+        }))
+        .filter((t) => t.name && t.match.length),
+    ).sort(
+      (a, b) =>
+        Number(a.all) - Number(b.all) ||
+        (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9) ||
+        a.name.localeCompare(b.name),
+    )
 
-    for (const [name, value] of Object.entries(run.parsed?.episodes || {})) {
-      // 集数归一：数字 / "1-12" / null，别的写法一律丢掉（宁缺勿错）
-      if (value === null) episodes[name] = null
-      else if (typeof value === 'number') episodes[name] = value
-      else if (typeof value === 'string' && /^\d{1,4}(-\d{1,4})?$/.test(value.trim())) episodes[name] = value.trim()
+    /* 修订版：字幕组修版重发（v2 / 修正版 / Rework / Repack…），这个标签**仍由本地规则**统一
+       —— 它是确定性判定（`lib/format.js` 的 revisionOf），而且 `kind: 'revision'` 要驱动前端的
+       「优选」语义（同集有修订用修订、没有的照旧保留），这条不能交给模型自由发挥。 */
+    const revised = list.filter((title) => revisionOf(title) >= 2).length
+    if (revised) tags.unshift({ name: '修订版', type: 'version', kind: 'revision', count: revised, match: [] })
+
+    const result = {
+      tags,
+      rawName,
+      season: seasonNo,
+      episodes,
+      model,
+      ms: Date.now() - startedAt,
+      analyzed: list.length,
+      batches: batches.length,
     }
+    tagCache.set(key, result)
+    episodeCache.set(key, result)
+    log.info(
+      {
+        titles: list.length,
+        tags: tags.length,
+        episodes: Object.keys(episodes).length,
+        batches: batches.length,
+        model,
+        ms: result.ms,
+      },
+      'ai.bundle ok',
+    )
+    return result
+  })()
+
+  inflight.set(key, task)
+  try {
+    const result = await task
+    return { ...result, cached: false }
+  } finally {
+    inflight.delete(key)
   }
-
-  const lowers = list.map((t) => t.toLowerCase())
-  const tags = dropCovered(
-    [...merged.values()]
-      .map((tag) => ({
-        ...tag,
-        all: lowers.every((title) => tag.match.some((m) => title.includes(m.toLowerCase()))),
-      }))
-      .filter((t) => t.name && t.match.length),
-  ).sort(
-    (a, b) =>
-      Number(a.all) - Number(b.all) ||
-      (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9) ||
-      a.name.localeCompare(b.name),
-  )
-
-  /* 修订版：字幕组修版重发（v2 / 修正版 / Rework / Repack…），这个标签**仍由本地规则**统一
-     —— 它是确定性判定（`lib/format.js` 的 revisionOf），而且 `kind: 'revision'` 要驱动前端的
-     「优选」语义（同集有修订用修订、没有的照旧保留），这条不能交给模型自由发挥。 */
-  const revised = list.filter((title) => revisionOf(title) >= 2).length
-  if (revised) tags.unshift({ name: '修订版', type: 'version', kind: 'revision', count: revised, match: [] })
-
-  const result = {
-    tags,
-    rawName,
-    season: seasonNo,
-    episodes,
-    model,
-    ms: Date.now() - startedAt,
-    analyzed: list.length,
-    batches: batches.length,
-  }
-  tagCache.set(key, result)
-  episodeCache.set(key, result)
-  log.info(
-    { titles: list.length, tags: tags.length, episodes: Object.keys(episodes).length, batches: batches.length, model, ms: result.ms },
-    'ai.bundle ok',
-  )
-  return { ...result, cached: false }
 }
 
 /**
