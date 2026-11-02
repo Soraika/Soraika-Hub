@@ -30,6 +30,7 @@
       @close="closeAnime"
       @retry="retryAnime"
       @open="openAnime"
+      @downloaded="onDownloaded"
     />
   </div>
 </template>
@@ -103,7 +104,13 @@ const {
  */
 watch(activeNav, (nav) => {
   closeAnime()
-  if (nav === 'downloads' && !downloads.data.value) downloads.load()
+  // 只有待在下载页才轮询（切走立刻停，别让后台一直打 qB）
+  if (nav === 'downloads') {
+    if (!downloads.data.value) downloads.load()
+    downloads.startAutoRefresh()
+  } else {
+    downloads.stopAutoRefresh()
+  }
 })
 
 /**
@@ -125,6 +132,18 @@ onMounted(async () => {
  * 由「从哪个页面点的海报」决定 —— 同一个面板、同一部作品，两种页面看到的东西不同。
  */
 const panelSource = ref('mikan')
+
+/**
+ * 刚加过种子 → 下载页的数据已经过期了
+ * ---------------------------------------------------------------------------
+ * 加种走的是面板（任意页面都能点），下载页的数据却在容器里缓存着。
+ * 不刷新的话：点完「下载」切到下载页，会看不到刚加的那条（or 还显示旧的进度），
+ * 那是「说好加了却看不见」的典型错觉。这里直接重取一次（跳过后端 4 秒缓存）。
+ */
+function onDownloaded(payload) {
+  if (!payload?.added?.length) return
+  downloads.load({ fresh: true })
+}
 
 // 数据还没到时，季选先显示：① 上次选过的季（localStorage）② 本机算的当前季
 // —— 服务端返回后会以它算的当前季为准
@@ -161,6 +180,7 @@ const pageProps = computed(() => {
       data: downloads.data.value,
       uiState: downloads.uiState.value,
       refreshing: downloads.refreshing.value,
+      polling: downloads.polling.value,
       activeAnimeId: activeAnimeId.value,
       // 下载页点海报 → 面板读**已经下载的文件**（同一个面板，换数据源）
       onOpenAnime: (item) => {

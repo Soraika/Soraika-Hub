@@ -16,6 +16,10 @@
             </span>
             <!-- 版本是「连到的是哪个 qB」的凭据：应用版本 + WebAPI 版本都要 -->
             <span v-if="versions" class="stat ver">qB {{ versions.app }} · WebAPI {{ versions.api }}</span>
+            <!-- 有任务在跑时页面自己每 5 秒刷新一次，这里说一声，免得以为数据不动 -->
+            <span v-if="polling" class="stat auto" title="有下载中的任务，页面每 5 秒刷新一次">
+              <span class="dot-live" /> 自动刷新中
+            </span>
           </p>
 
           <button class="refresh" type="button" :disabled="refreshing" @click="$emit('reload')">
@@ -114,6 +118,8 @@ const props = defineProps({
   uiState: { type: String, default: 'loading' },
   /** 刷新中（已有数据，只是后台再取） */
   refreshing: { type: Boolean, default: false },
+  /** 是否在自动刷新（有下载中的任务时每 5 秒一次） */
+  polling: { type: Boolean, default: false },
   /** 当前打开的作品主键（卡片选中态） */
   activeAnimeId: { type: Number, default: null },
 })
@@ -227,6 +233,31 @@ function speedText(bytes) {
   margin-left: auto;
   font-family: var(--font-mono);
   font-size: 0.72rem;
+}
+/* 「自动刷新中」：一个小呼吸点，比转圈安静（数据自己在动，不需要让人盯着） */
+.summary .auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+}
+.dot-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: live-pulse 1.4s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
 }
 .refresh {
   display: inline-flex;

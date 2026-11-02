@@ -37,6 +37,8 @@ export function useDownloads() {
       if (current === seq) {
         loading.value = false
         refreshing.value = false
+        // 每次取完都重新评估「还要不要继续轮询」（下完了就停表）
+        syncPolling()
       }
     }
   }
@@ -54,6 +56,48 @@ export function useDownloads() {
     return 'ready'
   })
 
+  /**
+   * 自动刷新（**只在有任务在跑时**）
+   * -------------------------------------------------------------------------
+   * qB 的进度不会自己推到页面上，不刷新的话「下载中 94%」会一直停在 94%——
+   * 那看着就像卡死了。但也不能无条件轮询：全都下完还每 5 秒打一次 qB，
+   * 纯属浪费（而且用户只是回来看看，页面安安静静就好）。
+   * 规则：`counts.downloading > 0` → 每 5 秒拉一次（走后端 4 秒缓存，不会真的打满 qB）；
+   *      没有下载中的任务 → 立刻停表。
+   */
+  const POLL_MS = 5000
+  let timer = null
+  /** 页面在的时候才允许轮询（切走就停，别让后台一直打 qB） */
+  const autoRefresh = ref(false)
+  /** 给界面用：正在自动刷新（timer 是普通变量，不能用 computed 包它 —— 那样不会更新） */
+  const polling = ref(false)
+
+  function syncPolling() {
+    const active = autoRefresh.value && Number(counts.value.downloading) > 0
+    if (active && !timer) {
+      timer = setInterval(() => {
+        // 上一轮还没回来就别叠加（qB 卡住时最容易堆请求）
+        if (!loading.value && !refreshing.value) load({ fresh: true })
+      }, POLL_MS)
+    } else if (!active && timer) {
+      clearInterval(timer)
+      timer = null
+    }
+    polling.value = Boolean(timer)
+  }
+
+  function startAutoRefresh() {
+    autoRefresh.value = true
+    syncPolling()
+  }
+  function stopAutoRefresh() {
+    autoRefresh.value = false
+    if (timer) {
+      clearInterval(timer)
+      timer = null
+    }
+  }
+
   const configured = computed(() => Boolean(data.value?.configured))
   const items = computed(() => data.value?.items ?? [])
   const unmatched = computed(() => data.value?.unmatched ?? [])
@@ -61,5 +105,21 @@ export function useDownloads() {
   const versions = computed(() => data.value?.versions ?? null)
   const transfer = computed(() => data.value?.transfer ?? null)
 
-  return { data, loading, refreshing, error, uiState, configured, items, unmatched, counts, versions, transfer, load }
+  return {
+    data,
+    loading,
+    refreshing,
+    error,
+    uiState,
+    configured,
+    items,
+    unmatched,
+    counts,
+    versions,
+    transfer,
+    polling,
+    load,
+    startAutoRefresh,
+    stopAutoRefresh,
+  }
 }

@@ -247,7 +247,7 @@ const props = defineProps({
   /** qB 通道是否可用（容器查一次 `/api/qb/status` 后传下来；false 时下载按钮只给说明） */
   downloadReady: { type: Boolean, default: false },
 })
-const emit = defineEmits(['close', 'retry', 'open'])
+const emit = defineEmits(['close', 'retry', 'open', 'downloaded'])
 
 const isDownloads = computed(() => props.source === 'downloads')
 
@@ -432,6 +432,8 @@ async function onDownload(items) {
       ? `；${res.failed.length} 条失败（${res.failed[0].title}：${res.failed[0].reason}）`
       : ''
     downloadMsg.value = head + tail
+    // 让容器知道「下载列表变了」——它会重取一次，下载页不用手动刷新
+    emit('downloaded', res)
   } catch (err) {
     downloadFailed.value = true
     downloadMsg.value = `加种失败：${err.message}`

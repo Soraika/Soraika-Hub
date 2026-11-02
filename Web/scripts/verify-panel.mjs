@@ -346,6 +346,8 @@ console.log('\n— 下载页：卡片墙')
   check(text.includes('下载中') && text.includes('已完成'), '按状态分区渲染出来了')
   check(text.includes('qB v5.2.1 · WebAPI 2.15.1'), '顶部显示两个版本')
   check(text.includes('未识别'), '「未识别」那一栏也在（不藏起来）')
+  check(text.includes('自动刷新中'), '有下载中的任务 → 显示「自动刷新中」（页面自己在更新）')
+  if (process.env.VERIFY_PANEL_DEBUG) console.log('  [debug] 页面文本 =', text.slice(0, 160))
 }
 
 fs.rmSync(dist, { recursive: true, force: true })

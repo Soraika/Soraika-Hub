@@ -9,13 +9,18 @@ import { useDownloads } from '@/composables/useDownloads'
 const app = createApp({
   setup() {
     const d = useDownloads()
-    onMounted(() => d.load())
+    onMounted(() => {
+      d.load()
+      // 模拟「进到下载页」：容器会打开轮询（有下载中的任务时才会真的起表）
+      d.startAutoRefresh()
+    })
     const activeId = ref(null)
     return () =>
       h(DownloadsPage, {
         data: d.data.value,
         uiState: d.uiState.value,
         refreshing: d.refreshing.value,
+        polling: d.polling.value,
         activeAnimeId: activeId.value,
         onOpenAnime: () => {},
         onReload: () => d.load({ fresh: true }),

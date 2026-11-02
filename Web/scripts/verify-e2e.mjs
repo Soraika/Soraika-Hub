@@ -1238,6 +1238,14 @@ try {
     '下载页模式：顶部 chip 是**筛选**，而且只有一个组时整块不渲染（筛了等于没筛）',
   )
   check(
+    /startAutoRefresh/.test(appSource) && /stopAutoRefresh/.test(appSource),
+    '下载页停留期间才轮询（有下载中任务时 5 秒一次，切走立刻停）',
+  )
+  check(
+    /emit\('downloaded', res\)/.test(panelSource) && /downloads\.load\(\{ fresh: true \}\)/.test(appSource),
+    '加种成功后下载页数据自动重取（不然「说好加了却看不见」）',
+  )
+  check(
     /emit\('download', list\)/.test(listSource) && /downloadOne\(item\)/.test(listSource),
     '资源列表能真的发起下载（全选 / 筛选结果 / 单条三个入口都走同一条事件）',
   )
