@@ -1223,15 +1223,19 @@ try {
     '面板按 source 切换资源来源（Mikan 资源 ↔ 已下载文件），详情部分完全复用',
   )
   check(
-    downloadListSource.includes('fileTagsOf') &&
+    downloadListSource.includes('item.subgroup') &&
       downloadListSource.includes('stateText') &&
       downloadListSource.includes('progress') &&
       !downloadListSource.includes('savePath'),
-    '已下载条目：集数 + 画质标签 + 体积 + （仅异常时）状态与进度；路径不显示',
+    '已下载条目：集数 + 画质标签 + 体积 + 右侧字幕组（仅异常时给状态）；路径不显示',
   )
   check(
-    /title="item\.fileName \|\| item\.name"|:title="item\.fileName \|\| item\.name"/.test(downloadListSource),
+    /:title="item\.fileName \|\| item\.name"/.test(downloadListSource),
     '完整文件名挂在整行 title 上（不占版面、排错时 hover 可见）',
+  )
+  check(
+    /showSubgroupBar/.test(panelSource) && /subgroups\.value\.length > 2/.test(panelSource),
+    '下载页模式：顶部 chip 是**筛选**，而且只有一个组时整块不渲染（筛了等于没筛）',
   )
   check(
     /emit\('download', list\)/.test(listSource) && /downloadOne\(item\)/.test(listSource),

@@ -10,7 +10,7 @@
  *   · `addDownloads()`      → 资源列表勾选后加种（归档目录 + 标签在这里定）
  */
 import { config } from '../../config.js'
-import { findById, findByMikanId, findByTitle, listSubgroupDict } from '../../db/anime.js'
+import { findById, findByMikanId, findByTitle } from '../../db/anime.js'
 import {
   archiveDirOf,
   buildTags,
@@ -26,6 +26,7 @@ import {
   subgroupOf,
   tagsOf,
 } from '../../lib/downloads.js'
+import { metaFromTags, metaOfText, metaTagsOf, releaseMetaTags } from '../../lib/release-tags.js'
 import { fail } from '../../lib/errors.js'
 import { posterUrlOf } from '../../lib/format.js'
 import { logger } from '../../lib/logger.js'
@@ -38,12 +39,18 @@ const UNKNOWN_GROUP = '未标注字幕组'
  * 一个种子 → 界面条目
  * `name` 是 qB 里的种子名（原始资源标题），`fileName` 才是落盘后的文件名 ——
  * 集数从**落盘名**取：改过名的种子那里是规范的 `S01E04`，比原始标题准。
+ *
+ * `subgroup` / `tags`（画质·字幕·片源）也在这里定：
+ *   组名 → 标签 `sg:` → 旧格式最后一格 → 种子名；
+ *   画质字幕 → **标签优先**（加种时写进去的，改名也不丢）→ 名字兜底（历史种子）。
  */
 function normalizeTorrent(t) {
   const root = config.qb?.saveRoot
   const { title: dirTitle, seasonDir } = splitSavePath(t.save_path, root)
   const fileName = String(t.content_path || '').split('/').pop() || ''
   const episode = episodeOf(fileName) || episodeOf(t.name)
+  const tags = tagsOf(t.tags)
+  const meta = metaFromTags(tags)
   return {
     hash: t.hash,
     name: t.name,
@@ -52,6 +59,10 @@ function normalizeTorrent(t) {
     season: seasonIndexOf(seasonDir),
     seasonDir,
     episode,
+    /** 字幕组（扁平列表里每行都要标一个；认不出就空串，界面显示「未标注」） */
+    subgroup: subgroupOf(t.tags, t.name),
+    /** 画质 / 字幕 / 片源（最多 3 个，已去重） */
+    tags: releaseMetaTags(meta, `${t.name || ''} ${fileName}`, 3),
     kind: kindOf(t.state),
     state: t.state,
     stateText: stateTextOf(t.state),
@@ -197,49 +208,45 @@ export async function getDownloads({ fresh = false } = {}) {
 }
 
 /**
- * 面板「资源」区：已下载的按**字幕组**分组（字幕组 → 这个组下已下的集）
+ * 面板「资源」区：**一部番一份扁平清单** + 一个字幕组筛选条
+ * ---------------------------------------------------------------------------
+ * 为什么不按字幕组分成几个独立列表（之前那样）：
+ *   · 一部番往往只有 1~2 个组在活动，分组后 90% 的组只有 1 条 —— 点两下才看得到
+ *   · 用户关心的是「我下到第几集了」，不关心「这一集是谁压的」（组名是附注，不是维度）
+ * 所以：清单按集号倒序铺平，每行自带组名；`groups` 只用来画顶部筛选条（全部 / 各组）。
  * @param {number|string} animeId 作品主键
  */
 export async function getAnimeDownloads(animeId, { log = logger } = {}) {
   const row = findById(Number(animeId))
   if (!row) throw fail('NOT_FOUND', `没有 id=${animeId} 的作品记录`)
 
-  const base = { animeId: row.id, title: row.title_cn || row.title, subgroups: [], total: 0, sizeText: '' }
+  const base = { animeId: row.id, title: row.title_cn || row.title, groups: [], items: [], total: 0, sizeText: '' }
   if (!qbConfigured()) return base
 
   const torrents = (await qbTorrents()).filter((t) => resolveAnime(t)?.id === row.id)
-  const dict = new Set(listSubgroupDict())
-  /** 组名来源：`sg:` / 旧格式最后一格 → 标签里直接就是一个已知组名（老系统会这么写）→ 未标注 */
-  const groupOf = (t) => {
-    const direct = subgroupOf(t.tags, t.name)
-    if (direct) return direct
-    for (const tag of tagsOf(t.tags)) if (dict.has(tag)) return tag
-    return UNKNOWN_GROUP
-  }
-  const groups = new Map()
-  for (const t of torrents) {
-    const name = groupOf(t)
-    if (!groups.has(name)) groups.set(name, [])
-    groups.get(name).push(normalizeTorrent(t))
-  }
+  const items = torrents.map(normalizeTorrent).sort((a, b) => episodeOrder(b.episode) - episodeOrder(a.episode))
 
-  const subgroups = [...groups.entries()].map(([name, list]) => ({
-    id: name, // 面板里用组名当 id（与「库里没有的组」那条路径一致）
-    name,
-    count: list.length,
-    sizeText: sizeText(list.reduce((n, it) => n + it.sizeBytes, 0)),
-    items: list.sort((a, b) => episodeOrder(b.episode) - episodeOrder(a.episode)),
-  }))
-  // 集数多的组排前面（通常就是主力组）
-  subgroups.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  /** 筛选条用：组名 + 条数 + 体积（顺序按条数，多的在前） */
+  const byGroup = new Map()
+  for (const item of items) {
+    const name = item.subgroup || UNKNOWN_GROUP
+    item.subgroup = name // 空组名统一成「未标注字幕组」，界面直接显示
+    const hit = byGroup.get(name) || { name, count: 0, bytes: 0 }
+    hit.count++
+    hit.bytes += item.sizeBytes
+    byGroup.set(name, hit)
+  }
+  const groups = [...byGroup.values()]
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+    .map((g) => ({ name: g.name, count: g.count, sizeText: sizeText(g.bytes) }))
 
-  const all = subgroups.flatMap((g) => g.items)
-  log.debug({ animeId: row.id, torrents: all.length, subgroups: subgroups.length }, 'downloads.anime ok')
+  log.debug({ animeId: row.id, torrents: items.length, groups: groups.length }, 'downloads.anime ok')
   return {
     ...base,
-    subgroups,
-    total: all.length,
-    sizeText: sizeText(all.reduce((n, it) => n + it.sizeBytes, 0)),
+    items,
+    groups,
+    total: items.length,
+    sizeText: sizeText(items.reduce((n, it) => n + it.sizeBytes, 0)),
   }
 }
 
@@ -260,7 +267,8 @@ export async function addDownloads({ animeId, subgroup = '', season = 1, items =
   const root = config.qb?.saveRoot
   const title = row.title_cn || row.title
   const savePath = archiveDirOf({ title, season, root })
-  const tags = buildTags({ mikanId: row.mikan_id || '', subgroup })
+  /** 基础标签：`soraika`（本程序加的）+ `mid`（认回作品的关键）+ `sg`（字幕组） */
+  const baseTags = buildTags({ mikanId: row.mikan_id || '', subgroup })
 
   const added = []
   const failed = []
@@ -270,14 +278,24 @@ export async function addDownloads({ animeId, subgroup = '', season = 1, items =
       failed.push({ title: item.title, reason: '这条资源没有磁力 / 种子链接' })
       continue
     }
+    /**
+     * **加种时就把元数据写进标签**（`res:1080P` / `sub:简日内嵌` / `src:WEB-DL`）。
+     * 这是唯一能扛住改名的存法：文件名改成 `番名 S01E04.mkv` 之后，画质与字幕信息
+     * 在名字里就没了，事后**推不出来**（旧系统 113/176 条就是这么丢的）。
+     */
+    const meta = metaOfText(item.title)
+    const tags = [baseTags, ...metaTagsOf(meta)].filter(Boolean).join(',')
     try {
       await qbAddTorrent({ url, savePath, tags, category: config.qb?.category })
-      added.push({ title: item.title, episode: item.episode || episodeOf(item.title) })
+      added.push({ title: item.title, episode: item.episode || episodeOf(item.title), tags })
     } catch (err) {
       failed.push({ title: item.title, reason: err.message })
     }
   }
 
-  log.info({ animeId: row.id, savePath, tags, added: added.length, failed: failed.length }, 'downloads.add done')
-  return { savePath, tags, added, failed }
+  log.info(
+    { animeId: row.id, savePath, tags: baseTags, added: added.length, failed: failed.length },
+    'downloads.add done',
+  )
+  return { savePath, tags: baseTags, added, failed }
 }

@@ -84,11 +84,14 @@ const DL_ITEMS = [
     fileName: '相反的你和我 S02E23.mp4',
     episode: '23',
     season: 2,
+    subgroup: '樱桃花字幕组',
+    tags: ['1080P', '简日内嵌'],
     kind: 'done',
     state: 'stoppedUP',
     stateText: '已完成',
     progress: 100,
     sizeText: '209 MB',
+    sizeBytes: 209e6,
     savePath: '/downloads/anime/相反的你和我/SE02',
     contentPath: '/downloads/anime/相反的你和我/SE02/相反的你和我 S02E23.mp4',
     addedAt: 1788000000,
@@ -100,11 +103,14 @@ const DL_ITEMS = [
     fileName: '[Nekomoe][Yuru Camp][01-12END][1080p]',
     episode: '01-12',
     season: 1,
+    subgroup: '喵萌奶茶屋',
+    tags: ['1080P'],
     kind: 'downloading',
     state: 'stalledDL',
     stateText: '下载中（无进度）',
     progress: 94,
     sizeText: '2.8 GB',
+    sizeBytes: 3e9,
     savePath: '/downloads/anime/摇曳露营/SE01',
     contentPath: '/downloads/anime/摇曳露营/SE01/[Nekomoe][Yuru Camp][01-12END][1080p]',
     addedAt: 1788100000,
@@ -116,10 +122,12 @@ const DL_ANIME = {
   title: DETAIL.title,
   total: DL_ITEMS.length,
   sizeText: '3.0 GB',
-  subgroups: [
-    { id: '樱桃花字幕组', name: '樱桃花字幕组', count: 1, sizeText: '209 MB', items: [DL_ITEMS[0]] },
-    { id: '喵萌奶茶屋', name: '喵萌奶茶屋', count: 1, sizeText: '2.8 GB', items: [DL_ITEMS[1]] },
+  groups: [
+    { name: '樱桃花字幕组', count: 1, sizeText: '209 MB' },
+    { name: '喵萌奶茶屋', count: 1, sizeText: '2.8 GB' },
   ],
+  /** 扁平清单：默认全显示（不按组分区），组名是每行的附注 */
+  items: DL_ITEMS,
 }
 
 
@@ -197,7 +205,8 @@ function route(url) {
 }
 
 
-/* ── 构建 harness ─────────────────────────────────────────────────────── */
+/* ── 构建 harness（每次给一个**唯一文件名**：ESM 按 URL 缓存，同名就只执行一次）── */
+let buildSeq = 0
 async function buildEntry(entry) {
   const outDir = path.join(dist, entry)
   await build({
@@ -208,7 +217,10 @@ async function buildEntry(entry) {
     build: { outDir, emptyOutDir: true, rollupOptions: { input: path.join(harness, `${entry}.html`) } },
   })
   const assets = fs.readdirSync(path.join(outDir, 'assets'))
-  return path.join(outDir, 'assets', assets.find((f) => f.endsWith('.js')))
+  const src = path.join(outDir, 'assets', assets.find((f) => f.endsWith('.js')))
+  const unique = path.join(outDir, `run-${++buildSeq}-${path.basename(src)}`)
+  fs.copyFileSync(src, unique)
+  return unique
 }
 
 /* ── 在 happy-dom 里挂一次 ─────────────────────────────────────────────── */
@@ -272,28 +284,46 @@ console.log('— 面板：已下载模式（source=downloads）')
   check(text.includes('樱桃花字幕组'), '字幕组选择条渲染出来了')
   check(!text.includes('正在读下载记录'), '「已下载」不是加载态', text.includes('正在读下载记录') ? '卡在加载 ✗' : 'ok')
 
-  /* 一条只留三件事：集数 / 这集是什么货 / 异常状态；文件名进 title、路径不显示 */
-  check(text.includes('209 MB'), '体积渲染出来了')
+  /* 一条只留三件事：集数 / 这集是什么货 /（右侧）字幕组；文件名进 title、路径不显示 */
+  check(text.includes('209 MB') && text.includes('2.8 GB'), '两个组的条目**同时**铺在一层（不按组分区）')
   check(!text.includes('已完成'), '正常条目不再逐条写「已完成」（那是整块的默认状态）')
   check(!text.includes('/downloads/anime'), '保存路径不再显示（排错信息不进面板）')
-  const firstItem = document.querySelector('.dl-list .item')
+  const rows = [...document.querySelectorAll('.dl-list .item')]
+  check(rows.length === 2, `一次就把全部条目列出来 → ${rows.length} 条`)
   check(
-    (firstItem?.getAttribute('title') || '').includes('相反的你和我 S02E23.mp4'),
-    '完整文件名挂在整行 title 上（hover 可见）',
-    firstItem?.getAttribute('title') || '（没有 title）',
+    rows.every((r) => Boolean(r.querySelector('.subgroup')?.textContent?.trim())),
+    '每行**右侧**都标了字幕组',
+    rows.map((r) => r.querySelector('.subgroup')?.textContent?.trim()).join(' / '),
   )
-  check(Boolean(firstItem?.querySelector('.ep')), '集数区在（首页同款竖条）')
+  check(
+    (rows[0]?.getAttribute('title') || '').includes('相反的你和我 S02E23.mp4'),
+    '完整文件名挂在整行 title 上（hover 可见）',
+    rows[0]?.getAttribute('title') || '（没有 title）',
+  )
+  check(Boolean(rows[0]?.querySelector('.ep')), '集数区在（首页同款竖条）')
 
-  /* 切到第二个组：合集条目（`01-12`）+ 画质标签 + 下载中状态 */
-  const chip = [...document.querySelectorAll('.subgroups .chip')].find((b) => b.textContent.includes('喵萌奶茶屋'))
+  /* 顶部 chip 在下载页模式是**筛选**：点某一个组 → 只剩该组 */
+  const chip = [...document.querySelectorAll('.subgroups .chip')].find((b) => b.textContent.includes('樱桃花字幕组'))
+  check(Boolean(chip), '筛选条里出现「全部」+ 各组')
   chip?.dispatchEvent(new win.Event('click', { bubbles: true }))
   await new Promise((r) => setTimeout(r, 150))
-  const after = (document.body.textContent || '').replace(/\s+/g, ' ')
-  check(Boolean(chip), '能点第二个字幕组（切组是内存操作）')
-  check(after.includes('01-12'), '合集条目也渲染出来了（isBatchEpisode 生效）')
-  check(after.includes('1080P'), '画质标签从文件名里摘出来了')
-  check(after.includes('下载中（无进度）') && after.includes('94%'), '下载中给状态 + 进度')
-  check(!realErrors(errors).length, '切组没有渲染期异常', realErrors(errors)[0] || 'ok')
+  const filtered = [...document.querySelectorAll('.dl-list .item')]
+  check(filtered.length === 1, `点某个组 → 只剩该组的条目 → ${filtered.length} 条`)
+  const afterText = (document.body.textContent || '').replace(/\s+/g, ' ')
+  check(afterText.includes('1080P'), '画质标签渲染出来了')
+  check(!realErrors(errors).length, '筛选没有渲染期异常', realErrors(errors)[0] || 'ok')
+}
+
+console.log('\n— 面板：已下载（单组时不显示筛选条）')
+{
+  /* 只有一个组时「全部 + 1」筛了等于没筛，那条 chip 栏应该藏起来 */
+  DL_ANIME.groups = [{ name: '樱桃花字幕组', count: 2, sizeText: '3.0 GB' }]
+  DL_ITEMS.forEach((it) => (it.subgroup = '樱桃花字幕组'))
+  const js = await buildEntry('index')
+  const { text, errors } = await mountPage(js, 'http://127.0.0.1:3100/?source=downloads', 400)
+  check(!realErrors(errors).length, '渲染期没有异常', realErrors(errors)[0] || 'ok')
+  check(!document.querySelector('.subgroups'), '单组时筛选条整块不出现')
+  check(text.includes('01-12') && text.includes('下载中（无进度）') && text.includes('94%'), '合集条目 + 下载中状态都在')
 }
 
 console.log('\n— 面板：Mikan 资源模式（source=mikan）')

@@ -135,7 +135,7 @@
                所以它必须夹在两级中间，不能挪到字幕组上面去。
                三块各用一个卡片包住（与上面的评分卡/简介同款），
                这样所有内容的左右边界都由「卡片内边距」统一决定，不会参差。 -->
-          <section class="card">
+          <section v-if="showSubgroupBar" class="card">
             <SubgroupBar
               :subgroups="subgroups"
               :active-id="activeSubgroupId"
@@ -276,6 +276,17 @@ const releaseState = computed(() => (isDownloads.value ? downloaded.releaseState
 const releasesError = computed(() => (isDownloads.value ? downloaded.error.value : mikan.releasesError.value))
 /** 当前组的手写体积（下载页模式才有值） */
 const downloadSizeText = computed(() => downloaded.sizeText.value)
+
+/**
+ * 顶部那排 chip 要不要出现
+ * · Mikan 模式：它是**第一级数据源**（选组才取资源），必须有
+ * · 下载页模式：它只是**筛选**。只有一个组时（「全部」+ 1）筛了等于没筛，
+ *   藏起来更干净 —— 组名已经在每行右侧标着了
+ */
+const showSubgroupBar = computed(() => {
+  if (!isDownloads.value) return true
+  return subgroups.value.length > 2
+})
 
 function selectSubgroup(id) {
   return isDownloads.value ? downloaded.select(id) : mikan.select(id)

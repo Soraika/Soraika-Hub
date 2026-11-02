@@ -16,7 +16,7 @@
         retry-text="重试"
         @retry="$emit('retry')"
       />
-      <p v-else-if="state === 'empty'" key="empty" class="empty">这个字幕组还没有已下载的资源</p>
+      <p v-else-if="state === 'empty'" key="empty" class="empty">还没有已下载的资源</p>
 
       <ul v-else key="list" class="list">
         <!-- 整行 title 挂着**完整文件名**：平时不占版面，排错时 hover 就能看到 -->
@@ -27,22 +27,24 @@
           </span>
 
           <div class="body">
-            <!-- 一行说清「这集是什么」：画质 / 字幕 / 片源（从文件名摘，最多 3 个）+ 体积 -->
+            <!-- 中间：这集是什么（画质 / 字幕 / 片源，加种时写进 qB 标签，改名也不丢）+ 体积 -->
             <p class="meta">
-              <span v-for="tag in tagsOf(item)" :key="tag" class="tag">{{ tag }}</span>
+              <span v-for="tag in item.tags || []" :key="tag" class="tag">{{ tag }}</span>
               <span v-if="item.sizeText" class="num">{{ item.sizeText }}</span>
-              <!-- 只有「不在正常态」才说状态：已完成是这一整块的默认状态，逐条重复是噪音 -->
+              <!-- 只有「不在正常态」才说状态：已下载是这一整块的默认状态 -->
               <span v-if="item.kind !== 'done'" class="num" :class="toneOf(item)">{{ item.stateText }}</span>
               <span v-if="item.kind === 'downloading' && item.progress < 100" class="num">{{ item.progress }}%</span>
             </p>
 
-            <!-- 下载中才给进度条 + 速度 / 剩余时间；已完成不画空条 -->
             <div v-if="item.kind === 'downloading'" class="progress-line">
               <span class="progress"><span class="bar" :style="{ width: `${item.progress}%` }" /></span>
               <span v-if="item.speedText" class="speed">{{ item.speedText }}</span>
               <span v-if="etaText(item)" class="eta">{{ etaText(item) }}</span>
             </div>
           </div>
+
+          <!-- 右侧：字幕组（附注，不是分组维度）。名字长了两行截断，hover 看全名 -->
+          <span class="subgroup" :title="item.subgroup || '未标注字幕组'">{{ item.subgroup || '未标注字幕组' }}</span>
         </li>
       </ul>
     </Transition>
@@ -52,38 +54,32 @@
 <script setup>
 import StateBlock from '@/components/ui/StateBlock.vue'
 import { isBatchEpisode } from '@/utils/episode'
-import { fileTagsOf } from '@/utils/fileTags'
 
 /**
  * 已下载列表（面板「资源」区第二级 —— 下载页模式）
  * ---------------------------------------------------------------------------
- * 与 `ReleaseList` 共用**集数竖条的视觉**（暖金底 / 斜体衬线 / 56px）：两块在同一个位置
- * 互相替代，位置与字号一致，切换页面时眼睛不用重新找。
+ * 一条 = 左侧集数竖条（与 `ReleaseList` 完全同一套样式）+ 中间「这集是什么」+ 右侧字幕组。
  *
- * 但它**不是** ReleaseList 的变体：那边是「还没下的资源」（可勾选、复制磁力、加种），
- * 这边是「盘上已有的文件」（只读）。硬塞进一个组件只会让两边都长出一堆 `v-if`。
+ * 为什么不按字幕组分成几段（之前那样）：
+ *   一部番往往只有 1~2 个组在活动，分组后大半的组只有 1 条 —— 得点两下才看得到；
+ *   用户要看的是「我下到第几集了」，组名是**附注**（右侧一行小字），不是分类维度。
+ *   顶部那排 chip 仍然保留，但语义从「切换数据源」变成「筛选这份清单」。
  *
- * 一条只留三件事（其余都是噪音）：
- *   ① 第几集 —— 集数竖条，扫一眼就够
- *   ② 这集是什么货 —— 画质 / 字幕 / 片源，从文件名里摘 2~3 个短标签
- *   ③ 现在什么状态 —— **只在非正常时出现**（下载中给进度与速度；丢失/出错给警示）
- * 完整文件名挂在整行的 `title` 上（hover 可见）；**保存路径不显示**（那是排错信息，
- * 要看得去 qB 或文件管理器，摆在面板里只会每行多一行灰字）。
+ * 一行只留三件事：① 第几集 ② 画质/字幕/体积 ③ 是谁压的（右侧）。
+ * 完整文件名挂在整行的 `title` 上；**保存路径不显示**（排错信息，去 qB 或文件管理器看）。
+ *
+ * 画质/字幕/片源来自**后端**：加种时就写进 qB 标签（`res:` / `sub:` / `src:`），
+ * 改名之后也还在；老种子没有这些标签，后端会用文件名兜底解析（认不出就是空）。
  */
 defineProps({
-  /** [{ hash, name, fileName, episode, season, sizeText, stateText, kind, progress, speedText, eta }] */
+  /** [{ hash, name, fileName, episode, subgroup, tags, sizeText, stateText, kind, progress, speedText, eta }] */
   items: { type: Array, default: () => [] },
   /** loading | error | empty | ready */
   state: { type: String, default: 'loading' },
-  /** 当前组的总体积（面板算好，显示在标题右边） */
+  /** 当前视图的总体积（面板算好，显示在标题右边） */
   sizeText: { type: String, default: '' },
 })
 defineEmits(['retry'])
-
-/** 画质 / 字幕 / 片源标签（最多 3 个）
- *  改名后的文件常常一点标签都不剩（`相反的你和我 S02E23.mp4`）——
- *  所以**两个名字一起看**：原始种子名里通常还留着 `[1080p][JPSC]` 这些线索。 */
-const tagsOf = (item) => fileTagsOf(`${item.name || ''} ${item.fileName || ''}`, 3)
 
 /** 状态配色：下载中=强调色，异常=警示 */
 const toneOf = (item) => (item.kind === 'downloading' ? 'on' : 'bad')
@@ -122,7 +118,7 @@ function etaText(item) {
   font-size: 0.78rem;
 }
 
-/* ── 列表：每条 = 左侧集数竖条（56px）+ 右侧内容（与首页资源列表同构）──────── */
+/* ── 列表：集数竖条（56px）｜这集是什么｜字幕组（右侧固定窄列）────────────── */
 .list {
   display: flex;
   flex-direction: column;
@@ -133,8 +129,8 @@ function etaText(item) {
 }
 .item {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
-  min-height: 58px;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  min-height: 52px;
   overflow: hidden; /* 集数区要贴到卡片边，圆角靠这一层裁 */
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -174,11 +170,10 @@ function etaText(item) {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 9px 10px;
   justify-content: center;
 }
 
-/* 元信息一行：标签之间不写点（CSS 加），标签与数字之间用 `·` 分隔 */
 .meta {
   display: flex;
   flex-wrap: wrap;
@@ -201,6 +196,24 @@ function etaText(item) {
 }
 .meta .num.bad {
   color: var(--danger);
+}
+
+/* ── 右侧：字幕组 ───────────────────────────────────────────────────────
+   定宽 + 两行截断：名字长短不一（「爱恋字幕社漫猫字幕组」），
+   不封住宽度会把中间那列挤成一条缝。 */
+.subgroup {
+  align-self: center;
+  max-width: 88px;
+  padding: 0 10px 0 0;
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  text-align: right;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 /* 下载中：进度条 + 速度 / 剩余（已完成不渲染这一行） */

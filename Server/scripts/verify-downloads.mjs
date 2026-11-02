@@ -25,6 +25,7 @@ import {
   stateTextOf,
   subgroupOf,
 } from '../src/lib/downloads.js'
+import { metaFromTags, metaOfText, metaTagsOf, releaseMetaTags } from '../src/lib/release-tags.js'
 
 const PORT = Number(process.env.VERIFY_DOWNLOADS_PORT || 3305)
 const base = `http://127.0.0.1:${PORT}`
@@ -85,6 +86,32 @@ check(
 check(
   archiveDirOf({ title: '某个/带斜杠的番名', season: 0 }) === '/downloads/anime/某个_带斜杠的番名',
   '番名里的路径字符被替换；剧场版（season=0）不建季目录',
+)
+
+/* ── 画质/字幕/片源：加种时写进 qB 标签，改名也不丢 ────────────────────── */
+const meta1 = metaOfText('[Nekomoe kissaten][Kimi ga Shinu made Koi wo Shitai][12][1080p][JPSC].mp4')
+check(meta1.res === '1080P' && meta1.sub === 'JPSC', `从发布名摘画质/字幕 → ${JSON.stringify(meta1)}`)
+const meta2 = metaOfText('[Nekomoe kissaten&Airota][Yuru Camp][01-12END][1920x1080][x264_AAC][CHS]')
+check(meta2.res === '1080P' && meta2.sub === 'CHS', `宽高写法也认（1920x1080）→ ${JSON.stringify(meta2)}`)
+const meta3 = metaOfText('[ANi] 從後面來的神威先生 [年齡限制版] - 10 [1080P][Baha][WEB-DL][AAC AVC][CHT]')
+check(meta3.res === '1080P' && meta3.sub === 'CHT' && meta3.src === 'WEB-DL', `片源也摘 → ${JSON.stringify(meta3)}`)
+const meta4 = metaOfText('相反的你和我 S02E23.mp4')
+check(!meta4.res && !meta4.sub && !meta4.src, '认不出就全空（改名后的文件确实什么都没有）')
+
+const metaTags = metaTagsOf({ res: '1080P', sub: 'JPSC', src: '' })
+check(
+  metaTags.join(',') === 'res:1080P,sub:JPSC',
+  `元数据 → qB 标签（空值不写）→ ${metaTags.join(',')}`,
+)
+const back = metaFromTags(['soraika', 'mid:4009', 'sg:喵萌奶茶屋', 'res:2160P', 'sub:简繁'])
+check(back.res === '2160P' && back.sub === '简繁' && back.src === '', `从标签读回来 → ${JSON.stringify(back)}`)
+check(
+  releaseMetaTags({ res: '1080P' }, '[X][Y][12][720p]', 3)[0] === '1080P',
+  '标签优先于名字（改名之后以标签为准）',
+)
+check(
+  releaseMetaTags({}, '[X][Y][12][720p][CHS]', 3).join(',') === '720P,CHS',
+  `老种子没有标签 → 名字兜底 → ${releaseMetaTags({}, '[X][Y][12][720p][CHS]', 3).join(',')}`,
 )
 
 
@@ -184,23 +211,35 @@ try {
     const firstOther = items.findIndex((it) => it.state !== 'downloading')
     check(lastDown === -1 || firstOther === -1 || lastDown < firstOther, '下载中的卡片排在已完成之前')
 
-    /* ── 面板：字幕组 → 已下载的集 ─────────────────────────────────────── */
+    /* ── 面板：一部番一份**扁平清单** + 字幕组筛选条 ──────────────────── */
     const sample = items[0]
     const one = await get(`/api/downloads/${sample.id}`)
     const a = one.body?.data || {}
     check(one.res.status === 200 && a.animeId === sample.id, `GET /api/downloads/${sample.id} → 200 且是同一部`)
-    check(Array.isArray(a.subgroups) && a.subgroups.length > 0, `按字幕组分组 → ${a.subgroups?.length} 个组`)
-    const sg = a.subgroups?.[0] || {}
+    check(Array.isArray(a.items) && a.items.length > 0, `扁平清单非空 → ${a.items?.length} 条（不按组分区）`)
+    check(Array.isArray(a.groups) && a.groups.length > 0, `筛选条数据 → ${a.groups?.length} 个组`)
     check(
-      typeof sg.id === 'string' && typeof sg.name === 'string' && Array.isArray(sg.items),
-      '每个组带 id / name / items（id 就是组名，与「库里没有的组」同一条路径）',
+      a.groups.every((g) => typeof g.name === 'string' && g.count > 0),
+      '每个组带 name / count（顶部 chip 直接画）',
     )
-    const item = sg.items?.[0] || {}
-    const itemFields = ['hash', 'name', 'fileName', 'episode', 'sizeText', 'stateText', 'savePath']
-    check(itemFields.every((k) => k in item), `组里的条目字段齐全（${itemFields.length} 个）`)
+    const item = a.items?.[0] || {}
+    const itemFields = ['hash', 'name', 'fileName', 'episode', 'subgroup', 'tags', 'sizeText', 'stateText']
+    check(itemFields.every((k) => k in item), `条目字段齐全（${itemFields.length} 个，含 subgroup / tags）`)
     check(
-      (sg.items || []).every((it, i, arr) => i === 0 || episodeOrder(arr[i - 1].episode) >= episodeOrder(it.episode)),
-      '组内按集号倒序（最新的在最上面）',
+      a.items.every((it) => it.subgroup && it.subgroup.length > 0),
+      '每行都带字幕组（右侧那行小字；认不出统一成「未标注字幕组」）',
+    )
+    check(Array.isArray(item.tags) && item.tags.length <= 3, `画质/字幕标签是数组且 ≤ 3 个 → ${JSON.stringify(item.tags)}`)
+    check(
+      a.items.every((it, i, arr) => i === 0 || episodeOrder(arr[i - 1].episode) >= episodeOrder(it.episode)),
+      '整份清单按集号倒序（最新的在最上面）',
+    )
+    // 组计数要和清单自洽（筛选条上的数字必须等于筛出来的条数）
+    const counts = new Map()
+    for (const it of a.items) counts.set(it.subgroup, (counts.get(it.subgroup) || 0) + 1)
+    check(
+      a.groups.every((g) => counts.get(g.name) === g.count),
+      '筛选条的组计数与清单里的实际条数一致',
     )
   } else {
     check(d.items.length === 0 && d.unmatched.length === 0, '没配 qB 时 items / unmatched 是空数组（页面据此给引导）')

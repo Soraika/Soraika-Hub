@@ -1,40 +1,50 @@
 /**
- * 面板「已下载」区数据 —— 与 useReleases 同一套接口（字幕组 → 条目），但来源是 qB
+ * 面板「已下载」区数据 —— 一份**扁平清单** + 一个字幕组筛选条
  * ---------------------------------------------------------------------------
- * 为什么保持同样的接口名：面板里这两种视图（Mikan 资源 / 已下载）共用一套模板结构
- * （SubgroupBar + 下面一层列表），只是数据源不同。接口一致，面板就能「换一个 composable」
- * 而不是再写一份面板。
+ * 为什么不像 Mikan 资源那样「先选组、再看该组的列表」：
+ *   · 一部番通常只有 1~2 个组在活动，分组后大多数组只有 1 条，点两下才看得到东西
+ *   · 要回答的问题是「我下到第几集了」—— 组名是附注（每行右侧标一下），不是分类维度
+ * 所以：默认「全部」，清单按集号倒序铺平；顶部筛选条只是**收窄视图**，不改变数据。
  *
- * 与 useReleases 的差别：
- *   · 一次请求就把「组 + 每组的条目」全拿到（qB 一次种子列表就够了），
- *     所以切组是**纯内存操作**，没有第二个 loading 态
- *   · 只读：已下载的东西不能在这里重取/重排，所以 `retry` 只是重拉这一部
+ * 与 useReleases 保持同名接口（subgroups / activeId / releases / state），
+ * 面板就不用为两种数据源写两套模板。
  */
 import { computed, ref } from 'vue'
 import { fetchAnimeDownloads } from '@/api/downloads'
 
 export function useDownloadedReleases() {
   const animeId = ref(null)
-  /** @type {import('vue').Ref<{ subgroups: Array<object>, total: number, sizeText: string } | null>} */
+  /** @type {import('vue').Ref<{ items: Array<object>, groups: Array<{name:string,count:number,sizeText:string}> } | null>} */
   const data = ref(null)
   const loading = ref(false)
   /** @type {import('vue').Ref<import('@/api/http').ApiError | null>} */
   const error = ref(null)
-  const activeId = ref(null)
+  /** 当前筛选：`'all'` = 不筛（默认），否则是组名 */
+  const activeId = ref('all')
 
   let seq = 0
 
-  const subgroups = computed(() => data.value?.subgroups ?? [])
+  const items = computed(() => data.value?.items ?? [])
+  const groups = computed(() => data.value?.groups ?? [])
+
+  /** 筛选条：第一个永远是「全部」，后面按条数排（后端已排好） */
+  const subgroups = computed(() => [
+    { id: 'all', name: '全部', count: items.value.length },
+    ...groups.value.map((g) => ({ id: g.name, name: g.name, count: g.count })),
+  ])
+
   const activeSubgroup = computed(() => subgroups.value.find((sg) => sg.id === activeId.value) || null)
-  const releases = computed(() => activeSubgroup.value?.items ?? [])
+
+  const releases = computed(() =>
+    activeId.value === 'all' ? items.value : items.value.filter((it) => it.subgroup === activeId.value),
+  )
 
   const subgroupState = computed(() => {
     if (loading.value) return 'loading'
     if (error.value) return 'error'
-    if (!subgroups.value.length) return 'empty'
+    if (!items.value.length) return 'empty'
     return 'ready'
   })
-  /** 数据一次到手 → 组里没东西就是「这一组没有已下载的」（正常空态） */
   const releaseState = computed(() => {
     if (loading.value) return 'loading'
     if (error.value) return 'error'
@@ -52,7 +62,7 @@ export function useDownloadedReleases() {
       const res = await fetchAnimeDownloads(id)
       if (current !== seq) return
       data.value = res
-      activeId.value = res.subgroups[0]?.id ?? null
+      activeId.value = 'all' // 默认看全量（不按组分）
     } catch (err) {
       if (current !== seq) return
       error.value = err
@@ -61,10 +71,10 @@ export function useDownloadedReleases() {
     }
   }
 
-  /** 切组：纯内存（qs 一次就把所有组都给了） */
-  function select(subgroupId) {
-    if (subgroupId == null) return
-    activeId.value = subgroupId
+  /** 切筛选：纯内存（一次请求已经把全部条目拿回来了） */
+  function select(id) {
+    if (id == null) return
+    activeId.value = id
   }
 
   function retry() {
@@ -77,7 +87,7 @@ export function useDownloadedReleases() {
     data.value = null
     loading.value = false
     error.value = null
-    activeId.value = null
+    activeId.value = 'all'
   }
 
   return {
@@ -90,8 +100,20 @@ export function useDownloadedReleases() {
     releaseState,
     error,
     total: computed(() => data.value?.total ?? 0),
-    /** 当前**这一组**的体积（面板标题右边那个）；空组给空串 */
-    sizeText: computed(() => activeSubgroup.value?.sizeText ?? ''),
+    /** 当前视图（全部或某组）的体积 */
+    sizeText: computed(() => {
+      const list = releases.value
+      const bytes = list.reduce((n, it) => n + (it.sizeBytes || 0), 0)
+      if (!bytes) return ''
+      const units = ['B', 'KB', 'MB', 'GB', 'TB']
+      let v = bytes
+      let i = 0
+      while (v >= 1024 && i < units.length - 1) {
+        v /= 1024
+        i++
+      }
+      return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[i]}`
+    }),
     open,
     retry,
     reset,
