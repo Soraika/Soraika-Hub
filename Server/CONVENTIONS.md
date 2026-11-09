@@ -277,32 +277,33 @@ AI 是**可选功能**：没配 `AI_API_KEY` 也照常跑 —— 相关接口回
 - 链上**不在库**的成员**不落库**（前端「缺了就是无」）→ 系列区块可能不全（只有 S02/S04 这种），这是接受的代价。
 - 实测依据：36 个链节点里「续集 > 1 或 前传 > 1」的**0 个** → 链是直线，不需要 `parent` 列。
 
-**10.3 Mikan ↔ BGM 映射（必须预建）**
+**10.3 Mikan ↔ BGM 映射（必须预建，**独立成表**）**
 
 **为什么**：BGM 是**单向**的 —— 只能从 Mikan 详情页解析出 `bgmId`，没有反方向接口；
 而系列成员与下载队列需要的正是 `bgmId → mikanId`。项目明确拒绝「按标题猜」（见 `api/sources/bgm.js` 的说明）。
 
+**存在哪**：`mikan_bgm_map`（`mikan_id` 主键 / `bgm_id` / `title_mikan` / `checked_at`）。
+为什么不塞进 `anime`：anime 是"排期 + 展示"，随时可重建；映射丢了要重扫几千个页面。
+拆开之后 `rm data/hub.db` 也只丢排期，映射还在（单独备份这一张表即可）。
+
+- **写入方**：① 排期落库时 `rememberMikan`（只登记 mikan_id + 标题）；② 扫描脚本（`npm run sweep`）；
+  ③ 补齐队列确认成功后 `markMapChecked(mikanId, bgmId)`。
 - **扫描**：遍历 `https://mikanime.tv/Home/Bangumi/{mikanId}`，用与生产同一套选择器：
   `p.bangumi-info a[href*=subject]` → `bgmId`；`p.bangumi-title` → 标题。
-- **落库（塞进 `anime` 主表，不建 map 表）**：
-  - `http-404` **不塞**（页面不存在，纯垃圾行）
-  - **连标题都取不到**（页面在、但没有 `p.bangumi-title`，多半是跳回首页/空页）**也不塞** ——
-    否则库里会出现一堆 `title = mikan:470` 这种既没名字也没链接的假行
-  - `no-bgm-link`（页面在、有标题、没挂 Bangumi 链接）**要塞**：`bgm_id = NULL` + 保留 `title`，
-    并标 **`bgm_miss_count = 3`**（≥ `worker.missLimit`）+ `bgm_checked_at = 扫描时间`
-    → 借现有退避机制：不立刻重抓，`missRetryMs`（默认 7 天）后自动重试一次
-  - `ok` 的写 `mikan_id` + `bgm_id` + `title`（Mikan 的标题），
-    **`bgm_checked_at` 留空**：它的语义是「上次刷档案的时间」，
-    留空才会被档案补齐队列（触发④）当场接手 —— 写 now 会把它挡在门外 `missRetryMs`（7 天）
-  - **`year` / `season` / `weekday` 一律留空**：首页 `listBySeason` 与每日更新都靠这三个字段过滤，
-    留空才不会把「只有映射的作品」混进排期
-  - **库里已存在的行一个字段都不改**（否则 `bgm_checked_at` 被重置、推迟它的刷新）
+  `http-404` / 连标题都没有 → **不写**；没挂链接 → 写 mikan_id 并记 `checked_at`（30 天后自动再试）。
+- **不再记"失败了几次"**：有没有链接是事实，不是失败次数。退避只看 `checked_at`。
+- **anime 只补已有排期的行**：扫描不再建 `anime` 行（能进首页的只有 Mikan 排期页上的番）。
+- **连标题都取不到**（页面在、但没有 `p.bangumi-title`，多半是跳回首页/空页）**也不写** ——
+  否则映射表里会出现一堆既没名字也没链接的垃圾键。
+- `no-bgm-link`（页面在、有标题、没挂 Bangumi 链接）**要写**：`bgm_id = NULL` + `title_mikan`，
+  并记 `checked_at`（30 天后自动再试一次）。
+- `ok` 的写 `mikan_id` + `bgm_id` + `title_mikan`。
+- **`year` / `season` / `weekday` 不归映射表管**：排期归属只有 Mikan 季度页能写（§10.3）。
 - **`anime.title` 来自 Mikan、`anime.title_cn` 来自 Bangumi**（`bgmToRow`），两者不是一回事；
-  扫描进来的行**只有 `title`**，`title_cn` / 评分 / 简介靠后台补齐。展示优先 `title_cn`（`toAnimeDetail`）。
+  展示优先 `title_cn`（`toAnimeDetail`）。
 - 实测规模（一次全量）：`mikanId` 有效区间 **183 ~ 4124**、`ok` **3235**、`no-bgm-link` 2132、`http-404` 33；
-  与库里已有的 467 条映射**交叉校验 100% 一致**（0 不一致）；`bgmId` 实测**一对一**（0 重复）
-  → 塞 `anime` 不会撞 `idx_anime_bgm` 唯一索引。
-- 扫描脚本**只跑增量**（记住已扫 id / maxId）+ 并发压到 3~4；别每次全量。
+  与库里已有的 467 条映射**交叉校验 100% 一致**（0 不一致）；`bgmId` 实测**一对一**（0 重复）。
+- 扫描脚本**只跑增量**（映射表里已有的 mikan_id 就是"已扫过"）+ 并发压到 3~4；别每次全量。
 
 **10.4 刷新调度（越老越慢）**
 

@@ -1,64 +1,26 @@
 /**
- * 队列语义 —— 两个后台队列的「谓词 / 取任务 / 认领 / 计数 / 退避」
+ * 队列语义 —— 后台队列的「谓词 / 取任务 / 认领 / 计数 / 退避」
  * ---------------------------------------------------------------------------
- * 触发① 补齐：`bgm_id IS NULL`（不限季，把缺失的作品档案补上）
- * 触发② 每日更新：`year = 当年` 且 `bgm_checked_at` 早于最近一次到点时刻
- * 队列规范的 7 条（谓词/认领/处理/退出/退避/恢复/可观测）见 CONVENTIONS.md §5。
+ * 触发① 补齐映射：**在 `mikan_bgm_map` 上跑** —— 谁还没确认出 bgm_id 就查谁
+ *   （Mikan 详情页 → bgm_id）。没有链接的（老番常见）隔 30 天再试，不记失败次数。
+ * 触发② 每日更新：`anime.year = 当年` 且档案早于最近一次到点时刻
+ * 触发③ 系列链：`series_checked_at IS NULL`
+ * 触发④ 档案补齐：有 `bgm_id` 但评分/标签/简介还空着
  *
- * 为什么单独成文件：表 CRUD（anime.js）与「谁该被处理、怎么抢占、什么时候放弃」
- * 是两类职责 —— 队列策略会随运行反馈反复调整，不该混在数据访问层里。
- * 消费者：jobs/worker.js（循环）、jobs/enrich.js（取一条）、rout/index.js（看板计数）。
+ * 为什么①挪到映射表上：`anime` 是"排期 + 展示"的产物（可重建），而"哪个 mikan_id
+ * 对应哪个 bgm_id"是不可重建的身份。队列跟着身份走，才不会因为重建排期表而重扫几千页。
+ *
+ * 队列规范的 7 条见 CONVENTIONS.md §5；消费者：jobs/worker.js、jobs/enrich.js、
+ * rout/index.js（看板计数）。
  */
 import { config } from '../config.js'
 import { db, val } from './index.js'
+import { claimNextMapPending, countMapCooling, countMapPending, markMapChecked } from './map.js'
 
 /** 每日更新队列里「今年」那一批的年份（staleYear 未配置时取当年） */
 const staleYear = () => config.worker.staleYear || new Date().getFullYear()
 
 const stmt = {
-  /**
-   * 触发①取一条：未查过的优先 → 查得最久的 → id 大的（= 最近入库的那一季，先补用户正在看的）
-   * 关键：连续拿不到 bgmId 的行（Mikan 详情页确实没挂链接）超限后**退出队列**，
-   * 否则它永远满足 `bgm_id IS NULL`，会让队列空转、每轮白打一次上游。
-   */
-  nextMissing: db.prepare(`
-    SELECT * FROM anime
-    WHERE mikan_id IS NOT NULL AND bgm_id IS NULL
-      AND (COALESCE(bgm_miss_count, 0) < ? OR bgm_checked_at IS NULL OR bgm_checked_at < ?)
-    ORDER BY bgm_checked_at IS NOT NULL, bgm_checked_at ASC, id DESC
-    LIMIT 1
-  `),
-  /** 认领（CAS）：只有 bgm_checked_at 仍是刚才读到的值才算抢到 —— 多进程也不会重复请求上游 */
-  claimMissing: db.prepare(`
-    UPDATE anime SET bgm_checked_at = ?
-    WHERE id = ? AND mikan_id IS NOT NULL AND bgm_id IS NULL AND bgm_checked_at IS ?
-  `),
-  /** 拿不到 bgmId：失败计数 +1（超限后改成隔 missRetryMs 再试一次） */
-  bumpMiss: db.prepare(`
-    UPDATE anime SET bgm_miss_count = COALESCE(bgm_miss_count, 0) + 1, bgm_checked_at = ?
-    WHERE id = ?
-  `),
-  /** 成功补齐：标记时间 + 清零失败计数 */
-  markChecked: db.prepare('UPDATE anime SET bgm_checked_at = ?, bgm_miss_count = 0 WHERE id = ?'),
-  /** 手动补齐全量队列（跳过已超限的） */
-  missingList: db.prepare(`
-    SELECT * FROM anime
-    WHERE mikan_id IS NOT NULL AND bgm_id IS NULL
-      AND (COALESCE(bgm_miss_count, 0) < ? OR bgm_checked_at IS NULL OR bgm_checked_at < ?)
-    ORDER BY bgm_checked_at IS NOT NULL, bgm_checked_at ASC, id ASC
-    LIMIT ?
-  `),
-  /** 还能补的有多少（看板）：与 nextMissing 同一谓词，保证「队列空」的判断一致 */
-  countMissing: db.prepare(`
-    SELECT COUNT(*) AS n FROM anime
-    WHERE mikan_id IS NOT NULL AND bgm_id IS NULL
-      AND (COALESCE(bgm_miss_count, 0) < ? OR bgm_checked_at IS NULL OR bgm_checked_at < ?)
-  `),
-  /** 已放弃的（上游确实没有 bgmId）：看板据此区分「队列空」与「补不了」 */
-  countGaveUp: db.prepare(`
-    SELECT COUNT(*) AS n FROM anime
-    WHERE mikan_id IS NOT NULL AND bgm_id IS NULL AND COALESCE(bgm_miss_count, 0) >= ?
-  `),
   /** 触发②取一条：今年 + 早于分界线 + 最久没刷过的 */
   nextStale: db.prepare(`
     SELECT * FROM anime
@@ -71,38 +33,48 @@ const stmt = {
     SELECT COUNT(*) AS n FROM anime
     WHERE bgm_id IS NOT NULL AND year = ? AND (bgm_checked_at IS NULL OR bgm_checked_at < ?)
   `),
+  /** 成功刷新档案：标记时间（每日更新/档案队列的退避窗口） */
+  markChecked: db.prepare('UPDATE anime SET bgm_checked_at = ? WHERE id = ?'),
 }
 
-/** 失败退避的「冷却期起点」参数：超过这个时刻没试过，才重新进入队列 */
+/** 失败退避的「冷却期起点」参数：超过这个时刻没试过，才重新进入队列（档案侧） */
 const retryBefore = () => Date.now() - config.worker.missRetryMs
 
 /**
- * 认领一条待补任务（CAS 抢占）
- * @returns {object|null} 抢到的那行；没任务 / 被别的进程抢先 → null
+ * 认领一条「待确认映射」（CAS 抢占；多进程不重复请求上游）
+ * @returns {{ mikan_id: string, bgm_id: null, title_mikan: string|null, checked_at: number }|null}
  */
-export function claimNextMissingBgm() {
-  const row = stmt.nextMissing.get(val(config.worker.missLimit), val(retryBefore()))
-  if (!row) return null
-  const claimed = stmt.claimMissing.run(Date.now(), val(row.id), val(row.bgm_checked_at))
-  return claimed.changes === 1 ? { ...row, bgm_checked_at: Date.now() } : null
+export const claimNextMissingBgm = () => claimNextMapPending()
+
+/** 手动补齐全量队列（CLI 用）：直接列出还没确认的映射 */
+export function listMissingBgm(limit = 20) {
+  return db
+    .prepare(
+      `SELECT * FROM mikan_bgm_map
+        WHERE bgm_id IS NULL AND (checked_at IS NULL OR checked_at < ?)
+        ORDER BY checked_at IS NOT NULL, checked_at ASC, CAST(mikan_id AS INTEGER) ASC
+        LIMIT ?`,
+    )
+    .all(Date.now() - 30 * 24 * 60 * 60 * 1000, Number(limit) || 20)
 }
 
-/** 手动补齐全量队列（CLI 用；同样跳过已超限的） */
-export const listMissingBgm = (limit = 20) =>
-  stmt.missingList.all(val(config.worker.missLimit), val(retryBefore()), val(limit))
+/** 还在等确认的映射条数（与 claimNextMissingBgm 同一谓词） */
+export const countMissingBgm = () => countMapPending()
 
-/** 还能补的条数 */
-export const countMissingBgm = () =>
-  stmt.countMissing.get(val(config.worker.missLimit), val(retryBefore()))?.n ?? 0
+/**
+ * 没有 bgm 链接、正在冷却的条数（看板用它区分「队列空」与「上游确实没有」）
+ * 名字保留 `countGaveUp`：`/api/health` 的 worker.missing.gaveUp 一直用这个键。
+ */
+export const countGaveUp = () => countMapCooling()
 
-/** 上游确实没有 bgmId、已放弃重试的条数 */
-export const countGaveUp = () => stmt.countGaveUp.get(val(config.worker.missLimit))?.n ?? 0
-
-/** 补齐成功：标记时间 + 清零失败计数 */
+/** 档案刷新成功（anime 行）：写 `bgm_checked_at`，档案队列据此退避 */
 export const markBgmChecked = (id) => stmt.markChecked.run(Date.now(), val(id))
 
-/** 补齐失败（无链接 / 条目 404）：失败计数 +1，超限后退出队列 */
-export const markBgmMiss = (id) => stmt.bumpMiss.run(Date.now(), val(id))
+/**
+ * 映射尝试失败（Mikan 详情页 404 / 没挂 BGM 链接）：只记时间，不记次数
+ * 参数是 **mikan_id**（映射表的键），不是 anime 主键。
+ */
+export const markBgmMiss = (mikanId) => markMapChecked(mikanId, null)
 
 /**
  * 触发②取一条：今年的番里、上次刷新早于 olderThan 的一条

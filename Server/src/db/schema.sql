@@ -116,6 +116,28 @@ CREATE TABLE IF NOT EXISTS dump_state (
 );
 
 -- ============================================================================
+-- Mikan ↔ Bangumi 身份映射（**唯一不可重建的东西**，单独一张表）
+-- ----------------------------------------------------------------------------
+-- 为什么拆出来：`anime` 是"排期 + 展示"的产物，随时可以重建（重新扫 Mikan）；
+-- 而「哪个 mikan_id 对应哪个 bgm_id」丢了就得重扫几千个页面才能捡回来。
+-- 拆开之后：重建 anime 不影响映射，备份也只需要带走这一张表。
+--
+-- 字段：
+--   checked_at  上次**尝试确认映射**的时间。没有 bgm 链接的（老番常见）隔 30 天再试，
+--               不再记"失败了几次"——有没有链接是事实，不是失败次数。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS mikan_bgm_map (
+  mikan_id    TEXT PRIMARY KEY,      -- Mikan 番剧 id（权威来源：Mikan 详情页）
+  bgm_id      TEXT,                  -- 对不上就是 NULL
+  title_mikan TEXT,                  -- 扫描/排期时 Mikan 的标题（给还没进 anime 的行留个名字）
+  checked_at  INTEGER,               -- 上次尝试确认映射的时间（NULL = 还没试过）
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_map_bgm ON mikan_bgm_map(bgm_id) WHERE bgm_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_map_pending ON mikan_bgm_map(checked_at) WHERE bgm_id IS NULL;
+
+-- ============================================================================
 -- 以下表结构已按架构图设计好，但本次还没做到，做到对应功能时再启用。
 -- ----------------------------------------------------------------------------
 -- 下载任务表（记录的是「后端操作的整个生命周期」，不是任务本身的生命周期）

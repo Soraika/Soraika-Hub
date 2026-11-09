@@ -157,6 +157,32 @@ ensureColumns()
 const schemaSql = readFileSync(resolve(import.meta.dirname, 'schema.sql'), 'utf8')
 db.exec(schemaSql)
 
+/**
+ * 一次性回填「身份映射」`mikan_bgm_map`（幂等）
+ * ---------------------------------------------------------------------------
+ * 老库里映射是塞在 `anime` 里的（`mikan_id` + `bgm_id`）。拆表后必须补一份，
+ * 否则档案补齐队列会以为"全都没映射过"，把几千条重扫一遍。
+ * `INSERT OR IGNORE` + 主键/唯一索引保证重复启动不会出错。
+ */
+function backfillMikanMap() {
+  const hasAnime = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'anime'").get()
+  if (!hasAnime) return
+  const cols = new Set(db.prepare('PRAGMA table_info(anime)').all().map((col) => col.name))
+  if (!cols.has('mikan_id') || !cols.has('bgm_id')) return
+  const now = Date.now()
+  const res = db
+    .prepare(
+      `INSERT OR IGNORE INTO mikan_bgm_map (mikan_id, bgm_id, title_mikan, checked_at, created_at, updated_at)
+       SELECT mikan_id, MAX(bgm_id), MAX(title), MAX(bgm_checked_at), ?, ?
+         FROM anime WHERE mikan_id IS NOT NULL
+        GROUP BY mikan_id`,
+    )
+    .run(now, now)
+  if (res.changes) logger.info({ rows: res.changes }, 'db.migrate backfill mikan_bgm_map')
+}
+
+backfillMikanMap()
+
 ensureSeriesPositionUnique()
 
 export const dbFile = dbPath

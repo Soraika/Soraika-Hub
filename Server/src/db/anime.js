@@ -8,6 +8,7 @@
  */
 import { config } from '../config.js'
 import { db, val } from './index.js'
+import { rememberMikan } from './map.js'
 
 /** 全部列（顺序与 insert 占位符一一对应） */
 const COLUMNS = [
@@ -140,6 +141,9 @@ export function upsertManyFromMikan(rows = []) {
     for (const row of rows) {
       const now = Date.now()
       stmt.upsertByMikan.run(...COLUMNS.map((c) => val(row[c])), now, now)
+      // 顺手把「mikan ↔ bgm」登记进身份表：**重建 anime 时它是唯一留下的东西**。
+      // 排期页只有 mikan_id（bgm 还没解析），所以 bgm_id 传 null，等补齐队列去确认。
+      rememberMikan(row.mikan_id, row.title)
     }
     db.exec('COMMIT')
   } catch (err) {
@@ -164,6 +168,7 @@ export function applyBgmMeta(row) {
     if (!row.title) throw new Error('applyBgmMeta：新建记录必须带 title')
     const now = Date.now()
     stmt.upsertByBgm.run(...COLUMNS.map((c) => val(row[c])), now, now)
+    if (row.mikan_id) rememberMikan(row.mikan_id, row.title, row.bgm_id)
     return { id: stmt.byBgmId.get(val(row.bgm_id))?.id ?? null, created: true }
   }
 
@@ -184,6 +189,8 @@ export function applyBgmMeta(row) {
     Date.now(),
     existing.id,
   )
+  // 身份确认成功 → 记进映射表（重建 anime 也不会丢）
+  if (row.mikan_id) rememberMikan(row.mikan_id, row.title, row.bgm_id)
   return { id: existing.id, created: false }
 }
 

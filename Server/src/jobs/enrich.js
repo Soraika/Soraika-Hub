@@ -19,7 +19,8 @@ import { pathToFileURL } from 'node:url'
 import { fetchSubject } from '../api/sources/bgm.js'
 import { fetchAnimeProfile } from '../api/sources/mikan.js'
 import { config } from '../config.js'
-import { applyBgmMeta, isMovieOnlySeries, rememberSubgroups, stats } from '../db/anime.js'
+import { applyBgmMeta, findByMikanId, isMovieOnlySeries, rememberSubgroups, stats } from '../db/anime.js'
+import { markMapChecked } from '../db/map.js'
 import { renumberMovieSeries } from './series.js'
 import {
   claimNextArchive,
@@ -64,12 +65,10 @@ export async function enrichOne(row, log = logger) {
       profile = await fetchAnimeProfile(row.mikan_id)
     } catch (err) {
       // Mikan 明确 404（这个 mikanId 的页面根本不存在）→ **上游确实没有**，按"放弃"处理：
-      // 失败计数 +1，超 `missLimit` 后退出队列、隔 `missRetryMs` 再试一次。
-      // 不这么做的话它会永远留在待补队列里 —— 实测 3 条死 mikanId（624 / 547 / 2547）
-      // 每分钟白打一次上游，把 worker 的失败计数刷满。
+      // 记一次尝试时间（映射表），30 天后才再试 —— 否则队列会为它每分钟白打一次上游。
       if (/HTTP 404/.test(String(err?.message || '')) || err?.detail?.status === 404) {
-        markBgmMiss(row.id)
-        log.warn({ id: row.id, mikanId: row.mikan_id, status: 404 }, 'worker.enrich mikan-not-found')
+        markBgmMiss(row.mikan_id)
+        log.warn({ mikanId: row.mikan_id, status: 404 }, 'worker.enrich mikan-not-found')
         return 'noBgmId'
       }
       throw err
@@ -77,16 +76,17 @@ export async function enrichOne(row, log = logger) {
     rememberSubgroups(profile.subgroups) // 顺手记进名字字典（不再存「哪个作品有它」）
 
     if (!profile.bangumiId) {
-      // Mikan 详情页没挂 Bangumi 链接 —— bgm_id 永远是 NULL，计数 +1；
-      // 超限后退出补齐队列，否则它会让队列空转、每轮白打一次上游
-      const misses = (row.bgm_miss_count ?? 0) + 1
-      markBgmMiss(row.id)
+      // Mikan 详情页没挂 Bangumi 链接 —— 记一次尝试时间，30 天后自动再试
+      markBgmMiss(row.mikan_id)
       log.warn(
-        { id: row.id, mikanId: row.mikan_id, misses, limit: config.worker.missLimit, subgroups: profile.subgroups.length },
+        { mikanId: row.mikan_id, subgroups: profile.subgroups.length },
         'worker.enrich no-bgm-link',
       )
       return 'noBgmId'
     }
+
+    // 身份确认成功：**先落映射表**（这是不可重建的数据），再补档案
+    markMapChecked(row.mikan_id, profile.bangumiId)
 
     // ② Bangumi 条目：评分 / 人数 / 标签 / 简介 / 话数 / 放送日
     return await applySubject(profile.bangumiId, row, log, startedAt)
@@ -122,8 +122,8 @@ async function applySubject(bgmId, row, log, startedAt) {
     // 网络抖动 / 5xx 不计数，留给下轮正常重试
     const status = err?.detail?.status
     if (status === 404 || err?.code === 'BAD_REQUEST') {
-      markBgmMiss(row.id)
-      log.warn({ id: row.id, mikanId: row.mikan_id, bgmId, status }, 'worker.enrich bgm-not-found')
+      markBgmMiss(row.mikan_id)
+      log.warn({ mikanId: row.mikan_id, bgmId, status }, 'worker.enrich bgm-not-found')
       return 'noBgmId'
     }
     throw err
@@ -132,25 +132,28 @@ async function applySubject(bgmId, row, log, startedAt) {
   applyBgmMeta(
     bgmToRow(subject, {
       mikan_id: row.mikan_id,
-      title: row.title,
+      title: row.title ?? row.title_mikan,
       year: row.year,
       season: row.season,
     }),
   )
-  markBgmChecked(row.id)
+  // ①a 来的行是映射表的（没有 anime 主键）—— 档案写完就按 mikan_id 找回 anime 行；
+  // ①b 来的行本身就有 id。两条路都需要把 `bgm_checked_at` 刷新，避免马上又被刷一次。
+  const animeId = row.id ?? findByMikanId(row.mikan_id)?.id ?? null
+  if (animeId) markBgmChecked(animeId)
   // 刚补到 air_date 的行如果属于「全剧场版系列」→ 重排一次（按上映日期）
-  const movieSeriesId = isMovieOnlySeries(row.id)
+  const movieSeriesId = animeId ? isMovieOnlySeries(animeId) : null
   if (movieSeriesId) {
     try {
       await renumberMovieSeries(movieSeriesId, { log })
     } catch (err) {
-      log.warn({ id: row.id, seriesId: movieSeriesId, err: err.message }, 'worker.enrich renumber fail')
+      log.warn({ id: animeId, seriesId: movieSeriesId, err: err.message }, 'worker.enrich renumber fail')
     }
   }
 
   log.info(
     {
-      id: row.id,
+      id: animeId,
       mikanId: row.mikan_id,
       bgmId,
       score: subject?.rating?.score ?? null,
