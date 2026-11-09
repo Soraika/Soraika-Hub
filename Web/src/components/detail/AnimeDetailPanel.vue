@@ -11,8 +11,15 @@
            动的只有「海报 / 标题 / 标签 / 简介 / 资源」这些位置，版面不跳。
            详情也不做整块淡入淡出 —— 要的是"局部在动"，不是整块进场。 -->
       <DetailSkeleton v-if="uiState === 'loading'" />
+
+      <div v-else class="detail-stage">
+        <!-- 交接：骨架先留在上层、淡出 180ms；下面的内容同时淡入 -->
+        <div v-if="skeletonLeaving" class="skeleton-layer" aria-hidden="true">
+          <DetailSkeleton />
+        </div>
+
       <StateBlock
-        v-else-if="uiState === 'error'"
+        v-if="uiState === 'error'"
         state="error"
         :text="errorText || '读取失败，请稍后重试'"
         retry-text="重试"
@@ -196,6 +203,7 @@
             <p class="dl-msg" :class="{ bad: downloadFailed }">{{ downloadMsg }}</p>
           </section>
         </div>
+      </div>
     </div>
   </aside>
 </template>
@@ -350,6 +358,34 @@ const releaseInfo = computed(() => {
  */
 /** 系列弹层的锚点（弹层 Teleport 到 body 了，得显式告诉它"贴着谁"） */
 const headerEl = ref(null)
+
+/**
+ * 骨架 → 内容 的交接（真正的交叉淡入）
+ * ---------------------------------------------------------------------------
+ * 用户的反馈很准：只做「最小 loading 时长」只是**延迟**了硬切，数据一到还是"啪"地换掉。
+ * 所以在 loading 结束后，把骨架**留在上层再淡出 180ms**，下面的内容同时淡入 ——
+ * 两层重叠一小会儿，视觉上是从占位块"化开"成内容，而不是"骨架消失、内容出现"。
+ * 180ms 与 `.detail` 的 detail-in 对齐；再长会显得拖沓（本地接口本来就快）。
+ */
+const skeletonLeaving = ref(false)
+let skeletonTimer = 0
+watch(
+  () => props.uiState,
+  (next, prev) => {
+    if (next === 'loading') {
+      skeletonLeaving.value = false
+      clearTimeout(skeletonTimer)
+      return
+    }
+    if (prev !== 'loading') return
+    skeletonLeaving.value = true
+    clearTimeout(skeletonTimer)
+    skeletonTimer = setTimeout(() => {
+      skeletonLeaving.value = false
+    }, 180)
+  },
+)
+onBeforeUnmount(() => clearTimeout(skeletonTimer))
 
 const hasBatchReleases = computed(() => releaseItems.value.some((item) => isBatchEpisode(episodeOf(item.title))))
 
@@ -611,6 +647,32 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 @media (prefers-reduced-motion: reduce) {
   .detail {
     animation: none;
+  }
+}
+
+/* ── 骨架 → 内容的交叉淡入 ───────────────────────────────────────────────
+   骨架从 loading 切走后仍留在上层 180ms（`.skeleton-layer`），边淡出边上移 4px；
+   下面的 `.detail` 同时跑 detail-in 淡入。两层短暂重叠 = 从占位"化开"成内容。 */
+.detail-stage {
+  position: relative;
+}
+.skeleton-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  animation: sk-layer-out 180ms var(--ease-out) forwards;
+}
+@keyframes sk-layer-out {
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-layer {
+    animation: none;
+    opacity: 0;
   }
 }
 

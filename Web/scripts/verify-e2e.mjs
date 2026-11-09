@@ -160,8 +160,18 @@ try {
   const skeletonSource = readFileSync(new URL('../src/components/detail/DetailSkeleton.vue', import.meta.url), 'utf8')
   check(
     /<DetailSkeleton v-if="uiState === 'loading'" \/>/.test(panelSource) &&
-      /<StateBlock\s+v-else-if="uiState === 'error'"/.test(panelSource),
+      /<StateBlock\s+v-if="uiState === 'error'"/.test(panelSource) &&
+      /class="detail-stage"/.test(panelSource),
     '换作品时立刻铺骨架屏（loading → DetailSkeleton），不是整块转圈',
+  )
+  /* 「最小 loading 时长」只是延迟硬切 —— 真正要的是**交叉淡入**：
+     loading 结束后骨架留在上层再淡出 180ms，内容同时淡入（.skeleton-layer）。 */
+  check(
+    /skeleton-layer/.test(panelSource) &&
+      /sk-layer-out/.test(panelSource) &&
+      /skeletonLeaving/.test(panelSource) &&
+      /180/.test(panelSource),
+    '骨架 → 内容是交叉淡入（骨架留在上层淡出 180ms，不是硬切）',
   )
   check(
     !panelSource.includes('<Transition name="phase"') && !panelSource.includes('.phase-enter-active'),
