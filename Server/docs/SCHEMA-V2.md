@@ -1,8 +1,10 @@
 # Schema v2 设计稿 —— 身份 / 档案 / 排期拆开
 
-> 状态：**设计稿 v2.1，未实施**。看完再决定动不动手。
-> v2.1（2026-11-09 第二轮）：`title` 改名为 `_mikan`/`_bgm`；删掉映射的 `misses` 计数，
-> 改成尾部扫描；删掉 `series_all_movies`（改用 `platform`）；根名改成"点开才算"。
+> 状态：**设计稿 v2.2，未实施**。看完再决定动不动手。
+> v2.2（2026-11-09 第三轮）：dump 自动更新（到点检查 → 镜像竞速下载 → 流式解压 → 导入）；
+> 镜像/索引进设置页（与 mikan/bgm 同一套列表控件）；新增「自动选快 / 按列表」开关（外链仍用第一条）。
+> v2.1：`title` 改名为 `_mikan`/`_bgm`；删掉映射的 `misses` 计数，改成尾部扫描；
+> 删掉 `series_all_movies`（改用 `platform`）；根名改成"点开才算"。
 > 依据：对 `data/hub.db`（3762 行）+ 全部源码 + 2026-11-03 dump 的实测审计（2026-11-09）。
 > 关联：ARCHITECTURE §2（数据模型）/ §3（数据来源）、CONVENTIONS §10（系列链与映射）。
 
@@ -82,8 +84,12 @@ SQLite 是**先分配 rowid、再发现冲突转 UPDATE**：号被烧掉、行�
 | **半在线** | 实时 | **离线 dump**（周更，`npm run archive`） | 你刚导入的那套；API 只在"缺了才补"时打 |
 
 - **不存在全离线**：Mikan 没有离线数据源（排期/资源/RSS 都是网页）。
-- 模式是**全局开关**（`bgm.mode = 'api' | 'dump'`），不是每行的字段 —— 两种模式下**读取路径完全一样**（都读档案表），只有"谁往里写"不同。
-- `dump` 模式下的行为：档案优先用 dump；`synced_at` 为空的行才打 API；每日更新不再全量刷 API。
+- 模式是**全局开关**（`bgm.mode = 'api' | 'dump'`，设置页显式选），不是每行的字段 —— 两种模式下**读取路径完全一样**（都读档案表），只有"谁往里写"不同。
+- **`dump` 模式自带回全在线的兜底**（不是硬开关）：
+  - 档案表里**没有**这条 `bgm_id` → 现场打一次 API 并写回（`source='api'`）；
+  - `synced_at` 超过 `bgm.dumpMaxAgeDays`（默认 14 天）→ 同理视为过期，打一次 API；
+  - dump 下载/校验失败 → 只记日志，旧数据继续用，绝不因为"这周没更新"影响任何页面。
+  换句话说：**dump 是"少打 API"，不是"不许打 API"**。
 
 ---
 
@@ -312,8 +318,13 @@ titleOriginal = title_bgm_origin 与 displayTitle 不同时才有值   -- 详情
 | `src/api/pages/anime.js`（详情） | 返回系列列表 | 返回时若 `series_named_at IS NULL` → 起名请求走单独的轻接口（不阻塞详情） |
 | `src/lib/series.js` | `parseSeriesAnswer` 里读 `allMovies` | 增 `isAllMovies(members)`（platform 判据），AI 只负责 `rootTitle` / `namingStyle` |
 | `src/lib/format.js` | `bgmToRow` 产出 anime 行 | 拆成 `bgmToSubject()`（→ 档案表）+ `mikanToRow()`（→ 排期）+ `displayTitle()` |
-| `src/jobs/import-archive.js` | 写 `anime` 九列 | 写 `bgm_subject`（同一套 `archivePatch`，目标表换掉，再加 `platform` / `title_bgm_origin`） |
-| `scripts/verify-*.mjs`（6 个） | 直接查 `anime` 的断言 | 改成查三张表；新增 §8 的对账断言 |
+| `src/jobs/import-archive.js` | 写 `anime` 九列 | 写 `bgm_subject`；支持 zip 流式读（`--latest` / `--zip=`）与 `--check` |
+| `src/lib/unzip.js`（新） | —— | 零依赖 zip：EOCD + 中央目录 + `zlib.createInflateRaw`，按条目流式输出 |
+| `src/jobs/dump-update.js`（新） | —— | 索引多源 → digest 比对 → 镜像竞速 + Range 续传 + sha256 → 调导入 |
+| `src/lib/multi-source.js` | 顺序尝试 + 记住上次成功 | 加 `pickFastest`：≥2 条候选时探测延迟排序（缓存 10 分钟）；`primaryBase` 仍返回第一条 |
+| `src/jobs/worker.js` | 三条队列 + 每日更新 | 加一个「到点检查 dump」的日程（`bgm.dumpAuto` / `bgm.dumpCheckAt`），失败指数退避 |
+| `src/lib/settings.js` | 字段清单 | 新增「离线数据」分组 9 项；`dumpMirrors` 每条必须含 `{url}`，否则整批 400 |
+| `scripts/verify-*.mjs`（6 个） | 直接查 `anime` 的断言 | 改成查三张表；新增 §8 的对账断言 + §12.8 的自动更新断言 |
 
 **不改的**：前端（`Web/` 一行都不用动 —— 接口契约不变）、qB 相关（`mid:{mikan_id}` 照旧）、
 `settings` 表、字幕组字典。
@@ -388,13 +399,16 @@ npm run series -- --chain-only               -- 只算链/季位（不调 AI）
 **这一步是 v2 的核心卖点**：以前这么干会连映射一起丢，现在不会；
 而且重建只花"扫几十~几百个 id"的代价，不再是 5400 次请求。
 
-### Step 5 · 归档旧表
+### Step 5 · 删旧表（直接删，不留档）
 
-确认跑一周没问题后：
+v2 的卖点是"可重建"，所以不搞"改名留一周"那套：**Step 1–3 对账通过后就直接 DROP**。
 
 ```bash
-sqlite3 data/hub.db "ALTER TABLE anime_v1 RENAME TO anime_v1_archive;"   -- 或 DROP
+sqlite3 data/hub.db "DROP TABLE anime_v1;"
 ```
+
+前提（缺一不可）：Step 0 的 `hub.v1-backup.db` 存在、Step 3 重灌后的对账数一致、
+`npm run verify` 全绿。真删错了也只有"重建"一条路 —— 但那时你已经有 Step 0 的备份。
 
 ---
 
@@ -437,6 +451,8 @@ sqlite3 data/hub.db "ALTER TABLE anime_v1 RENAME TO anime_v1_archive;"   -- 或 
 | 映射改成尾部扫描 | 万一某次断网/连续 404 判断错，`watermark` 可能推进过头 | 停的条件是"连续 N 个"，且 `watermark` 只推到最后**确认存在**的 id；空洞补扫兜底 |
 | 系列根名改成按需 | 第一次点开某系列会多等一次模型（2~5 秒） | 详情先返回（链/季位已就绪），起名异步补；失败不阻塞，下次点开再试 |
 | 系列重算不再全量 | 老系列可能一直没有根名 | 用兜底名（代表行标题）建目录；真要统一命名就跑一次批量 `--name-all`（可选） |
+| 自动更新要下载 450MB | 磁盘要留 450MB（导入后删）；慢网可能下很久 | 只在新版时下；可断点续传；`bgm.dumpAuto` 可关掉纯手动 |
+| 索引/镜像全挂 | 这周不更新（旧数据照用） | 退避重试 + 设置页状态显示；手动 `--dir` 永远可用 |
 | 前端 `id` 在重建后会变 | 前端 key 是运行时拿的，刷新即恢复 | 页面缓存里旧 id 会 404 → 前端已有兜底（详情 404 提示） |
 | 扫描不再建 `anime` 行 | "只有映射、没排期"的作品不再出现在库里 | **这正是想要的**：能进首页的只有 Mikan 排期页上的番 |
 
@@ -466,39 +482,87 @@ sqlite3 data/hub.db "ALTER TABLE anime_v1 RENAME TO anime_v1_archive;"   -- 或 
 | 4 | **取消 `series_all_movies`**，用 `platform === 3` 判 | 实测哆啦A梦剧场版全部 `platform=3`，确定性、不用 AI |
 | 5 | 根名 / 命名风格**不再全量补**，改成点开系列时问 AI | 很多系列压根不同根；全量跑几千次 AI 又慢又贵，且大部分没人看 |
 | 6 | 系列时间戳拆成 `series_chain_at`（确定性）+ `series_named_at`（AI） | 一列两用是 v1 的老毛病（和 `bgm_checked_at` 同款） |
+| 7 | **`bgm.mode` 做成显式设置项**（`api` / `dump`） | 半在线要不要还刷 API 是明确的取舍，不该靠"有没有跑过 archive"猜 |
+| 8 | **`dump` 模式必须有回全在线的兜底**（缺/过期才打 API） | dump 周更，新番和刚查过的条目不能等一周；"少打 API" ≠ "不许打 API" |
+| 9 | **旧表直接 DROP**，不搞改名留档 | v2 的全部价值就是"可重建"；留着旧表反而会让两套结构长期并存、改代码时两边都要想着 |
+| 10 | **`title_bgm_origin` 保留** | 详情页「原名」那行靠它；顺便能把 `titleOriginal` 的口径收成一列 |
+| 11 | **dump 自动更新**：到点检查 `latest.json` → 有新版才下载 → 流式解压 → 导入 | 450MB 不该让人每周手点；digest 比对让日常只花 539B |
+| 12 | **镜像配置进设置页**，与 `mikan.bases` / `bgm.bases` 同一套控件（`SourceListEditor`：可拖拽 + 单条测速） | 镜像会变、各家网络不一样，写死在代码里等于把可用性押在某个代理上 |
+| 13 | **镜像顺序无所谓，竞速选最快；但外链仍固定用列表第一条** | 取数要快，链接要稳 —— 两件事分开，用一个 `sources.pickFastest` 开关切换"竞速 / 按列表" |
 
-### 待定（还差三句）
+### 待定
 
-1. **`bgm.mode` 开关**：显式设置项（`api` / `dump`）还是隐式（跑过 archive 就算半在线）？
-   我仍倾向显式 —— 半在线模式下"每日更新还刷不刷 API"是个明确取舍。
-2. **老表处理**：`anime_v1` 改名留档一周再 DROP（建议），还是迁移成功后直接删？
-3. **`title_bgm_origin` 要不要**：BGM 原名（日文/罗马字）现在详情页会当"原名"显示。
-   如果觉得多余，可以只留 `title_bgm`（中文名，缺了就填原名）。
+（暂无。剩下的都是实现细节，边做边定。）
 
 ---
 
-## 12. 自动下载 + 自动解压（`--latest`）设计
+## 12. 离线 dump 的自动更新（下载 / 解压 / 导入 / 调度）
 
-目标：一条命令完成 **找最新版 → 下载 → 解压 → 导入**，全程不把 1.3GB 落到磁盘上。
+目标：设置页里打开开关 + 定个时刻，之后**每周自动跟上**；不打开也能手动一条命令。
+下载是 zip（450MB，解压后 1.3GB），所以**全程不落地解压**：直接流式解 zip 里的两个条目。
 
 ```bash
-npm run archive -- --latest               # 半在线周更：自动拿最新 dump 并导入
-npm run archive -- --latest --keep-zip    # 顺便留一份 zip（想归档/重放）
-npm run archive -- --url=<直链>           # 认某个特定版本
-npm run archive -- --dir=<解压目录>       # 手动模式（现在这套，保留）
+npm run archive -- --latest            # 检查 → 有新版才下载 → 流式解压 → 导入
+npm run archive -- --latest --force    # 忽略"已导入过"的判断，重灌一次
+npm run archive -- --check             # 只检查有没有新版（不打库、不下载）
+npm run archive -- --dir=<解压目录>    # 手动模式（保底，永远留着）
 ```
 
-### 12.1 找最新版
+### 12.1 调度：一天一次，绝大多数时候只花 539 字节
+
+| 项 | 做法 |
+|---|---|
+| 触发 | 后台 worker 每个「到期时刻」跑一次（`bgm.dumpCheckAt`，默认 `06:00` —— dump 每周三 05:00 出，留一小时余量） |
+| 判断 | 先 GET 索引 `latest.json`（539B），比对 `dump_state.digest` —— **一样就直接结束**（一周 6 天都是这个分支） |
+| 失败退避 | 索引/下载失败 → 10 分钟 → 1 小时 → 6 小时，当天最多 3 次；**不动任何已有数据** |
+| 状态落库 | `dump_state(id=1, name, digest, size, checked_at, imported_at, source_url)` —— 重启也不会重复导 |
+
+### 12.2 索引多源（跟 Mikan / BGM 同一套「多地址」逻辑）
+
+索引就一行 JSON，但 `raw.githubusercontent.com` 不一定通，所以也是**有序多源 + 单条可测**：
+
+| 默认顺序 | 地址 | 实测 |
+|---|---|---|
+| 1 | `https://raw.githubusercontent.com/bangumi/Archive/master/aux/latest.json` | 直连（有梯子时最快） |
+| 2 | `https://cdn.jsdelivr.net/gh/bangumi/Archive@master/aux/latest.json` | ✅ 通（jsDelivr，国内一般可达） |
+| 3 | `https://ghproxy.net/https://raw.githubusercontent.com/bangumi/Archive/master/aux/latest.json` | ✅ 通（代理 raw） |
+
+存成 `bgm.dumpIndex`（`type: 'list'`），设置页就是可拖拽 + 每条单独测速的 `SourceListEditor`。
+
+### 12.3 下载镜像：前缀模板 + 断点续传 + 竞速选最快
+
+`latest.json` 给的 `browser_download_url` 走 `github.com/.../releases/download/...`，国内常常很慢。
+镜像统一用**模板**表示（`{url}` 会被替换成真实地址），这样"直连"也有明确写法：
+
+```json
+["{url}", "https://hk.gh-proxy.com/{url}", "https://gh-proxy.com/{url}",
+ "https://ghfast.top/{url}", "https://ghproxy.net/{url}"]
+```
+
+实测（`Range: bytes=0-1` 拿首两字节，`content-range` 都对得上 450262892）：
+
+| 镜像 | 状态 | 首字节耗时 |
+|---|---|---|
+| 直连 GitHub | 206 | 961ms |
+| `hk.gh-proxy.com` | 206 | **564ms** |
+| `gh-proxy.com` | 206 | **635ms** |
+| `ghfast.top` | 206 | 1260ms |
+| `ghproxy.net` | 206 | 11302ms（能通但慢，排最后） |
+
+**顺序无所谓**（你的要求）：每次真要下载时先对**所有镜像**发一次 `Range: bytes=0-1`（2 秒超时），
+按延迟排序，用最快的开始；中途失败就换下一个**接着续传**（按字节偏移，不需要从头）：
 
 ```
-GET https://raw.githubusercontent.com/bangumi/Archive/master/aux/latest.json
-→ { browser_download_url, name, size, digest: "sha256:…", created_at }
+GET  <mirror><asset>   Range: bytes=<已下载字节>-
+  · 206 → append 到 data/dump/<name>.part，同时喂给 sha256
+  · 416 → 说明本地已经完整（换下一个镜像做校验即可）
+  · 200 → 该镜像不支持 Range（少见的代理）→ 当作换镜像的信号，不写坏文件
 ```
 
-`digest` 用来**下载后校验**（GitHub API 给的 sha256），校验失败直接报错、不导入 —— 
-半在线模式下"档案错了"比"没导入"更糟。
+断点续传的意义：450MB 在慢速代理上断一次不会白费；进程重启也能接着下。
+`.part` 下完校验通过才改名成 `.zip`，导入完（默认）删掉。
 
-### 12.2 零依赖解 zip（不落盘）
+### 12.4 解压：不落盘（1.3GB 直接流式读）
 
 ```
 createReadStream(zip) ──► 定位 EOCD（末尾 64KB 内搜 PK\x05\x06）
@@ -521,10 +585,87 @@ createReadStream(zip) ──► 定位 EOCD（末尾 64KB 内搜 PK\x05\x06）
 **为什么不装第三方 unzip**：和当初选 `node:sqlite` 而不是 `better-sqlite3` 是同一个理由 ——
 零原生依赖、装机不卡在编译；我们要的只是"两个 deflate 条目"，`zlib` 就够。
 
-### 12.3 验收（不依赖真 dump）
+### 12.5 效率：为什么这条路最省
 
-`scripts/verify-archive.mjs` 里用 `zlib.deflateRawSync` **现造一个迷你 zip**（一条 store、一条 deflate），
-断言：`--latest` 的解析路径能把两条都读出来、CRC 对得上、坏 zip 报错且不写库。
+| 环节 | 成本 | 为什么这么做 |
+|---|---|---|
+| 日常检查 | **1 次 539B 请求**（<1s） | digest 没变就结束；一周 6 天走这条 |
+| 有新版时下载 | 450MB，镜像竞速 + 断点续传 | 慢代理断了不白费；不用人盯着 |
+| 解压 | 不落盘，流式 inflate | 解压后 1.3GB，落盘再读 = 多 2 倍 IO、多 1.3GB 磁盘 |
+| 解析 | 行首 `{"id":` 预筛，只 `JSON.parse` 命中的几千行 | 60 万行里 99% 不需要解析（实测整趟 4 秒） |
+| 写库 | 500 行一个事务 | 摊平事务开销，又不长时间占写锁（WAL 下读不受影响） |
+| 重复导入 | 不可能：`dump_state.digest` 命中就跳过 | 重启/重跑都安全 |
+| 失败 | 只记日志 + 退避，不改旧数据 | dump 是"锦上添花"，绝不能因为它坏了整个页面 |
+
+对比一下"最直觉的做法"（下载 → 解压到磁盘 → 读 1.3GB 文件 → 导入）：
+**磁盘峰值 1.75GB vs 450MB，IO 约 3.5GB vs 450MB**，速度反而更慢。
+
+### 12.6 设置页新增项（全部走 `SETTINGS_FIELDS`，前端零改动）
+
+新增一个分组 **「离线数据」**（`group: 'dump'`），三小节：
+
+| path | 类型 | 默认 | 小节 | 说明 |
+|---|---|---|---|---|
+| `bgm.useDump` | `boolean` | `false` | 模式 | 打开 = 半在线（档案用 dump）；关 = 全在线（只打 API）。**开着也保留 API 兜底**（缺失/超 14 天才打） |
+| `bgm.dumpMaxAgeDays` | `number`（天） | `14` | 模式 | 半在线下超过这么多天的档案视为过期 → 打一次 API |
+| `bgm.dumpAuto` | `boolean` | `true` | 自动更新 | 到点自动检查并更新 |
+| `bgm.dumpCheckAt` | `time` | `06:00` | 自动更新 | 每天几点检查（`type: 'time'`，和「每日更新时刻」同一个滚轮控件） |
+| `bgm.dumpIndex` | `list` | 3 条（见 §12.2） | 地址与镜像 | 版本索引地址；可拖拽、每条可单独测速 |
+| `bgm.dumpMirrors` | `list` | 5 条模板（见 §12.3） | 地址与镜像 | 下载镜像模板，必须含 `{url}`；可拖拽 + 单条测速 |
+| `sources.pickFastest` | `boolean` | `true` | —— | **全局开关**：打开 = 三个地址列表都「探测延迟选最快」；关 = 严格按列表顺序（见 §12.7） |
+| `sources.probeTtlMs` | `number`（ms，`format: 'duration'`） | `10m` | 高级 | 延迟探测结果的缓存时长；探测本身失败不影响请求 |
+| `bgm.dumpDir` | `text` | `data/dump` | 高级 | zip 落盘目录（NAS 上想换盘时用） |
+| `bgm.dumpKeepZip` | `boolean` | `false` | 高级 | 导入后保留 zip |
+
+状态展示（只读，不进字段清单）：设置页「离线数据」顶部显示
+`最近检查 11-06 06:00 · 当前 dump-2026-11-03 · 已导入 11-06 06:04 · 3742 条`。
+
+> 基础模式仍然只有那 10 项（Web CONVENTIONS §4 的断言钉着），新项全部 `advanced: true`。
+
+### 12.7 「自动选快」和「按列表」怎么共存
+
+你说得对：镜像顺序本来没意义，**每次探测延迟选最快的**才对；但 Mikan / BGM 的列表顺序是"主站优先"，
+而且**外链必须稳定**。所以规则分成两层：
+
+| 用途 | 用哪个地址 | 受 `sources.pickFastest` 影响吗 |
+|---|---|---|
+| **取数据**（http 请求） | 探测出的最快地址（失败按延迟顺序退） | ✅ 受影响 |
+| **外链 / 海报地址**（`primaryBase`） | **永远是列表第一条** | ❌ 不受影响 —— 链接不能随测速漂移 |
+| 单条 ≥ 2 个候选才探测 | 只有 1 条时零额外请求 | —— |
+
+探测实现（与 `lib/multi-source.js` 的 `tryBases` 同一个模块）：
+
+```
+probe(base) = HEAD {base} （2s 超时），失败再试 GET {base}/ 的首字节
+结果按延迟排序，缓存 10 分钟（sources.probeTtlMs）；
+探测本身失败不影响请求 —— 退化成"按列表顺序"。
+```
+
+### 12.8 验收（不依赖真 dump、不碰网络）
+
+`scripts/verify-archive.mjs`（扩展）：
+
+| 断言 | 怎么做 |
+|---|---|
+| 索引多源：第 1 个 404 → 用第 2 个 | 假 fetch，按 URL 返回不同内容 |
+| digest 相同不下载 | 假 fetch 记录请求，断言没有下载请求 |
+| digest 变了才下载 + 校验 | 现造 zip（`store` + `deflate` 各一条）+ 正确 digest |
+| sha256 不符 → 不导入、不写 `dump_state` | 故意给错 digest |
+| 镜像竞速 + Range 续传 | 假 fetch：第 1 个镜像断在 100 字节 → 第 2 个从 100 续上，拼出完整文件 |
+| 416 / 200 的处理 | 用假响应覆盖两个分支 |
+| 坏 zip（缺条目）→ 报错且一行不写 | 构造只有 `person.jsonlines` 的 zip |
+
+`scripts/verify-settings.mjs`（扩展）：
+
+- `bgm.useDump` / `dumpAuto` 是布尔，`dumpCheckAt` 是 `HH:MM` 且非法值整批拒绝；
+- `dumpMirrors` 每一条都必须含 `{url}`（否则保存直接 400，并指出是第几条）；
+- `dumpIndex` 必须是 http(s)；
+- 新分组 `dump` 出现在清单里，且**基础项仍然是那 10 个**（不多不少）。
+
+`Web/scripts/verify-e2e.mjs`（扩展）：
+
+- 设置页出现「离线数据」分组、镜像列表是 `SourceListEditor`（可拖拽、有单条测速）；
+- 「自动选快」开关存在，且帮助文案说明"外链仍用第一条"。
 
 ---
 
@@ -541,7 +682,9 @@ createReadStream(zip) ──► 定位 EOCD（末尾 64KB 内搜 PK\x05\x06）
 | `series_all_movies` | 删：`platform === 3` 就是全剧场版（实测哆啦A梦 33 部全为 3），不用 AI |
 | `series_root_title` | 不再全量补：点开系列时才让 AI 起名（`series_named_at`），失败用兜底名 |
 | 数据库能重建吗 | 能：映射表保住 → `npm run scan`（只扫尾部/空洞）+ `archive` 就能重建另外两张表 |
-| 自动解压 | 零依赖方案：读 zip 中央目录 + `zlib.createInflateRaw` **边解压边解析**，不落盘；再加 `--latest` 自动下载 |
+| 自动解压 | 零依赖方案：读 zip 中央目录 + `zlib.createInflateRaw` **边解压边解析**，不落盘；`--latest` 自动查版本/下载/导入 |
+| 镜像 | 进设置页（`dumpIndex` 索引 + `dumpMirrors` 下载模板），可拖拽可单条测速；`pickFastest` 决定"竞速"还是"按列表" |
+| 自动更新 | 每天到点检查一次（默认 06:00）：digest 没变只花 539B；变了才下载 450MB（断点续传 + sha256 校验） |
 
 
 
