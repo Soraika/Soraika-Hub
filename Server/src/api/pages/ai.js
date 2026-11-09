@@ -26,11 +26,11 @@ import { createMemCache } from '../../cache/mem.js'
 import { defaultSystemOf, fillNames, promptHashOf, promptText, promptVersion } from '../ai/prompts.js'
 import {
   TYPE_ORDER,
-  VALID_TYPES,
   chunk,
   dropIdentical,
   hashOf,
   mapLimit,
+  mergeModelTags,
   uniqueTitles,
 } from '../ai/shared.js'
 import { chatJson } from '../sources/ai.js'
@@ -154,34 +154,13 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
 
     const model = runs[runs.length - 1]?.model || config.ai.model
 
-    /* 标签：同名合并 match；all 按全量重算 */
-    const merged = new Map()
+    /*
+     * 标签：合并逻辑是纯函数（`mergeModelTags`），这里只管集数。
+     * 为什么拆出去：这一段被「多批合并 / all 全量重算 / default 透传」三件事撑着，
+     * 混在业务里只能靠真打模型才能验；现在是纯函数，verify-ai 离线就能钉住。
+     */
     const episodes = {}
-
     for (const run of runs) {
-      for (const raw of Array.isArray(run.parsed?.tags) ? run.parsed.tags : []) {
-        const name = String(raw?.display || '').trim()
-        if (!name) continue
-        const match = (Array.isArray(raw?.match) ? raw.match : [name]).map((m) => String(m || '').trim()).filter(Boolean)
-        /*
-         * `default`：提示词里允许模型给"这个取值建议默认勾上"（用户的补充要求里会写
-         * 「把 1080P 设为默认勾选」这类话）。多批合并时任一批说 true 就算 true。
-         */
-        const isDefault = raw?.default === true
-        const hit = merged.get(name)
-        if (hit) {
-          hit.match = [...new Set([...hit.match, ...match])]
-          hit.default = Boolean(hit.default) || isDefault
-        } else {
-          merged.set(name, {
-            name,
-            type: VALID_TYPES.has(raw?.type) ? raw.type : 'other',
-            match,
-            default: isDefault,
-          })
-        }
-      }
-
       for (const [name, value] of Object.entries(run.parsed?.episodes || {})) {
         // 集数归一：数字 / "1-12" / null，别的写法一律丢掉（宁缺勿错）
         if (value === null) episodes[name] = null
@@ -190,14 +169,7 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
       }
     }
 
-    const lowers = list.map((t) => t.toLowerCase())
-    const candidates = [...merged.values()]
-      .map((tag) => {
-        const all = lowers.every((title) => tag.match.some((m) => title.includes(m.toLowerCase())))
-        // 整批一致的标签不做成筛选项，也就不该「默认勾选」（它根本点不了）
-        return { ...tag, all, default: all ? false : Boolean(tag.default) }
-      })
-      .filter((t) => t.name && t.match.length)
+    const candidates = mergeModelTags(runs, list)
 
     /*
      * 本地只兜「完全等价」这一种（两组 match 一模一样，筛出来的资源完全相同）。

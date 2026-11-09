@@ -142,15 +142,41 @@ try {
       !/你是动漫资源文件名解析专家/.test(aiPageSource),
     '一次 prompt 只产 tags + episodes（番名我们本来就传进去了，季由系列季位决定）；代码里没有硬编码提示词',
   )
-  /* 「默认勾选」：字段在提示词里是**可选**的（不写进 PROMPT_CONTRACT，避免旧的自定义 system 被拒），
-     服务端透传 default，前端读到就自动勾上 —— 用户只要在补充段写「把 1080P 设为默认勾选」。 */
+  /* 「默认勾选」链路：提示词里描述字段 → 服务端合并时透传（纯函数，离线可验）。 */
   check(
     bundlePrompt.includes('"default"') && bundlePrompt.includes('默认勾选'),
     '提示词契约里描述了可选的 default（默认勾选），并说明只有用户补充要求明确提到时才给',
   )
+  const { mergeModelTags } = await import('../src/api/ai/shared.js')
+  const twoTitles = ['a [1080p][简日内嵌].mp4', 'b [720p][简日内嵌].mp4']
+  const merged = mergeModelTags(
+    [
+      {
+        parsed: {
+          tags: [
+            { display: '1080P', match: ['1080p'], type: 'res', default: true },
+            { display: '简日内嵌', match: ['简日内嵌'], type: 'sub', default: true },
+          ],
+        },
+      },
+    ],
+    twoTitles,
+  )
+  check(merged.find((t) => t.name === '1080P')?.default === true, '模型给的 default 会透传到前端（1080P）')
   check(
-    /default: isDefault/.test(aiPageSource) && /default: all \? false : Boolean\(tag\.default\)/.test(aiPageSource),
-    '服务端透传 default，且「整批一致」的标签不会被标成默认勾选（它本来就点不了）',
+    merged.find((t) => t.name === '简日内嵌')?.all === true && merged.find((t) => t.name === '简日内嵌')?.default === false,
+    '「整批一致」的标签不被标默认（它根本点不了）',
+  )
+  const mergedTwoBatches = mergeModelTags(
+    [
+      { parsed: { tags: [{ display: '720P', match: ['720p'], type: 'res' }] } },
+      { parsed: { tags: [{ display: '720P', match: ['720P'], type: 'res', default: true }] } },
+    ],
+    twoTitles,
+  )
+  check(
+    mergedTwoBatches[0]?.default === true && mergedTwoBatches[0]?.match.length === 2,
+    '多批合并：任一批说 default 就算，match 也并起来',
   )
   check(
     /mtimeOf\(/.test(aiPromptSource) && /data[\\/]prompts\.json|\.\.\/\.\.\/\.\.\/data/.test(aiPromptSource),

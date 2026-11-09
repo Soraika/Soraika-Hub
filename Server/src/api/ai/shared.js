@@ -90,3 +90,49 @@ export function dropIdentical(tags) {
   }
   return out
 }
+
+/**
+ * 把模型返回的多批标签合并成最终标签（纯函数，便于离线验收）
+ * ---------------------------------------------------------------------------
+ * 三件事：
+ *   1. 同名合并 match（不同批里写法可能不同，合起来筛得更全）
+ *   2. `all` 用**全量**重算：只有每条资源都命中才算「整批一致」
+ *      （单批模型判断覆盖不了全部，所以要在这里按全量重算）
+ *   3. `default`（提示词里可选的「默认勾选」）：合并时任一批说 true 就算 true；
+ *      但整批一致的标签会被强制清成 false —— 它不做成筛选项，根本点不了
+ *
+ * @param {Array<{ parsed?: { tags?: any[] } }>} runs 每批模型的输出
+ * @param {string[]} titles 这一批的全部文件名（用来重算 all）
+ * @returns {Array<{ name:string, type:string, match:string[], all:boolean, default:boolean }>}
+ */
+export function mergeModelTags(runs, titles) {
+  const merged = new Map()
+  for (const run of runs || []) {
+    for (const raw of Array.isArray(run?.parsed?.tags) ? run.parsed.tags : []) {
+      const name = String(raw?.display || '').trim()
+      if (!name) continue
+      const match = (Array.isArray(raw?.match) ? raw.match : [name]).map((m) => String(m || '').trim()).filter(Boolean)
+      const isDefault = raw?.default === true
+      const hit = merged.get(name)
+      if (hit) {
+        hit.match = [...new Set([...hit.match, ...match])]
+        hit.default = Boolean(hit.default) || isDefault
+      } else {
+        merged.set(name, {
+          name,
+          type: VALID_TYPES.has(raw?.type) ? raw.type : 'other',
+          match,
+          default: isDefault,
+        })
+      }
+    }
+  }
+
+  const lowers = (titles || []).map((t) => String(t).toLowerCase())
+  return [...merged.values()]
+    .map((tag) => {
+      const all = lowers.every((title) => tag.match.some((m) => title.includes(m.toLowerCase())))
+      return { ...tag, all, default: all ? false : Boolean(tag.default) }
+    })
+    .filter((tag) => tag.name && tag.match.length)
+}
