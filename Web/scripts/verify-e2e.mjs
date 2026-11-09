@@ -1199,7 +1199,27 @@ try {
     '切到别的页面时自动收起详情面板（面板是首页卡片的延伸，回来数据还在）',
   )
 
-  /* ── 下载页：同一个面板、换一个资源来源 ─────────────────────────────── */
+  /* ── 设置页：提示词只读卡片（改内容去改 JSON，不在网页里编辑）────────── */
+  const promptEditorSource = readFileSync(new URL('../src/components/settings/PromptEditor.vue', import.meta.url), 'utf8')
+  const usePromptsSource = readFileSync(new URL('../src/composables/usePrompts.js', import.meta.url), 'utf8')
+  check(
+    settingsSource.includes("import PromptEditor from '@/components/settings/PromptEditor.vue'") &&
+      /<PromptEditor v-if="group\.key === 'ai'" \/>/.test(settingsSource),
+    '提示词卡片挂在 AI 分组下面（不参与分组保存：它是外置配置）',
+  )
+  check(
+    !/<textarea/.test(promptEditorSource) &&
+      promptEditorSource.includes('复制这一段') &&
+      promptEditorSource.includes('恢复这一段默认') &&
+      promptEditorSource.includes('data/prompts.json'),
+    '提示词卡片是只读的（没有输入框），并明确写了「要改就去改 data/prompts.json」',
+  )
+  check(
+    usePromptsSource.includes('fetchAiPrompts') &&
+      usePromptsSource.includes('saveAiPrompts') &&
+      usePromptsSource.includes('resetAiPrompts'),
+    '只读卡片复用了同一个接口（读 / 恢复某段 / 恢复全部）',
+  )
   const downloadsPageSource = readFileSync(new URL('../src/pages/DownloadsPage.vue', import.meta.url), 'utf8')
   const downloadListSource = readFileSync(new URL('../src/components/detail/DownloadList.vue', import.meta.url), 'utf8')
   check(

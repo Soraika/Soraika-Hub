@@ -180,6 +180,16 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
      * 结果里只有标签与集数。番名不进结果：调用方本来就把它传进来了（animeTitle），
      * 让模型再吐一遍纯属多花 token、多一次出错机会；季由系列的季位决定，也不该由这里猜。
      */
+    /*
+     * 结构兜底：正常一批总有东西（标签至少 all:true，集数至少逐条 null）。
+     * 两边都空说明模型没按约定回（多半是提示词被改坏或模型跑偏）。这种情况必须报错，
+     * 不能返回空结果：空结果会被写进缓存，把「什么都没解析出来」固化半小时，
+     * 事后只会看到「标签突然没了」。
+     */
+    if (!tags.length && !Object.keys(episodes).length) {
+      throw fail('PARSE', '模型返回的结构不符合约定（既没有 tags 也没有 episodes）：请检查提示词是否被改动')
+    }
+
     const result = {
       tags,
       episodes,

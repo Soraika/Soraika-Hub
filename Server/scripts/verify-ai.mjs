@@ -230,14 +230,32 @@ try {
     Object.values(prompts0?.prompts || {}).every((p) => typeof p.system === 'string' && p.system.length > 100),
     '接口能读到完整提示词正文（不用翻源码）',
   )
+  check(
+    prompts0?.keys?.every((key) => typeof prompts0.defaults?.[key] === 'string' && prompts0.defaults[key].length > 100),
+    '接口同时给出出厂默认正文（界面「恢复默认」要知道回到哪）',
+  )
+  check(Array.isArray(prompts0?.customized), `接口给出 customized（哪几段被改过）→ ${JSON.stringify(prompts0?.customized)}`)
   if (prompts0?.source === 'default') {
     // 只在没有用户覆盖时才做写测试（不能把人家自己的覆盖文件删了）
     try {
+      /* 输出契约：把 JSON 结构说明删掉就应该被拒绝（否则模型返回对不上的内容，现象是「标签全没了」） */
+      const broken = await call('PUT', '/api/ai/prompts', {
+        prompts: { bundle: { system: '请分析这些动画文件名，挑出有价值的维度告诉我。' } },
+      })
+      check(
+        broken.res.status === 400 && /字段名/.test(broken.body?.error?.message || ''),
+        `删掉输出结构的提示词被拒绝（400，并指出缺哪些字段）→ ${broken.body?.error?.message || ''}`,
+      )
+
       const before = prompts0.prompts.series.hash
       const put = await call('PUT', '/api/ai/prompts', {
         prompts: { series: { system: `${prompts0.prompts.series.system}\n（验收临时改动：${Date.now()}）` } },
       })
       check(put.body?.data?.source === 'override', `PUT 写入覆盖 → source=${put.body?.data?.source}`)
+      check(
+        (put.body?.data?.customized || []).includes('series'),
+        `customized 标出被改过的段 → ${JSON.stringify(put.body?.data?.customized)}`,
+      )
       const after = (await call('GET', '/api/ai/prompts')).body?.data
       check(
         after?.source === 'override' && after.prompts.series.hash !== before,

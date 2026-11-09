@@ -2,10 +2,10 @@
  * AI 接口
  * ---------------------------------------------------------------------------
  * 后端形状见 Server/src/rout/ai.js / Server/docs/MCP.md。
- * 要点：**没配 key 不是错误** —— 后端会回 AI_DISABLED（501），
+ * 要点：没配 key 不是错误。后端会回 AI_DISABLED（501），
  * 前端按 code 显示「未配置」，而不是弹「失败，请重试」（重试一万次也不会好）。
  */
-import { apiGet, apiPost } from './http'
+import { apiGet, apiPost, apiPut } from './http'
 
 /**
  * AI 能力清单（含是否已配置）
@@ -48,4 +48,28 @@ export function classifyReleaseTags(titles, { animeTitle = '', season = '' } = {
  */
 export function classifyEpisodes(animeTitle, titles, { season = '' } = {}) {
   return apiPost('/api/ai/classify/episodes', { title: animeTitle, titles, season }, { timeout: 180000 })
+}
+
+/**
+ * 读当前生效的提示词（四段：bundle 标签+集数 / series 系列 / format 格式 / groupTags 组标记）
+ * 同时给出出厂默认（customized 之外的「恢复默认」要用它）与来源（default / override）。
+ * @returns {Promise<{ source:string, keys:string[], customized:string[],
+ *   prompts:Record<string,{version:string,hash:string,system:string}>,
+ *   defaults:Record<string,string> }>}
+ */
+export function fetchAiPrompts() {
+  return apiGet('/api/ai/prompts', { timeout: 10000 })
+}
+
+/**
+ * 保存提示词（写 data/prompts.json，立即生效，不用重启）
+ * @param {Record<string, { system:string }>} prompts 只传要改的段；数组为空等于什么都不改
+ */
+export function saveAiPrompts(prompts) {
+  return apiPut('/api/ai/prompts', { prompts }, { timeout: 15000 })
+}
+
+/** 整份恢复出厂默认（删掉覆盖文件） */
+export function resetAiPrompts() {
+  return apiPut('/api/ai/prompts', { prompts: null }, { timeout: 15000 })
 }

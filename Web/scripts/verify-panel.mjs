@@ -184,6 +184,26 @@ const DL_LIST = {
   unmatched: [{ name: '某个认不出的目录', count: 1, sizeText: '700 MB', stateText: '已完成' }],
 }
 
+/** 提示词接口（设置页只读卡片）：bundle 被改过，其余用默认 */
+const PROMPT_TEXT = {
+  bundle: '你是动漫资源文件名解析专家。只返回 JSON：{ "tags": [{ "display": "", "match": [] }], "episodes": {} }',
+  series: '你在给一个动画系列做归档命名。输出 { "namingStyle": "", "rootTitle": "", "extras": [] }',
+  format: '你在看一批来自同一个字幕组的资源文件名。输出 { "prefix": "", "literals": [] }',
+  groupTags: '把组标记对应到库里的组名（只能从下面的列表里选）。{{NAMES}}',
+}
+const PROMPTS = {
+  source: 'override',
+  keys: ['bundle', 'series', 'format', 'groupTags'],
+  customized: ['bundle'],
+  prompts: Object.fromEntries(
+    Object.entries(PROMPT_TEXT).map(([key, system]) => [
+      key,
+      { version: 'v10', hash: `hash-${key}`, system: key === 'bundle' ? `${system}\n（我改过：多一句说明）` : system },
+    ]),
+  ),
+  defaults: { ...PROMPT_TEXT },
+}
+
 const json = (data) => ({ ok: true, body: { ok: true, data } })
 function route(url) {
   const u = new URL(url, 'http://127.0.0.1:3100')
@@ -191,13 +211,15 @@ function route(url) {
   if (p === '/api/downloads') return json(DL_LIST)
   if (p.startsWith('/api/downloads/')) return json(DL_ANIME)
   if (p === '/api/qb/status') return json({ configured: true, versions: DL_LIST.versions, transfer: DL_LIST.transfer })
+  /* 提示词：四段 + 出厂默认 + 已改段（设置页只读卡片用） */
+  if (p === '/api/ai/prompts') return json(PROMPTS)
   if (/^\/api\/anime\/\d+\/series$/.test(p)) return json(null)
   if (/^\/api\/anime\/\d+\/subgroups$/.test(p)) return json({ items: SUBGROUPS, source: 'mikan' })
   if (/^\/api\/anime\/\d+\/releases/.test(p)) {
     return json({ subgroup: { id: 1205, name: '樱桃花字幕组' }, items: RELEASES, total: RELEASES.length, cached: false })
   }
   if (/^\/api\/anime\/\d+$/.test(p)) return json(DETAIL)
-  // AI 一律当「没配置」：面板要走的就是这条降级路径（不花 token、也不该崩）
+  // 其余 AI 一律当「没配置」：面板要走的就是这条降级路径（不花 token、也不该崩）
   if (p.startsWith('/api/ai/')) {
     return { ok: false, body: { ok: false, error: { code: 'AI_DISABLED', message: '未配置 AI' } } }
   }
@@ -348,6 +370,31 @@ console.log('\n— 下载页：卡片墙')
   check(text.includes('未识别'), '「未识别」那一栏也在（不藏起来）')
   check(text.includes('自动刷新中'), '有下载中的任务 → 显示「自动刷新中」（页面自己在更新）')
   if (process.env.VERIFY_PANEL_DEBUG) console.log('  [debug] 页面文本 =', text.slice(0, 160))
+}
+
+console.log('\n— 设置页：提示词（只读查看）')
+{
+  const js = await buildEntry('prompts')
+  const { win, text, errors } = await mountPage(js, 'http://127.0.0.1:3100/', 400)
+  check(!realErrors(errors).length, '渲染期没有异常', realErrors(errors)[0] || 'ok')
+  check(!text.includes('正在读提示词'), '不在加载态', text.includes('正在读提示词') ? '卡在加载 ✗' : 'ok')
+  check(
+    ['标签 + 集数', '系列归一', '格式特征', '组标记 → 组名'].every((t) => text.includes(t)),
+    '四个页签都在',
+  )
+  check(text.includes('有改动（用着你的版本）'), '顶部胶囊显示「有改动」（source=override）')
+  check(!document.querySelector('textarea'), '只读：没有任何输入框')
+  check(Boolean(document.querySelector('.prompt-view')), '正文用只读块显示')
+  check(text.includes('复制这一段') && text.includes('恢复这一段默认'), '有「复制」与「恢复默认」两个动作')
+  check(text.includes('data/prompts.json'), '说明了去哪里改（JSON 文件 / PUT 接口）')
+
+  /* 切页签：显示的是那一段的内容 */
+  const seriesTab = [...document.querySelectorAll('.prompt-tab')].find((b) => b.textContent.includes('系列归一'))
+  seriesTab?.dispatchEvent(new win.Event('click', { bubbles: true }))
+  await new Promise((r) => setTimeout(r, 120))
+  const after = (document.body.textContent || '').replace(/\s+/g, ' ')
+  check(after.includes('namingStyle'), '点「系列归一」后显示对应那段提示词')
+  check(!realErrors(errors).length, '切页签没有渲染期异常', realErrors(errors)[0] || 'ok')
 }
 
 fs.rmSync(dist, { recursive: true, force: true })

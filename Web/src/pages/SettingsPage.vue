@@ -62,7 +62,8 @@
 
     <!-- ── 卡片 = 分组；卡片内按小节分块；块内字段是「标签在上、控件在下」的多列网格 ── -->
     <div v-else class="cards">
-      <section v-for="group in groups" :key="group.key" class="card card-surface">
+      <template v-for="group in groups" :key="group.key">
+        <section class="card card-surface">
         <header class="card-head">
           <h2 class="card-title">
             <component :is="GROUP_ICONS[group.key]" :size="19" />
@@ -147,6 +148,11 @@
         </div>
       </section>
 
+      <!-- 提示词放在 AI 卡片下面：它是 AI 的外置配置（只读查看 + 恢复默认），
+           不参与上面那套「分组保存」——改动直接写 data/prompts.json，立即生效。 -->
+      <PromptEditor v-if="group.key === 'ai'" />
+      </template>
+
       <!-- ── 导入 / 分享：导出在上面，导入这里 ─────────────────────────── -->
       <section class="card card-surface">
         <header class="card-head">
@@ -213,6 +219,7 @@ import {
   IconWorld,
 } from '@tabler/icons-vue'
 import FieldControl from '@/components/settings/FieldControl.vue'
+import PromptEditor from '@/components/settings/PromptEditor.vue'
 import StateBlock from '@/components/ui/StateBlock.vue'
 import { useSettings } from '@/composables/useSettings'
 

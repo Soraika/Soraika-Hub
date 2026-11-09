@@ -73,7 +73,28 @@ export function promptSet() {
   return value
 }
 
-/** 当前提示词来自哪里（`default` / `override` / `override-invalid: ...`）—— 排错/看板用 */
+/**
+ * 出厂默认的原样内容（不套覆盖）
+ * 界面用它做两件事：显示「本段是否被改过」、以及「恢复默认」回到哪。
+ * 单独缓存：默认文件在源码里，只有发布新版本才会变。
+ */
+let defaultCache = { at: -1, value: null }
+export function defaultPrompts() {
+  const at = mtimeOf(DEFAULT_FILE)
+  if (defaultCache.value && defaultCache.at === at) return defaultCache.value
+  const value = readJson(DEFAULT_FILE)
+  defaultCache = { at, value }
+  return value
+}
+
+/** 哪几段被覆盖了（和出厂默认不一致）—— 界面据此标「已改」 */
+export function customizedKeys() {
+  const effective = promptSet()
+  const defaults = defaultPrompts()
+  return PROMPT_KEYS.filter((key) => String(effective[key]?.system || '') !== String(defaults[key]?.system || ''))
+}
+
+/** 当前提示词来自哪里（default / override / override-invalid: ...）—— 排错和看板用 */
 export const promptSource = () => {
   promptSet()
   return cache.source
@@ -90,8 +111,8 @@ export const promptVersion = (key) => String(promptOf(key).version || '')
 
 /**
  * 提示词内容 hash（12 位）
- * 缓存 key 里用它：**改了提示词 → key 变了 → 自然 miss 旧结果**，
- * 不需要谁去记得"改 prompt 要升版本号"。
+ * 缓存 key 里用它：改了提示词，key 就变了，旧结果自然 miss，
+ * 不需要谁去记得「改 prompt 要升版本号」。
  */
 export const promptHashOf = (key) =>
   createHash('sha1').update(promptText(key)).digest('hex').slice(0, 12)
