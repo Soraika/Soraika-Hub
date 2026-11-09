@@ -7,6 +7,7 @@ import { countAll, countSubgroupDict, stats } from '../db/anime.js'
 import { dbFile } from '../db/index.js'
 import { countGaveUp, countMissingBgm } from '../db/queue.js'
 import { getWorkerState } from '../jobs/worker.js'
+import { SETTINGS_GROUPS } from '../lib/settings.js'
 import { aiCacheStats } from '../api/pages/ai.js'
 import { aiProviderInfo } from '../api/sources/ai.js'
 import { aiRouter } from './ai.js'
@@ -39,6 +40,13 @@ apiRouter.get('/health', (req, res) => {
       },
       /** 后台守护进程状态快照（未启动时 running=false） */
       worker: getWorkerState(),
+      /**
+       * 运行时认识哪些设置分组 —— 专门用来排「改了代码但跑的是旧进程」：
+       * 新加的分组没出现在这里，就说明这个进程还是旧的（重启没成功/占着端口的是旧实例）。
+       */
+      settingsGroups: SETTINGS_GROUPS.map((group) => group.key),
+      /** 本进程启动时间（ISO）：比 uptimeSec 更直观看「是不是刚重启过」 */
+      startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
       /** AI 是否可用（配了 key 才算可用）+ 两个解析缓存的条目数；**不含 key** */
       ai: { ...aiProviderInfo(), caches: aiCacheStats() },
       uptimeSec: Math.round(process.uptime()),

@@ -61,6 +61,16 @@ try {
     `health: coverage 完整 → ${JSON.stringify(health?.coverage)}`,
   )
   check(typeof health?.worker?.running === 'boolean', `health: worker 是只读快照 → running=${health?.worker?.running}`)
+  /* 运行时认识的分组要能自证 —— 加这个是为了排「改了代码但跑的是旧进程」：
+     界面上看不到新分组时，先看这里有没有它。 */
+  check(
+    Array.isArray(health?.settingsGroups) && health.settingsGroups.includes('dump'),
+    `health: 运行时认识「离线数据」分组 → ${JSON.stringify(health?.settingsGroups)}`,
+  )
+  check(
+    typeof health?.startedAt === 'string' && !Number.isNaN(Date.parse(health.startedAt)),
+    `health: 进程启动时间 → ${health?.startedAt}`,
+  )
 
   /* ── 首页接口契约 ───────────────────────────────────────────────────── */
   const first = (await get('/api/home/schedule')).body?.data
