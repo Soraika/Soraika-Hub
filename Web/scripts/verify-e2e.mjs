@@ -1208,11 +1208,11 @@ try {
     '提示词卡片挂在 AI 分组下面（不参与分组保存：它是外置配置）',
   )
   check(
-    !/<textarea/.test(promptEditorSource) &&
-      promptEditorSource.includes('复制这一段') &&
-      promptEditorSource.includes('恢复这一段默认') &&
-      promptEditorSource.includes('data/prompts.json'),
-    '提示词卡片是只读的（没有输入框），并明确写了「要改就去改 data/prompts.json」',
+    (promptEditorSource.match(/<textarea/g) || []).length === 2 &&
+      promptEditorSource.includes('系统提示词') &&
+      promptEditorSource.includes('用户补充') &&
+      promptEditorSource.includes('保存提示词'),
+    '提示词卡片：系统段与补充段各有输入框，并有保存按钮',
   )
   check(
     usePromptsSource.includes('fetchAiPrompts') &&

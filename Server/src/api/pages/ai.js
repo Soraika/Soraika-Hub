@@ -23,7 +23,7 @@ import { logger } from '../../lib/logger.js'
 import { normalizeSeriesAiOutput } from '../../lib/series.js'
 import { normalizeSignature } from '../../lib/release-match.js'
 import { createMemCache } from '../../cache/mem.js'
-import { fillNames, promptHashOf, promptText, promptVersion } from '../ai/prompts.js'
+import { defaultSystemOf, fillNames, promptHashOf, promptText, promptVersion } from '../ai/prompts.js'
 import {
   TYPE_ORDER,
   VALID_TYPES,
@@ -110,14 +110,47 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
     const batches = chunk(list, batchSize)
     const limit = Math.min(Math.max(1, Number(config.ai.concurrency) || 1), 8)
 
-    const runs = await mapLimit(batches, limit, async (batch) => {
-      const { parsed, model, ms } = await chatJson({
-        system: promptText('bundle'),
-        user: bundleUserPrompt(batch, context),
-        log,
-      })
+    const runBatch = async (batch, system) => {
+      const { parsed, model, ms } = await chatJson({ system, user: bundleUserPrompt(batch, context), log })
       return { parsed: parsed || {}, model, ms }
-    })
+    }
+
+    /*
+     * 第一遍用「系统段 + 用户补充」。
+     * 失败（模型返回不是 JSON）或整批什么都没解析出来时，**用出厂默认再跑一次**：
+     * 用户自己加的补充要求可能把模型带偏，但解析不能因此瘫掉。
+     * 回退只影响这一次请求，不写回任何提示词配置。
+     */
+    let fallback = false
+    const systemText = promptText('bundle')
+    let runs = await mapLimit(batches, limit, (batch) =>
+      runBatch(batch, systemText).catch((error) => ({ error, batch })),
+    )
+
+    const hasOutput = (run) => Boolean(run?.parsed?.tags?.length || Object.keys(run?.parsed?.episodes || {}).length)
+    const failedIdx = runs.map((run, index) => (run?.error ? index : -1)).filter((index) => index >= 0)
+    const nothingParsed = runs.every((run) => !hasOutput(run))
+
+    if (failedIdx.length || nothingParsed) {
+      const retryIdx = failedIdx.length ? failedIdx : runs.map((_, index) => index)
+      log.warn(
+        { titles: list.length, failed: failedIdx.length, nothingParsed, retry: retryIdx.length },
+        'ai.bundle fallback-default',
+      )
+      const fallbackSystem = defaultSystemOf('bundle')
+      await mapLimit(retryIdx, limit, async (index) => {
+        try {
+          runs[index] = await runBatch(batches[index], fallbackSystem)
+          fallback = true
+        } catch (error) {
+          runs[index] = { error, batch: batches[index] }
+        }
+      })
+    }
+
+    /* 回退后仍有批次失败 → 这一次真的拿不到结果，按原错误上报（不吞） */
+    const stillFailed = runs.find((run) => run?.error)
+    if (stillFailed) throw stillFailed.error
 
     const model = runs[runs.length - 1]?.model || config.ai.model
 
@@ -197,6 +230,8 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
       ms: Date.now() - startedAt,
       analyzed: list.length,
       batches: batches.length,
+      /** 这次是不是回退到出厂默认才解析出来的（用户补充的提示词没被采用） */
+      promptFallback: fallback,
     }
     tagCache.set(key, result)
     episodeCache.set(key, result)
@@ -229,11 +264,14 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
  * @param {{ log?: object, animeTitle?: string, season?: string|number }} [options]
  * @returns {Promise<{ tags: Array<{name:string,type:string,all:boolean,match:string[]}>,
  *                     model:string, cached:boolean, ms:number,
- *                     analyzed:number, batches:number }>}
+ *                     analyzed:number, batches:number, promptFallback:boolean }>}
  */
 export async function classifyReleaseTags(titles, options = {}) {
-  const { tags, model, ms, analyzed, batches, cached } = await classifyBundle(titles, { ...options, kind: 'tags' })
-  return { tags, model, ms, analyzed, batches, cached }
+  const { tags, model, ms, analyzed, batches, cached, promptFallback } = await classifyBundle(titles, {
+    ...options,
+    kind: 'tags',
+  })
+  return { tags, model, ms, analyzed, batches, cached, promptFallback }
 }
 
 
@@ -267,6 +305,7 @@ export async function classifyEpisodes(animeTitle, titles, options = {}) {
     analyzed: bundle.analyzed,
     cached: bundle.cached,
     ms: bundle.ms,
+    promptFallback: bundle.promptFallback,
   }
 }
 

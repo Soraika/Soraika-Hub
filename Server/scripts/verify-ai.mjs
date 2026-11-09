@@ -147,6 +147,16 @@ try {
     '提示词可被 data/prompts.json 覆盖，按 mtime 热加载（改完不用重启）',
   )
   check(
+    /composePrompt\(/.test(aiPromptSource) && /CUSTOM_HEADER|【用户补充要求】/.test(aiPromptSource),
+    '系统段与用户补充段分开存，发给模型时按「系统在前、补充在后」拼起来',
+  )
+  check(
+    /defaultSystemOf\('bundle'\)/.test(aiPageSource) &&
+      /promptFallback: fallback/.test(aiPageSource) &&
+      /ai\.bundle fallback-default/.test(aiPageSource),
+    '模型跑偏（返回不是约定结构）时自动回退出厂默认，结果带 promptFallback，日志有 fallback-default',
+  )
+  check(
     /aiRouter\.get\('\/ai\/prompts'/.test(aiRoutSource) && /aiRouter\.put\('\/ai\/prompts'/.test(aiRoutSource),
     '提示词有读写接口（/api/ai/prompts）—— 后面设置页/画板直接改，不用动源码',
   )
@@ -248,6 +258,18 @@ try {
       )
 
       const before = prompts0.prompts.series.hash
+      /* 只写自定义段：系统段不动，实际发给模型的正文变长 */
+      const customPut = await call('PUT', '/api/ai/prompts', {
+        prompts: { series: { custom: `优先保留正传；验收临时补充 ${Date.now()}` } },
+      })
+      check(customPut.body?.data?.source === 'override', `自定义段可以单独保存 → source=${customPut.body?.data?.source}`)
+      const withCustom = (await call('GET', '/api/ai/prompts')).body?.data
+      check(
+        String(withCustom.prompts.series.custom || '').length > 0 &&
+          withCustom.prompts.series.effective.length > withCustom.prompts.series.system.length,
+        '自定义段拼在系统段后面（effective = system + 用户补充）',
+      )
+
       const put = await call('PUT', '/api/ai/prompts', {
         prompts: { series: { system: `${prompts0.prompts.series.system}\n（验收临时改动：${Date.now()}）` } },
       })

@@ -184,7 +184,7 @@ const DL_LIST = {
   unmatched: [{ name: '某个认不出的目录', count: 1, sizeText: '700 MB', stateText: '已完成' }],
 }
 
-/** 提示词接口（设置页只读卡片）：bundle 被改过，其余用默认 */
+/** 提示词接口（设置页用）：bundle 有系统段改动 + 自定义补充，其余用默认 */
 const PROMPT_TEXT = {
   bundle: '你是动漫资源文件名解析专家。只返回 JSON：{ "tags": [{ "display": "", "match": [] }], "episodes": {} }',
   series: '你在给一个动画系列做归档命名。输出 { "namingStyle": "", "rootTitle": "", "extras": [] }',
@@ -196,10 +196,19 @@ const PROMPTS = {
   keys: ['bundle', 'series', 'format', 'groupTags'],
   customized: ['bundle'],
   prompts: Object.fromEntries(
-    Object.entries(PROMPT_TEXT).map(([key, system]) => [
-      key,
-      { version: 'v10', hash: `hash-${key}`, system: key === 'bundle' ? `${system}\n（我改过：多一句说明）` : system },
-    ]),
+    Object.entries(PROMPT_TEXT).map(([key, system]) => {
+      const custom = key === 'bundle' ? '优先保留 1080P。' : ''
+      return [
+        key,
+        {
+          version: 'v10',
+          hash: `hash-${key}`,
+          system,
+          custom,
+          effective: custom ? `${system}\n\n【用户补充要求】\n${custom}` : system,
+        },
+      ]
+    }),
   ),
   defaults: { ...PROMPT_TEXT },
 }
@@ -256,6 +265,31 @@ async function mountPage(jsPath, url, waitMs) {
   globalThis.Node = win.Node
   globalThis.SVGElement = win.SVGElement
   globalThis.getComputedStyle = win.getComputedStyle.bind(win)
+  /*
+   * happy-dom 的类内部会直接引用浏览器全局（Document / ShadowRoot / HTMLTextAreaElement…），
+   * 在 Node 里它们只挂在 window 上。少一个就会在 v-model 更新输入框时抛 ReferenceError。
+   * 这里只补**确实会被 instanceof 用到的**那几个 —— 不要遍历 window 全量搬运：
+   * 那样会顺带触发一堆 lazy getter，反而把事件系统搞坏（实测点击/输入都不再触发）。
+   */
+  for (const key of [
+    'Document',
+    'DocumentFragment',
+    'ShadowRoot',
+    'Event',
+    'CustomEvent',
+    'MouseEvent',
+    'KeyboardEvent',
+    'HTMLInputElement',
+    'HTMLTextAreaElement',
+    'HTMLSelectElement',
+    'HTMLButtonElement',
+    'HTMLAnchorElement',
+    'Text',
+    'Comment',
+    'CSSStyleDeclaration',
+  ]) {
+    if (!(key in globalThis) && typeof win[key] === 'function') globalThis[key] = win[key]
+  }
   globalThis.requestAnimationFrame = (cb) => setTimeout(() => cb(Date.now()), 16)
   globalThis.cancelAnimationFrame = (id) => clearTimeout(id)
 
@@ -372,7 +406,7 @@ console.log('\n— 下载页：卡片墙')
   if (process.env.VERIFY_PANEL_DEBUG) console.log('  [debug] 页面文本 =', text.slice(0, 160))
 }
 
-console.log('\n— 设置页：提示词（只读查看）')
+console.log('\n— 设置页：提示词（系统段 + 用户补充）')
 {
   const js = await buildEntry('prompts')
   const { win, text, errors } = await mountPage(js, 'http://127.0.0.1:3100/', 400)
@@ -383,17 +417,31 @@ console.log('\n— 设置页：提示词（只读查看）')
     '四个页签都在',
   )
   check(text.includes('有改动（用着你的版本）'), '顶部胶囊显示「有改动」（source=override）')
-  check(!document.querySelector('textarea'), '只读：没有任何输入框')
-  check(Boolean(document.querySelector('.prompt-view')), '正文用只读块显示')
-  check(text.includes('复制这一段') && text.includes('恢复这一段默认'), '有「复制」与「恢复默认」两个动作')
-  check(text.includes('data/prompts.json'), '说明了去哪里改（JSON 文件 / PUT 接口）')
+  check(text.includes('系统提示词') && text.includes('用户补充'), '两段都有标题（系统提示词 / 用户补充）')
+  check(document.querySelectorAll('textarea').length === 2, '两段各一个输入框（都能改）')
+  check(
+    document.querySelector('textarea')?.value?.includes('"tags"'),
+    '系统段输入框里是带 JSON 结构的那段（真正的契约）',
+  )
+  check(text.includes('保存提示词'), '有保存按钮（没有改动时文案是「保存提示词」）')
+  check(text.includes('恢复这一段默认') && text.includes('全部恢复默认'), '有恢复默认的入口')
 
-  /* 切页签：显示的是那一段的内容 */
+  /* 改补充段 → 该页签出现未保存标记、按钮变成「保存 1 段」 */
+  const customBox = document.querySelectorAll('textarea')[1]
+  customBox.value = '优先保留 2160P。'
+  customBox.dispatchEvent(new win.Event('input', { bubbles: true }))
+  await new Promise((r) => setTimeout(r, 120))
+  const afterEdit = (document.body.textContent || '').replace(/\s+/g, ' ')
+  check(afterEdit.includes('保存 1 段'), '改过之后保存按钮显示「保存 1 段」')
+  check(Boolean(document.querySelector('.tab-dot')), '改过的页签带未保存圆点')
+  check(!realErrors(errors).length, '编辑没有渲染期异常', realErrors(errors)[0] || 'ok')
+
+  /* 切页签：输入框里换成那一段的内容（textarea 的 value 不进 textContent） */
   const seriesTab = [...document.querySelectorAll('.prompt-tab')].find((b) => b.textContent.includes('系列归一'))
   seriesTab?.dispatchEvent(new win.Event('click', { bubbles: true }))
   await new Promise((r) => setTimeout(r, 120))
-  const after = (document.body.textContent || '').replace(/\s+/g, ' ')
-  check(after.includes('namingStyle'), '点「系列归一」后显示对应那段提示词')
+  const systemValue = String(document.querySelectorAll('textarea')[0]?.value || '')
+  check(systemValue.includes('namingStyle'), '点「系列归一」后输入框换成对应那段提示词')
   check(!realErrors(errors).length, '切页签没有渲染期异常', realErrors(errors)[0] || 'ok')
 }
 

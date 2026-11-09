@@ -55,8 +55,8 @@
 - 配置支持整份导出/导入（画板内容可以整个塞进 `ai.bindings`）
 
 落地顺序建议：
-1. ~~设置页先加一段「提示词」编辑区~~ → **已改成只读查看 + 恢复默认**（`PromptEditor.vue`）。
-   编辑框故意不做：提示词等于输出契约，网页里改坏很难查；要改就改 `data/prompts.json` 或 PUT 接口
+1. ~~设置页先加一段「提示词」编辑区~~ → **已做**（`PromptEditor.vue`：系统段 + 用户补充两栏，可编辑、有保存；
+   系统段保存时后端校验输出结构，模型跑偏会自动回退默认，见 ARCHITECTURE 决策 45）
 2. 配置层：`ai.bindings = { [事件]: { baseUrl, apiKey?, model, maxTokens?, prompt? } }`（缺省回落 `ai.*`）
 3. 调用层：`chatJson` 取 provider 时先查 `bindings[事件]`，没有再用全局
 4. UI：二级页面画布（节点 = 事件/供应商，连线 = 绑定）；先做「列表 + 下拉」的过渡版。
