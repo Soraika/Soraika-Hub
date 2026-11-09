@@ -11,7 +11,7 @@
 ## 0. 一句话
 
 现在一张 `anime` 同时装着**三件不同寿命的东西**：谁是谁（身份映射）、番剧资料（BGM 档案）、这季放什么（Mikan 排期）。
-后两件都能重建，**只有映射丢了才麻烦** —— 所以拆成三张表，映射单独存。
+后两件都能重建，**只有映射丢了才麻烦** —— 所以拆成三张表（+ 一张扫描水位），映射单独存。
 
 ---
 
@@ -91,8 +91,9 @@ SQLite 是**先分配 rowid、再发现冲突转 UPDATE**：号被烧掉、行�
 
 ```
 mikan_bgm_map  ── 身份（唯一不可重建 / 可单独备份）
+mikan_scan     ── 扫描水位（单行；掉了只是多扫一次）
 bgm_subject    ── BGM 档案缓存（可整表删掉重灌，4 秒）
-anime          ── Mikan 排期 + 展示 + 系列（可整表重建，代价是要重扫 Mikan）
+anime          ── Mikan 排期 + 展示 + 系列（可整表重建，代价是扫一遍尾部）
 ```
 
 ### 3.1 `mikan_bgm_map`（身份：`mikanId ↔ bgmId`）
@@ -102,7 +103,7 @@ CREATE TABLE IF NOT EXISTS mikan_bgm_map (
   mikan_id    TEXT PRIMARY KEY,     -- Mikan 番剧 id（权威来源：Mikan 详情页）
   bgm_id      TEXT,                 -- 对不上就是 NULL（老番常常真没挂链接）
   title_mikan TEXT,                 -- 扫描时 Mikan 的标题：给"还没排进库"的行留个名字
-  checked_at  INTEGER,              -- 上次**尝试确认映射**的时间（只做慢速重试，见 §3.5）
+  checked_at  INTEGER,              -- 上次**尝试确认映射**的时间（只做慢速重试，见 §3.2）
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
 );
@@ -114,7 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_map_pending ON mikan_bgm_map(checked_at) WHERE bg
 - **没有 `misses` 计数**（原 `bgm_miss_count` 删掉）：一个 mikanId 有没有 bgm 链接是**事实**，
   不是"失败了几次"；用计数去猜"要不要再试"本身就是补丁。改成下面这套扫描策略。
 
-### 3.5 映射的维护方式（放弃全量扫描）
+### 3.2 映射的维护方式（放弃全量扫描）
 
 Mikan 的动画 id 是**递增**的，新番只会在尾部出现；老 id 大量是 404（页面本来就不存在）。
 所以不需要"遍历 183~4124 再逐条放弃"：
@@ -137,7 +138,7 @@ CREATE TABLE IF NOT EXISTS mikan_scan (
 
 好处：**日常只有"往后几十个 id"的请求量**，而不是 5400 个；也不会因为一堆死 id 天天重试。
 
-### 3.2 `bgm_subject`（BGM 档案缓存）
+### 3.3 `bgm_subject`（BGM 档案缓存）
 
 ```sql
 CREATE TABLE IF NOT EXISTS bgm_subject (
@@ -149,7 +150,7 @@ CREATE TABLE IF NOT EXISTS bgm_subject (
   rating_total      INTEGER,
   tags              TEXT,             -- JSON 数组，最多 8 个（meta_tags 优先，与 bgmToRow 同口径）
   watching          INTEGER,
-  platform          INTEGER,          -- 平台码：1=TV 2=OVA 3=剧场版 5=Web（见 §3.6）
+  platform          INTEGER,          -- 平台码：1=TV 2=OVA 3=剧场版 5=Web（见 §3.4）
   first_air_date    TEXT,             -- 原名 air_date：首播/上映日期 YYYY-MM-DD
   total_episodes    INTEGER,
   synced_at         INTEGER,          -- 档案上次写入时间（**只表示档案**，不再兼职映射退避）
@@ -161,7 +162,7 @@ CREATE INDEX IF NOT EXISTS idx_bgm_score ON bgm_subject(score);
 > 这里保留一个 `source`，但**语义完全不同**：原来记"这行最近一次谁写的"（没人读），
 > 现在记"这条档案是 API 拿的还是 dump 灌的" —— 半在线模式下要能看出 dump 覆盖了哪些。
 
-### 3.6 `platform` 替换 `series_all_movies`（实测证据）
+### 3.4 `platform` 替换 `series_all_movies`（实测证据）
 
 dump 里 `type=2`（动画）的 `platform` 分布（2026-11-03 全量扫）：
 
@@ -183,7 +184,7 @@ const allMovies = members.length > 0 && members.every((m) => m.platform === 3)
 
 兜底顺序（全在线模式下 API 可能不给 platform）：`platform=3 全体` → 没有正传且关系全是番外 → 才可选地问 AI。
 
-### 3.3 `anime`（排期 + 展示 + 系列）
+### 3.5 `anime`（排期 + 展示 + 系列）
 
 ```sql
 CREATE TABLE IF NOT EXISTS anime (
@@ -223,7 +224,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_anime_series_pos
 `air_date`、`total_episodes`、`source`、`created_at`、`bgm_miss_count`、`bgm_checked_at`、
 **`series_all_movies`**、`series_checked_at` —— 要么属于档案表，要么是死列，要么被确定性判据/按需补齐取代。
 
-### 3.4 谁写什么（v2）
+### 3.6 谁写什么（v2）
 
 | 数据 | 写入方 | 目标表 | 备注 |
 |---|---|---|---|
@@ -306,7 +307,7 @@ titleOriginal = title_bgm_origin 与 displayTitle 不同时才有值   -- 详情
 | `src/api/pages/anime.js`（详情）/ `downloads.js` | 读 `anime` | 加 join（§4-②③） |
 | `src/jobs/enrich.js` | 一条流程写两种表 | `applySubject()` 写 `bgm_subject`；映射写 `mikan_bgm_map` |
 | `src/jobs/import-archive.js` | 写 `anime` 九列 | 写 `bgm_subject`（同一套 `archivePatch`，目标表换掉） |
-| `src/jobs/sweep-mikan.js` | INSERT `anime`（全量 183~4124） | 改名 `scan-mikan.js`：**尾部扫描 + 连续 200 个 404 即停 + 水位**（§3.5），只写 `mikan_bgm_map` |
+| `src/jobs/sweep-mikan.js` | INSERT `anime`（全量 183~4124） | 改名 `scan-mikan.js`：**尾部扫描 + 连续 200 个 404 即停 + 水位**（§3.2），只写 `mikan_bgm_map` |
 | `src/jobs/series.js` | 一条流程：走链 + AI 起名 + 落库 | 拆两半：`runSeriesChain()`（确定性，写 `series_chain_at`）/ `nameSeries()`（AI，点开时调，写 `series_named_at`）；`allMovies` 改用 `platform === 3` |
 | `src/api/pages/anime.js`（详情） | 返回系列列表 | 返回时若 `series_named_at IS NULL` → 起名请求走单独的轻接口（不阻塞详情） |
 | `src/lib/series.js` | `parseSeriesAnswer` 里读 `allMovies` | 增 `isAllMovies(members)`（platform 判据），AI 只负责 `rootTitle` / `namingStyle` |
@@ -349,7 +350,7 @@ SELECT bgm_id, title_cn, NULL, summary, score, rating_total,
        tags, watching, NULL, air_date, total_episodes, bgm_checked_at, 'api'
   FROM anime WHERE bgm_id IS NOT NULL GROUP BY bgm_id;
 
--- ③ 排期表瘦身：只留 §3.3 的列
+-- ③ 排期表瘦身：只留 §3.5 的列
 --    title → title_mikan；series_checked_at →（有 root_title 的算 chain_at，其余置 NULL 重算）
 --    series_all_movies 直接丢弃：下次走链用 platform 判
 
