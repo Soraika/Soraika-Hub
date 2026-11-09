@@ -183,6 +183,33 @@ function backfillMikanMap() {
 
 backfillMikanMap()
 
+/**
+ * 一次性回填「BGM 档案」`bgm_subject`（幂等）
+ * ---------------------------------------------------------------------------
+ * 老库里档案字段在 `anime` 上；拆表后先补一份，之后 `npm run dump` 直接覆盖它。
+ * `INSERT OR IGNORE`：已经有了就别动（避免把 dump 灌进去的新值又用旧值盖回来）。
+ */
+function backfillSubjects() {
+  const hasAnime = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'anime'").get()
+  if (!hasAnime) return
+  const cols = new Set(db.prepare('PRAGMA table_info(anime)').all().map((col) => col.name))
+  if (!cols.has('score') || !cols.has('title_cn')) return
+  const res = db
+    .prepare(
+      `INSERT OR IGNORE INTO bgm_subject
+         (bgm_id, title_bgm, title_bgm_origin, summary, score, rating_total, tags, watching,
+          first_air_date, total_episodes, synced_at, source)
+       SELECT bgm_id, MAX(title_cn), MAX(title), MAX(summary), MAX(score), MAX(rating_total),
+              MAX(tags), MAX(watching), MAX(air_date), MAX(total_episodes), MAX(bgm_checked_at), 'api'
+         FROM anime WHERE bgm_id IS NOT NULL
+        GROUP BY bgm_id`,
+    )
+    .run()
+  if (res.changes) logger.info({ rows: res.changes }, 'db.migrate backfill bgm_subject')
+}
+
+backfillSubjects()
+
 ensureSeriesPositionUnique()
 
 export const dbFile = dbPath

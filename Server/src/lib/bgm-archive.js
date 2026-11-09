@@ -170,5 +170,8 @@ export function archivePatch(subject, { episodes = null } = {}) {
     summary: subject?.summary || null,
     air_date: subject?.date || null,
     total_episodes: Number.isFinite(total) && total > 0 ? total : null,
+    // 下面两个是给 `bgm_subject` 用的（anime 没有这两列，多出来的键会被忽略）
+    title_bgm_origin: subject?.name || null,
+    platform: Number(subject?.platform) || null,
   }
 }

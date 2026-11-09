@@ -23,6 +23,7 @@ import { createReadStream } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { applyArchiveBatch, listBgmTargets, stats } from '../db/anime.js'
+import { upsertSubjects } from '../db/subject.js'
 import { DUMP_FILES, archivePatch, leadingId, readJsonLinesFrom } from '../lib/bgm-archive.js'
 import { logger } from '../lib/logger.js'
 import { listZipEntries, openZipEntry } from '../lib/unzip.js'
@@ -137,11 +138,18 @@ export async function runArchiveImport({
   /* ② 档案字段：先按行首 id 筛，命中的才 JSON.parse（60 万行里只有几千行要解析） */
   const result = { ...emptyResult(before), dir }
   let batch = []
+  /** 同一批也写进 `bgm_subject`（档案表）：anime 留给排期/展示，档案可整表重灌 */
+  let subjectBatch = []
   const flush = () => {
     if (!batch.length) return
-    if (!dryRun) applyArchiveBatch(batch, { checkedAt: markChecked ? Date.now() : null })
+    if (!dryRun) {
+      applyArchiveBatch(batch, { checkedAt: markChecked ? Date.now() : null })
+      upsertSubjects(subjectBatch)
+    }
     result.patched += batch.length
+    result.subjects = (result.subjects || 0) + subjectBatch.length
     batch = []
+    subjectBatch = []
   }
 
   const subStats = await readJsonLinesFrom(
@@ -169,7 +177,22 @@ export async function runArchiveImport({
         return
       }
       if (!subject) subject = JSON.parse(line)
-      batch.push({ id: target.id, ...archivePatch(subject, { episodes: episodeCounts.get(id) ?? null }) })
+      const patch = archivePatch(subject, { episodes: episodeCounts.get(id) ?? null })
+      batch.push({ id: target.id, ...patch })
+      subjectBatch.push({
+        bgm_id: target.bgm_id,
+        title_bgm: patch.title_cn,
+        title_bgm_origin: patch.title_bgm_origin,
+        summary: patch.summary,
+        score: patch.score,
+        rating_total: patch.rating_total,
+        tags: patch.tags,
+        watching: patch.watching,
+        platform: patch.platform,
+        first_air_date: patch.air_date,
+        total_episodes: patch.total_episodes,
+        source: 'dump',
+      })
       if (batch.length >= BATCH_SIZE) flush()
     },
     { raw: true },

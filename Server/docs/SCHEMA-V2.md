@@ -1,10 +1,9 @@
 # Schema v2 设计稿 —— 身份 / 档案 / 排期拆开
 
-> 状态：**v2.4 · 第一步（身份表 `mikan_bgm_map`）已实现**；`bgm_subject` / anime 瘦身仍是设计稿。
-> v2.4（2026-11-10）：身份映射拆表落地 —— 排期落库顺手登记、补齐队列改在映射表上跑
-> （不再记 misses，`checked_at` 30 天退避）、`npm run sweep` 只写映射表。
-> 实测回填：3257 条 = distinct mikan_id（3241 有 bgm / 16 条冷却中）。
-> v2.3：dump 自动更新（unzip / 镜像竞速 / 断点续传 / 设置页）。
+> 状态：**v2.5 · 身份表已落地；档案表 `bgm_subject` 已建 + 回填 + 双写**；读取仍走 anime（下一步切 JOIN）。
+> v2.5（2026-11-10）：`bgm_subject`（评分/标签/简介/放送日/集数/平台/原名）建表、启动回填
+> （3747 条）、dump 导入与 API 补齐都写它（影子期：anime 仍是读源）。
+> v2.4：身份表 `mikan_bgm_map` 落地。
 > v2.3（2026-11-09）：自动更新落地 —— `lib/unzip.js`（零依赖 zip）+ `api/sources/bgm-dump.js`
 > （索引多源 / 镜像竞速 / Range 续传 / sha256）+ `jobs/dump-update.js` + 设置页「离线数据」分组。
 > 实测：缓存 zip 导入 3742 条 5.1 秒、整趟 6.4 秒；二次 `--check` 直接 up-to-date。

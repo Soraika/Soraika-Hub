@@ -21,6 +21,7 @@ import { fetchAnimeProfile } from '../api/sources/mikan.js'
 import { config } from '../config.js'
 import { applyBgmMeta, findByMikanId, isMovieOnlySeries, rememberSubgroups, stats } from '../db/anime.js'
 import { markMapChecked } from '../db/map.js'
+import { upsertSubject } from '../db/subject.js'
 import { renumberMovieSeries } from './series.js'
 import {
   claimNextArchive,
@@ -137,6 +138,26 @@ async function applySubject(bgmId, row, log, startedAt) {
       season: row.season,
     }),
   )
+  /*
+   * 档案也写进 `bgm_subject`（下一步读取改 JOIN；这之前它是"影子表"，保持一致即可）。
+   * 字段口径与 dump 导入完全一致：meta_tags 优先、最多 8 个标签、title_bgm 优先中文名。
+   */
+  upsertSubject({
+    bgm_id: bgmId,
+    title_bgm: subject?.name_cn || subject?.name || null,
+    title_bgm_origin: subject?.name || null,
+    summary: subject?.summary || null,
+    score: Number(subject?.rating?.score) || null,
+    rating_total: Number(subject?.rating?.total) || null,
+    tags: (subject?.meta_tags?.length ? subject.meta_tags : (subject?.tags || []).map((tag) => tag?.name))
+      .filter(Boolean)
+      .slice(0, 8),
+    watching: Number(subject?.collection?.doing) || null,
+    platform: Number(subject?.platform) || null,
+    first_air_date: subject?.date || null,
+    total_episodes: Number(subject?.total_episodes ?? subject?.eps) || null,
+    source: 'api',
+  })
   // ①a 来的行是映射表的（没有 anime 主键）—— 档案写完就按 mikan_id 找回 anime 行；
   // ①b 来的行本身就有 id。两条路都需要把 `bgm_checked_at` 刷新，避免马上又被刷一次。
   const animeId = row.id ?? findByMikanId(row.mikan_id)?.id ?? null

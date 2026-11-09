@@ -103,6 +103,7 @@ const subjectLines = [
     score: 8.4,
     score_details: { 1: 0, 6: 3, 7: 4, 8: 5, 9: 6, 10: 7 },
     favorite: { wish: 1, done: 2, doing: 33, on_hold: 0, dropped: 0 },
+    platform: 1,
     date: '2015-10-04',
   },
   {
@@ -203,6 +204,16 @@ check(a.tags === '["机战","TV"]', '标签落库（JSON 数组）', a.tags)
 check(a.watching === 33 && a.summary === '简介甲' && a.air_date === '2015-10-04', '在看 / 简介 / 放送日')
 check(a.total_episodes === 3, '总集数只数正篇（特别篇不算）', String(a.total_episodes))
 check(Boolean(a.bgm_checked_at), 'bgm_checked_at 被刷新（不再被档案队列打上游）', String(a.bgm_checked_at))
+
+/* 同一批也写进 bgm_subject（档案表）—— 以后读取改 JOIN、整个档案表可重灌 */
+const subjectOf = (bgmId) => db.prepare('SELECT * FROM bgm_subject WHERE bgm_id = ?').get(bgmId)
+const sub1 = subjectOf('1')
+check(
+  sub1?.score === 8.4 && sub1?.total_episodes === 3 && sub1?.platform === 1,
+  'dump 同时落进 bgm_subject（评分/集数/平台码）',
+  `${sub1?.score} / ${sub1?.total_episodes} / ${sub1?.platform}`,
+)
+check(sub1?.title_bgm_origin === 'Test Anime' && sub1?.source === 'dump', '档案表带原名与来源（dump）', `${sub1?.title_bgm_origin} / ${sub1?.source}`)
 
 const b = rowOf('2')
 check(b.score === 9.9 && b.tags === JSON.stringify(['旧标签']), '--only-missing 不动已有值', `${b.score} / ${b.tags}`)

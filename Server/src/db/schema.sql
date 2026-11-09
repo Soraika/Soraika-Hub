@@ -138,6 +138,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_map_bgm ON mikan_bgm_map(bgm_id) WHERE bgm
 CREATE INDEX IF NOT EXISTS idx_map_pending ON mikan_bgm_map(checked_at) WHERE bgm_id IS NULL;
 
 -- ============================================================================
+-- Bangumi 档案缓存（称号/评分/标签/简介/放送日/集数/平台）
+-- ----------------------------------------------------------------------------
+-- 为什么单独一张表：这些字段**每周都会被 dump 整份覆盖**（`npm run dump`），
+-- 而 `anime` 是"排期 + 展示"的产物（重建一次要重扫 Mikan）。拆开之后：
+--   · 档案可以整表清空重灌（4 秒），不碰排期
+--   · 重建 anime 不丢档案（下一步读取改 JOIN 之后）
+-- `total_episodes` 由导入侧保证**只增不减**（周更快照可能落后于上游登记）。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS bgm_subject (
+  bgm_id            TEXT PRIMARY KEY,
+  title_bgm         TEXT,            -- name_cn（缺就填原名）
+  title_bgm_origin  TEXT,            -- name（日文/罗马字，详情页「原名」用）
+  summary           TEXT,
+  score             REAL,
+  rating_total      INTEGER,
+  tags              TEXT,            -- JSON 数组（meta_tags 优先，最多 8 个）
+  watching          INTEGER,
+  platform          INTEGER,         -- 1=TV 2=OVA 3=剧场版 5=Web（dump 的 platform 码）
+  first_air_date    TEXT,            -- YYYY-MM-DD
+  total_episodes    INTEGER,
+  synced_at         INTEGER,         -- 档案上次写入时间（**只表示档案**）
+  source            TEXT             -- 'api' / 'dump'
+);
+CREATE INDEX IF NOT EXISTS idx_subject_score ON bgm_subject(score);
+
+-- ============================================================================
 -- 以下表结构已按架构图设计好，但本次还没做到，做到对应功能时再启用。
 -- ----------------------------------------------------------------------------
 -- 下载任务表（记录的是「后端操作的整个生命周期」，不是任务本身的生命周期）
