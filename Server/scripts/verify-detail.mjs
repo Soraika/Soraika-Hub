@@ -177,10 +177,12 @@ try {
   )
 
   /* 整条系列都是剧场版（哆啦A梦剧场版 33 部）→ 番外也按年排进季位，命名风格强制 volume，
-     否则一半 S01.. 一半「番外」，看着就是坏的。判据由 AI 给（allMovies）。 */
+     否则一半 S01.. 一半「番外」，看着就是坏的。判据由 AI 给（allMovies）。
+     提示词已经是数据（决策 44/45）：字段名写在 `api/ai/prompts.json` 里，不在 ai.js 里了 ——
+     断言跟着数据走，否则每次调提示词都会「红一条」，久了就没人看红条了。 */
   check(
     /allMovies/.test(readFileSync(new URL('../src/lib/series.js', import.meta.url), 'utf8')) &&
-      /allMovies/.test(readFileSync(new URL('../src/api/pages/ai.js', import.meta.url), 'utf8')) &&
+      /allMovies/.test(readFileSync(new URL('../src/api/ai/prompts.json', import.meta.url), 'utf8')) &&
       /movieOnly/.test(seriesJobSource),
     '全剧场版系列：AI 判 allMovies → 番外按年占季位 + 命名风格 volume',
   )

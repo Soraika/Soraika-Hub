@@ -66,7 +66,7 @@
 |---|---|---|
 | 身份 | `id`(PK) / `mikan_id` / `bgm_id` / `title` / `title_cn` | 扫描 / 排期 / 补齐 |
 | 海报 | `poster_src`（图源 URL）/ `poster_path`（本地缓存文件名） | 出图接口 / 后台预热 |
-| 档案 | `score` `rating_total` `tags` `watching` `summary` `total_episodes` `air_date` | BGM |
+| 档案 | `score` `rating_total` `tags` `watching` `summary` `total_episodes` `air_date` | BGM（API 或**离线 dump**，见 §3） |
 | 排期 | `year` `season` `weekday` | **只有 Mikan 排期页写**（§10.3） |
 | 补齐簿记 | `bgm_checked_at`（上次刷档案）/ `bgm_miss_count` | worker |
 | 系列 | `series_id` `series_index` `series_relation` `naming_style` `series_root_title` `series_checked_at` | `jobs/series.js` |
@@ -100,6 +100,7 @@
 | | 资源列表 | `/RSS/Bangumi?bangumiId=&subgroupid=` | **带 subgroupid 只给最近 100 条**；不带才是完整历史 |
 | **BGM 镜像** | 评分/人数/标签/简介/集数/放送日 | `/v0/subjects/{id}` | 需要 UA（配 token 可提高额度） |
 | | 1 跳关系（系列链） | `/v0/subjects/{id}/subjects` | 关系是「相对当前条目」的；剧场版也可能挂在「续集」边上 |
+| **BGM 离线 dump** | **批量**刷新以上档案（本地 1.3GB jsonlines，一条请求都不发） | `github.com/bangumi/Archive` releases（`aux/latest.json` 给最新地址，每周三 05:00 GMT+8） | 只有 wiki 原文，**没有封面**；`total_episodes` 要自己数 `type=0` 的章节 |
 | **AI**（可选） | 资源标签 / 集数 / 系列归一 / 格式特征 / **组标记→组名映射** | OpenAI 兼容 `/chat/completions` | 没配 key = **未配置**（501），不是失败；逐条归类不做 AI（改用组标记确定性匹配） |
 
 **统一入口**：`lib/http-client.js`（超时 + 指数退避重试 + 4xx 不重试）。
@@ -131,7 +132,7 @@ Mikan 额外一层 **解析级重试**：200 但连标题都解析不出来 = �
 - **自愈**：`runLoop` 兜住任何异常（记 `lastError` + 清残留认领 + 退避重进）——
   一次上游 404 曾把整个守护进程打死
 
-**一次性任务（CLI）**：`npm run sweep`（Mikan→BGM 全量扫描）/ `enrich` / `backfill` / `series`
+**一次性任务（CLI）**：`npm run sweep`（Mikan→BGM 全量扫描）/ `enrich` / `backfill` / `series` / `archive`（离线 dump，见决策 46）
 
 ---
 
@@ -229,6 +230,7 @@ Mikan 额外一层 **解析级重试**：200 但连标题都解析不出来 = �
 | 43 | **AI 解析速度 = 别重复问 + 批别太大** | 两个实测出来的坑：① 面板同时发 `tags` + `episodes`，算的是同一个 bundle，原来都 miss → **并发打两次模型**（日志里成对出现 5466ms + 5546ms）；② 单批 120 条要模型吐 120 条集数 + 几十个标签，**一次 18.7 秒**，而 `ai.concurrency=3` 根本没机会用上。修法：同一个 key 的在途请求**合流**（一个去问、其它搭车，返回 `cached:true`）；单批改成 **40 条**，120 条 = 3 批并发 → **7.0 秒**（实测）。两个数字都在 `verify-ai` 里钉住 |
 | 44 | **提示词是数据，不是代码** | 调一句 prompt 就要改源码 + 重启，还得手动对齐版本号 —— 每次都败在"忘了升版本 → 命中旧缓存 → 以为没生效"。现在四段提示词都在 `api/ai/prompts.json`（出厂默认，进 git 可 review），**`data/prompts.json` 覆盖 + 按 mtime 热加载**（改完立即生效、不用重启），并且有 `GET/PUT /api/ai/prompts`。缓存 key 用**提示词内容 hash**：改了就自然 miss，不再依赖谁记得升版本（版本号退化成元信息）。空提示词一律 400 |
 | 45 | **提示词拆两段：系统契约（我们的）+ 用户补充（你的），跑偏就回退默认** | 模型能不能用取决于提示词里有没有把 JSON 结构写清楚；用户调措辞时最容易顺手删掉结构说明，结果模型返回散文，现象是「资源区标签突然全没了」，很难联想到提示词。所以：① 每段提示词分 `system`（输出结构、字段名、禁止事项）与 `custom`（偏好、措辞）两块，发送时 system 在前、custom 在后（`composePrompt`）；② 保存时校验 `system` 必须保留关键字段名（bundle 要 `"tags"`/`"display"`/`"match"`/`"episodes"`，series 要 `namingStyle`/`rootTitle`/`extras`，format 要 `prefix`/`literals`，groupTags 要 `{{NAMES}}`），缺了就 400 并指出缺什么，`custom` 随便写（限 4000 字）；③ **模型跑偏时自动回退**：JSON 解析失败或 tags 与 episodes 同时为空 → 用出厂默认的 system 段（不带 custom）重跑该批，结果带 `promptFallback: true`，日志 `ai.bundle fallback-default`。回退只影响这一次请求，不改任何配置；④ **界面只编辑 custom**：系统段在设置页不展示（普通用户不该动契约），只显示「系统段 N 字（程序维护）」+ 指路 JSON 文件；保存只提交 custom，不会覆盖别人手改的系统段 |
+| 46 | **老番档案用 BGM 离线 dump 批量刷，不走逐条 API** | 档案补齐是「一条一次请求」，3762 部老番要跑几十分钟还会被限流（镜像 20 次/秒就 429）。`github.com/bangumi/Archive` 每周三导一次全站，`subject.jsonlines` + `episode.jsonlines` 一共 1.3GB —— 本地流式扫一遍，**3742 条 4.3 秒**就落完，一条请求都不发（实测 `needArchive 222 → 191`、`withScore 3711 → 3745`）。四条约束：① **只补库里已有 `bgm_id` 的行**（dump 是全站含漫画/游戏/三次元，主表入口仍然只有 Mikan 排期）；② **不写 `year`/`season`/`weekday`**（排期归属只有 Mikan 能写），**不写 `poster_src`**（dump 里没有封面）；③ **总集数只增不减**（周更快照会比上游登记慢，直接覆盖会把「共 12 集」改成「共 8 集」，下载页的「已下载 8 / 共 12」就假了）；④ 落库顺手写 `bgm_checked_at`，档案队列不再为这些行打上游（当年番的每日更新不受影响，仍走 API 拿当天数据）。字段口径与 `bgmToRow` 完全一致（`meta_tags` 优先、标签最多 8 个、`rating_total` = 各档人数之和） |
 
 ---
 
@@ -262,6 +264,7 @@ Mikan 额外一层 **解析级重试**：200 但连标题都解析不出来 = �
 | `verify-detail.mjs` | 详情 + 系列（含名字判定）+ 字幕组 + 资源 + 表结构不变式 |
 | `verify-ai.mjs` | 工具清单、入参校验、未配置降级、**全量分批**、缓存命中 |
 | `verify-settings.mjs` | 字段清单、校验、密钥打码、导出导入、连通测试、重置 |
+| `verify-archive.mjs` | 离线 dump 的字段映射（meta_tags 优先级 / 人数求和 / 只数正篇 / 空值不覆盖）、只补已有 bgm_id、`--only-missing`、`bgm_checked_at` |
 | `verify-worker.mjs` | 队列谓词与计数一致、认领 CAS、系列队列不丢任务 |
 | `Web/scripts/verify-e2e.mjs` | 真数据渲染 + 面板三态 + 骨架屏 + 排序/分页 + 各组件结构断言 |
 
@@ -275,6 +278,9 @@ Mikan 额外一层 **解析级重试**：200 但连标题都解析不出来 = �
 **P0 · 数据完整性**
 - [x] Mikan↔BGM 映射全量（3233 / 3237）
 - [x] 档案补齐（评分/标签/简介）—— `needArchive 2769 → 860`（后台在跑）
+- [x] **用 BGM 离线 dump 一次刷完**（决策 46）：`needArchive 222 → 191`、
+      `withScore 3711 → 3745`，3742 条在 **4.3 秒**内落库，一条上游请求都没发；
+      剩下的 191 条上游**确实没写简介**（不是漏抓）
 - [x] **老番字幕组补齐**：①b 加 `worker.fetchSubgroups`（默认开）→ 顺带抓一次 Mikan 详情页
       把字幕组记进名字字典（实测字典 37 → 62 条）
 

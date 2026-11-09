@@ -1,0 +1,157 @@
+/**
+ * Bangumi 离线 dump（github.com/bangumi/Archive）→ anime 档案字段
+ * ---------------------------------------------------------------------------
+ * 为什么不继续逐条打 API：档案补齐是「一条一次请求」，几千条老番要跑几十分钟，
+ * 还会被上游限流。这份 dump 每周三 05:00(GMT+8) 导一次全站，本地流式过一遍就能把
+ * 评分 / 评分人数 / 标签 / 简介 / 放送日 / 总集数补齐 —— **一条上游请求都不用发**。
+ *
+ * 数据形状（2026-11-03 的 dump 实测，jsonlines 一行一个 JSON）：
+ *
+ *   subject.jsonlines
+ *     {"id":1,"type":1,"name":"…","name_cn":"…","infobox":"…","platform":1002,
+ *      "summary":"…","nsfw":false,
+ *      "tags":[{"name":"痞子蔡","count":24},…],     ← 对象数组，取 name
+ *      "meta_tags":["ACT","NDS"],                   ← 纯字符串数组，优先用它
+ *      "score":7.7,"score_details":{"1":1,…,"10":6},"rank":1937,
+ *      "date":"1998-09-25",
+ *      "favorite":{"wish":58,"done":129,"doing":7,"on_hold":8,"dropped":2}}  ← doing = 在看
+ *
+ *   episode.jsonlines
+ *     {"id":3,"name":"…","name_cn":"","description":"","airdate":"","disc":0,
+ *      "duration":"","subject_id":15,"sort":1,"type":0}   ← type 0 = 正篇（1 特别篇 / 2 OP / 3 ED…）
+ *
+ * 三个刻意的取舍：
+ *   · **不写 year / season / weekday** —— 排期归属永远只有 Mikan 写（ARCHITECTURE §10.3）。
+ *     dump 里的 date 只落到 `air_date`。
+ *   · **不写 poster** —— dump 里没有封面（只有 infobox 的原文），封面继续走出图接口。
+ *   · **不看 subject.type** —— 与现有 API 路径（按 bgmId 取条目）保持一致：
+ *     Mikan 挂的是哪个条目就用哪个条目，不在这里二次判定类型。
+ */
+import { createReadStream } from 'node:fs'
+
+/** dump 里我们用得到的两个文件（其余 person / character 等与本项目无关） */
+export const DUMP_FILES = Object.freeze({
+  subject: 'subject.jsonlines',
+  episode: 'episode.jsonlines',
+})
+
+/** 标签最多留几个 —— 与 `lib/format.js#bgmToRow` 保持一致，别一边 8 个一边全量 */
+export const TAG_LIMIT = 8
+
+/**
+ * 流式读 jsonlines
+ * ---------------------------------------------------------------------------
+ * 为什么不用 `node:readline`：subject.jsonlines 有 950MB / 60 万行，readline 的逐行
+ * 事件开销明显；自己按 '\n' 切块（带跨块残行）能快一倍以上，且内存恒定
+ * —— 只留一块（默认 4MB）+ 半行。
+ *
+ * `raw: true` 时不解析 JSON，直接把原始行交给回调：调用方可以用
+ * `leadingId()` / 一段正则先筛掉 99% 不关心的行，只对命中的那几百行做 JSON.parse。
+ *
+ * 回调是**同步**的（这里是文件解析，不是 IO 编排）—— 要写库就在回调里同步写，
+ * 批量攒够再开事务。返回 `{ lines, bad, bytes }`，`bad` 是解析失败的行数（dump 偶有截断行）。
+ *
+ * @param {string} file
+ * @param {(row: any) => void} onRow `raw: true` 时收到字符串，否则收到解析后的对象
+ * @param {{ raw?: boolean, chunkBytes?: number }} [options]
+ * @returns {Promise<{ lines: number, bad: number, bytes: number }>}
+ */
+export async function readJsonLines(file, onRow, { raw = false, chunkBytes = 1 << 22 } = {}) {
+  const stats = { lines: 0, bad: 0, bytes: 0 }
+  let rest = ''
+
+  const emit = (line) => {
+    stats.lines++
+    if (raw) return onRow(line)
+    let row
+    try {
+      row = JSON.parse(line)
+    } catch {
+      stats.bad++
+      return
+    }
+    onRow(row)
+  }
+
+  const stream = createReadStream(file, { encoding: 'utf8', highWaterMark: chunkBytes })
+  for await (const chunk of stream) {
+    stats.bytes += chunk.length
+    const text = rest + chunk
+    let start = 0
+    let at = text.indexOf('\n')
+    while (at !== -1) {
+      const line = text.slice(start, at)
+      start = at + 1
+      if (line.trim()) emit(line)
+      at = text.indexOf('\n', start)
+    }
+    rest = start ? text.slice(start) : text
+  }
+  if (rest.trim()) emit(rest)
+  return stats
+}
+
+/**
+ * 行首的条目 id —— `{"id":123,`
+ * ---------------------------------------------------------------------------
+ * 只为一件事：subject.jsonlines 有 950MB，而库里通常只有几千个 bgm_id，
+ * 先按行首 id 筛一遍，JSON.parse 就只跑几千次。
+ * 拿不到（格式变了 / 行首不是 id）返回 null，调用方应当**兜底整行解析**，
+ * 这样 dump 换了字段顺序也不会静默漏数据。
+ */
+export function leadingId(line) {
+  const match = /^\{"id":(\d+),/.exec(line)
+  return match ? Number(match[1]) : null
+}
+
+/**
+ * 标签：meta_tags（维基人维护的公共标签）优先，没有就退回用户标签
+ * ---------------------------------------------------------------------------
+ * 口径必须与 `lib/format.js#bgmToRow` 完全一致，否则「离线补的」和「接口补的」
+ * 会存出两种顺序，前端题材行（`themeTags` 取前 2 个）会跳。
+ */
+export function archiveTags(subject, limit = TAG_LIMIT) {
+  const meta = Array.isArray(subject?.meta_tags) ? subject.meta_tags : []
+  const list = meta.length
+    ? meta
+    : (Array.isArray(subject?.tags) ? subject.tags : []).map((tag) =>
+        typeof tag === 'string' ? tag : tag?.name,
+      )
+  return list.filter(Boolean).slice(0, limit)
+}
+
+/**
+ * 评分人数 —— dump 没给 total，只有各档人数分布，自己加
+ * （`{"1":1,"6":10,"7":18,…}` 之和就是接口里的 `rating.total`）
+ */
+export function ratingTotalOf(details) {
+  if (!details || typeof details !== 'object') return null
+  let total = 0
+  for (const n of Object.values(details)) total += Number(n) || 0
+  return total > 0 ? total : null
+}
+
+/**
+ * 一条 dump 记录 → anime 的**档案字段**（排期 / 海报 / 系列字段都不在这里）
+ * ---------------------------------------------------------------------------
+ * 空值一律给 null：写库走 `COALESCE(?, col)`，null = 「这次没拿到，别覆盖已有值」。
+ * 所以 dump 里 score 为 0（还没人评分）不会把库里已有的评分擦掉。
+ *
+ * @param {object} subject subject.jsonlines 的一行
+ * @param {{ episodes?: number|null }} [extra] `episodes` = 该条目 type=0 的章节数
+ */
+export function archivePatch(subject, { episodes = null } = {}) {
+  const score = Number(subject?.score)
+  const watching = Number(subject?.favorite?.doing)
+  const total = Number(episodes)
+  return {
+    title_cn: subject?.name_cn || null,
+    score: Number.isFinite(score) && score > 0 ? score : null,
+    rating_total: ratingTotalOf(subject?.score_details),
+    tags: archiveTags(subject),
+    watching: Number.isFinite(watching) && watching > 0 ? watching : null,
+    summary: subject?.summary || null,
+    air_date: subject?.date || null,
+    total_episodes: Number.isFinite(total) && total > 0 ? total : null,
+  }
+}

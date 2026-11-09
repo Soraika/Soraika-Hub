@@ -351,6 +351,20 @@ year 为空 → 按 age = 2（3 天）：它们刚灌进来、还没档案，该
 - **同一季的多个 Part 续编集号、不分层**：`S03` 里 Part.1（12 话）是 `E01..E12`，
   Part.2 的偏移 = 前面各 Part 集数之和 → `E13..E22`；偏移取 `anime.total_episodes` 累加。
 
+**10.6 离线 dump 的边界（`npm run archive`）**
+
+从 `github.com/bangumi/Archive` 下载的 jsonlines 只能做「档案刷新」，不能当第二套入库通道：
+
+- **只更新已有 `bgm_id` 的行**。dump 里有 60 万条（漫画 / 游戏 / 三次元 / 音乐都在），
+  主表的入口仍然只有 Mikan 排期与扫描（铁律），别在这里 INSERT。
+- **能写的只有 `src/db/anime.js#applyArchiveBatch` 那九列**：`title_cn` / `score` /
+  `rating_total` / `tags` / `watching` / `summary` / `air_date` / `total_episodes` / `bgm_checked_at`。
+  `year` / `season` / `weekday` 是 Mikan 的（§10.3），`poster_*` 是出图接口的（dump 里没封面）。
+- **`total_episodes` 只增不减**：周更快照可能比上游登记慢，改小会把「共 12 集」变成「共 8 集」。
+- 字段口径与 `lib/format.js#bgmToRow` 必须一致（`meta_tags` 优先、标签最多 8 个、
+  `rating_total` = `score_details` 各档之和）—— 两处算得不一样，前端题材行就会跳。
+- 验收在 `scripts/verify-archive.mjs`（迷你 fixture，不依赖真 dump）。
+
 ---
 
 ## 11. 提交前自检清单

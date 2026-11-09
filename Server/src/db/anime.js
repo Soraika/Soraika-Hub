@@ -187,6 +187,82 @@ export function applyBgmMeta(row) {
   return { id: existing.id, created: false }
 }
 
+/**
+ * 离线 dump（bangumi/Archive）批量刷新档案 —— 与 `applyBgmMeta` 的区别只在「一次来一批」
+ * ---------------------------------------------------------------------------
+ * 为什么单独一组 SQL、不复用 updateMeta：那个是「逐条补齐 + 可能新建行」，走的是
+ * mikan_id / bgm_id 双键判断、还带海报缓存清理。离线导入是**只更新已有行的档案字段**，
+ * 几千行一条一条来太慢，所以这里是一条纯 UPDATE、外面包一层事务。
+ *
+ * 语义：`COALESCE(?, col)` = 传 null 的字段不动（dump 没有的值不覆盖库里已有的），
+ * 与全库的合并规则一致（ARCHITECTURE §2.1）。
+ * `bgm_checked_at` 写成导入时间：档案刚刷新过，档案补齐队列就别再为这些行打上游了
+ * （当年番的每日更新不看它，仍然照常走 API）。
+ */
+const archiveStmt = {
+  /** 待补的行：只认已有 bgm_id 的（没有 bgm_id 的靠 Mikan 映射/扫描先拿到 id） */
+  targets: db.prepare('SELECT id, bgm_id, score, tags, summary FROM anime WHERE bgm_id IS NOT NULL'),
+  update: db.prepare(`
+    UPDATE anime SET
+      title_cn       = COALESCE(?, title_cn),
+      score          = COALESCE(?, score),
+      rating_total   = COALESCE(?, rating_total),
+      tags           = COALESCE(?, tags),
+      watching       = COALESCE(?, watching),
+      summary        = COALESCE(?, summary),
+      air_date       = COALESCE(?, air_date),
+      -- 总集数只增不减：dump 是周更快照，连载中的番章节日志可能还没登记全，
+      -- 直接覆盖会把“共 12 集”改成“共 8 集”，下载页的「已下载 8 / 共 12」就假了。
+      total_episodes = CASE
+                         WHEN ? IS NULL THEN total_episodes
+                         WHEN ? > COALESCE(total_episodes, 0) THEN ?
+                         ELSE total_episodes
+                       END,
+      bgm_checked_at = COALESCE(?, bgm_checked_at),
+      updated_at     = ?
+    WHERE id = ?
+  `),
+}
+
+/** 库里所有「有 bgm_id」的行（离线 dump 导入的目标集合） */
+export const listBgmTargets = () => archiveStmt.targets.all()
+
+/**
+ * 一批档案写库（一个事务）
+ * @param {Array<{id:number} & Record<string, any>>} rows `id` + 档案字段
+ * @param {{ checkedAt?: number|null }} [options] `checkedAt` 为 null 表示不改 `bgm_checked_at`
+ * @returns {number} 写入行数
+ */
+export function applyArchiveBatch(rows = [], { checkedAt = Date.now() } = {}) {
+  if (!rows.length) return 0
+  const now = Date.now()
+  db.exec('BEGIN')
+  try {
+    for (const row of rows) {
+      archiveStmt.update.run(
+        val(row.title_cn),
+        val(row.score),
+        val(row.rating_total),
+        val(row.tags),
+        val(row.watching),
+        val(row.summary),
+        val(row.air_date),
+        val(row.total_episodes),
+        val(row.total_episodes),
+        val(row.total_episodes),
+        val(checkedAt),
+        now,
+        val(row.id),
+      )
+    }
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+  return rows.length
+}
+
 /** 取某季全部条目（按星期、评分排序） */
 export const listBySeason = (year, season) => stmt.bySeason.all(val(year), val(season))
 
