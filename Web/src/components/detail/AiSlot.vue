@@ -272,12 +272,16 @@ const badge = computed(() => {
   font-size: 0.62rem;
   opacity: 0.75;
 }
-/* 类型色：分辨率蓝 / 编码紫 / 字幕绿 / 片源橙 / 合集青 / 其它灰（令牌在 tokens.css） */
+/* 类型色：分辨率蓝 / 编码紫 / 帧率青蓝 / 字幕绿 / 片源橙 / 合集青 / 其它灰（令牌在 tokens.css） */
 .t-res {
   --tag-color: var(--tag-res);
 }
 .t-codec {
   --tag-color: var(--tag-codec);
+}
+/* 帧率/刷新率（60FPS、120Hz）：以前落在 other 里是灰的，看着像"点了没反应" */
+.t-fps {
+  --tag-color: var(--tag-fps);
 }
 .t-sub {
   --tag-color: var(--tag-sub);

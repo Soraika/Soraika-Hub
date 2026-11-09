@@ -1166,6 +1166,11 @@ try {
   )
   check(/\bt-res\b/.test(aiSlotSource) && /\bt-sub\b/.test(aiSlotSource), '标签按类型着色（分辨率 / 编码 / 字幕 / 片源）')
   check(/\bt-codec\b/.test(aiSlotSource) && /\bt-source\b/.test(aiSlotSource) && /\bt-other\b/.test(aiSlotSource), '类型色用令牌，不硬编码颜色值')
+  check(
+    aiSlotSource.includes('t-fps') &&
+      readFileSync(new URL('../src/styles/tokens.css', import.meta.url), 'utf8').includes('--tag-fps:'),
+    '帧率/刷新率是独立类型（青蓝），不再挤进 other 变灰',
+  )
   check(/\bt-other\s*\{|--tag-color:\s*var\(--text-secondary\)/.test(aiSlotSource) && !/#[0-9a-fA-F]{6}/.test(aiSlotSource), 'AI 位没有写死的十六进制颜色')
   check(
     aiSlotSource.includes('class="ai-placeholder"') && /未配置[\s\S]{0,40}设置页/.test(aiSlotSource),

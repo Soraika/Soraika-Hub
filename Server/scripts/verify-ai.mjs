@@ -230,8 +230,8 @@ try {
   )
   /* 修订版标签的 type 必须是 version（早先 TYPE_ORDER 里写成 revision，排序会 NaN） */
   check(
-    /TYPE_ORDER = \{ version: 0/.test(aiSharedSource),
-    'TYPE_ORDER 用 `version`（与生成的标签 type 一致，排序不会失效）',
+    /TYPE_ORDER = \{ version: 0, res: 1, codec: 2, fps: 3/.test(aiSharedSource),
+    'TYPE_ORDER 用 `version` / 含独立的 `fps` 类型（帧率不再挤进 other 变灰）',
   )
   check(
     /function dropIdentical\(tags\)/.test(aiSharedSource) && /dropIdentical\(candidates\)/.test(aiPageSource),

@@ -78,6 +78,7 @@
      旧版把这几个十六进制直接写在组件里，这里收成令牌：一份定义，主题与组件都读它。 */
   --tag-res: #3b82f6;
   --tag-codec: #8b5cf6;
+  --tag-fps: #0ea5e9;
   --tag-sub: #22c55e;
   --tag-source: #f97316;
   --tag-batch: #14b8a6;
@@ -175,6 +176,7 @@
   /* 资源标签配色（深色下整体提亮一档，保持同样的语义顺序） */
   --tag-res: #60a5fa;
   --tag-codec: #a78bfa;
+  --tag-fps: #38bdf8;
   --tag-sub: #4ade80;
   --tag-source: #fb923c;
   --tag-batch: #2dd4bf;

@@ -8,11 +8,14 @@
 import { createHash } from 'node:crypto'
 
 /**
- * 标签类型 → 展示顺序（version=修订版 / res / codec / sub / source / audio / other）
+ * 标签类型 → 展示顺序（version=修订版 / res / codec / fps / sub / source / audio / other）
  * 注意：修订版的 type 就是 version。早先这里写成 revision，而生成标签时用的是 version，
  * 于是 TYPE_ORDER['version'] 是 undefined，比较函数返回 NaN，排序失效。
+ *
+ * `fps`（帧率/刷新率：60FPS / 120Hz）是单独一类：以前挤在 other 里显示成灰色，
+ * 用户以为"这个标签点不了/没被识别"，其实是类型没分出来。
  */
-export const TYPE_ORDER = { version: 0, res: 1, codec: 2, sub: 3, source: 4, audio: 5, other: 6 }
+export const TYPE_ORDER = { version: 0, res: 1, codec: 2, fps: 3, sub: 4, source: 5, audio: 6, other: 7 }
 export const VALID_TYPES = new Set(Object.keys(TYPE_ORDER))
 
 /**
