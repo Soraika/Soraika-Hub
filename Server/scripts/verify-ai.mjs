@@ -144,7 +144,7 @@ try {
   )
   /* 「默认勾选」链路：提示词里描述字段 → 服务端合并时透传（纯函数，离线可验）。 */
   check(
-    bundlePrompt.includes('"default"') && bundlePrompt.includes('默认勾选'),
+    bundlePrompt.includes('default') && bundlePrompt.includes('默认勾选'),
     '提示词契约里描述了可选的 default（默认勾选），并说明只有用户补充要求明确提到时才给',
   )
   const { mergeModelTags } = await import('../src/api/ai/shared.js')
@@ -177,6 +177,30 @@ try {
   check(
     mergedTwoBatches[0]?.default === true && mergedTwoBatches[0]?.match.length === 2,
     '多批合并：任一批说 default 就算，match 也并起来',
+  )
+
+  /* 集数：v12 起按输入顺序返回数组（不再重复文件名）—— 输出 token 砍半，响应更快。 */
+  const { episodesFrom } = await import('../src/api/ai/shared.js')
+  const epsArray = episodesFrom([12, null, '1-12', '07v2', 3], ['a.mkv', 'b.mkv', 'c.mkv', 'd.mkv', 'e.mkv'])
+  check(
+    epsArray['a.mkv'] === 12 && epsArray['b.mkv'] === null && epsArray['c.mkv'] === '1-12' && epsArray['e.mkv'] === 3,
+    `数组形式按序号对齐 → ${JSON.stringify(epsArray)}`,
+  )
+  check(!('d.mkv' in epsArray), '数组里不合法的元素（07v2）被丢掉（宁缺勿错）')
+  const epsObject = episodesFrom({ 'x.mkv': 5 }, ['x.mkv'])
+  check(epsObject['x.mkv'] === 5, '旧的「对象」写法仍兼容（模型不听话时也不崩）')
+  check(
+    episodesFrom([1, 2], ['only.mkv'])['only.mkv'] === 1 &&
+      Object.keys(episodesFrom([1, 2], ['only.mkv'])).length === 1,
+    '数组比标题长时只认前面的（不会张冠李戴）',
+  )
+  check(
+    bundlePrompt.includes('"episodes": [') && bundlePrompt.includes('按输入序号顺序返回数组'),
+    '提示词要求 episodes 返回按序数组（不再把文件名当 key 抄一遍）',
+  )
+  check(
+    bundlePrompt.includes('只在为 true 时才写'),
+    'all / default 只在 true 时写（false 不写，省输出）',
   )
   check(
     /mtimeOf\(/.test(aiPromptSource) && /data[\\/]prompts\.json|\.\.\/\.\.\/\.\.\/data/.test(aiPromptSource),
@@ -266,6 +290,12 @@ try {
     '单批 40 条 × 并发 3（批小一点并发才用得上；120 条一批实测 18.7s → 40 条一批约 7s）',
   )
 
+  check(
+    /const nextSystem = value\.system \?\? defaults\[key\]\?\.system/.test(aiRoutSource) &&
+      !/prev\.system/.test(aiRoutSource),
+    '覆盖文件只写"本次显式给的 system"（不再把上一次生效的旧 system 抄进去）',
+  )
+
   /* ── 提示词接口：提示词是**数据**，读得到、写得进、能恢复 ──────────────── */
   const prompts0 = (await call('GET', '/api/ai/prompts')).body?.data
   check(
@@ -304,6 +334,12 @@ try {
         String(withCustom.prompts.series.custom || '').length > 0 &&
           withCustom.prompts.series.effective.length > withCustom.prompts.series.system.length,
         '自定义段拼在系统段后面（effective = system + 用户补充）',
+      )
+      /* 实测踩过：只保存 custom 时把"当时生效的 system"也抄进覆盖文件，
+         出厂提示词以后升级就永远盖不过它（v12 改了等于没改）。 */
+      check(
+        withCustom.prompts.series.system === String(withCustom.defaults?.series || ''),
+        '只保存 custom 时**不把 system 抄进覆盖文件**（否则出厂提示词升级会被旧副本盖住）',
       )
 
       const put = await call('PUT', '/api/ai/prompts', {

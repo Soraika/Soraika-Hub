@@ -220,6 +220,11 @@ AI 是**可选功能**：没配 `AI_API_KEY` 也照常跑 —— 相关接口回
 - **key 不外泄**：`/api/health` 与 `/api/ai/tools` 只给 `enabled` / `model`，没启用时连 baseUrl 都不给
 - **prompt 从参数进来**：`chatJson({ system, user, provider })` —— 调用点只说「这次用哪份 prompt / 哪个供应商」；
   以后「多提供商 + 用户自定义提示词」只改「谁来提供这两个值」，调用点一行不用动
+- **覆盖文件只写「用户改的那一段」**：`data/prompts.json` 里出现 `system` 就等于把出厂提示词**钉死在那一版**，
+  以后升级出厂提示词会被它盖住（实测踩过：v12 改了集数输出格式，模型照旧返回旧结构）。
+  所以 `PUT /api/ai/prompts` 只在请求**显式给了 system** 时才写它；只传 custom 时 system 回落到当前出厂默认。
+- **输出能省就省**：模型耗时几乎全在输出 token 上。`episodes` 用**按序数组**（顺序即 index，不重复文件名）、
+  `all` / `default` 只在 true 时写 —— 同一批 10 条实测输出 706 → 337 token、2.95s → 1.83s。
 - **`provider` 是一份快照对象**：`{ baseUrl, apiKey, model, timeoutMs, maxTokens, params }`；
   不传 = 用 `config.ai`（现行为）。**不要传 `config` 本身**（避免调用中途设置被改）
 - **供应商差异不写死**：`thinking: { type: 'disabled' }` 是 DeepSeek 专有的，别的网关会忽略 → 放 `provider.params`

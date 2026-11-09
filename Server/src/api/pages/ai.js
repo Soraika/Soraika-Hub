@@ -28,6 +28,7 @@ import {
   TYPE_ORDER,
   chunk,
   dropIdentical,
+  episodesFrom,
   hashOf,
   mapLimit,
   mergeModelTags,
@@ -47,7 +48,7 @@ const episodeCache = createMemCache({ ttlMs: () => config.ai.episodeCacheTtlMs, 
 
 /** 拼一次请求的 user prompt：带作品上下文（番名 / 季），让模型知道自己在分析什么 */
 const bundleUserPrompt = (batch, context) =>
-  `${context ? `作品：${context}\n\n` : ''}分析下面 ${batch.length} 条资源文件名：\n\n${batch
+  `${context ? `作品：${context}\n\n` : ''}分析下面 ${batch.length} 条资源文件名（episodes 数组按这个序号一一对应，共 ${batch.length} 个元素）：\n\n${batch
     .map((t, i) => `${i + 1}. ${t}`)
     .join('\n')}`
 
@@ -127,7 +128,11 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
       runBatch(batch, systemText).catch((error) => ({ error, batch })),
     )
 
-    const hasOutput = (run) => Boolean(run?.parsed?.tags?.length || Object.keys(run?.parsed?.episodes || {}).length)
+    const hasOutput = (run) => {
+      const eps = run?.parsed?.episodes
+      const epsCount = Array.isArray(eps) ? eps.length : Object.keys(eps || {}).length
+      return Boolean(run?.parsed?.tags?.length || epsCount)
+    }
     const failedIdx = runs.map((run, index) => (run?.error ? index : -1)).filter((index) => index >= 0)
     const nothingParsed = runs.every((run) => !hasOutput(run))
 
@@ -156,17 +161,12 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
 
     /*
      * 标签：合并逻辑是纯函数（`mergeModelTags`），这里只管集数。
-     * 为什么拆出去：这一段被「多批合并 / all 全量重算 / default 透传」三件事撑着，
-     * 混在业务里只能靠真打模型才能验；现在是纯函数，verify-ai 离线就能钉住。
+     * 集数：v12 起模型按输入顺序返回**数组**，这里用「这一批的标题」把序号映射回文件名；
+     * 旧的「对象」写法也兼容（见 `episodesFrom`）。
      */
     const episodes = {}
-    for (const run of runs) {
-      for (const [name, value] of Object.entries(run.parsed?.episodes || {})) {
-        // 集数归一：数字 / "1-12" / null，别的写法一律丢掉（宁缺勿错）
-        if (value === null) episodes[name] = null
-        else if (typeof value === 'number') episodes[name] = value
-        else if (typeof value === 'string' && /^\d{1,4}(-\d{1,4})?$/.test(value.trim())) episodes[name] = value.trim()
-      }
+    for (let index = 0; index < runs.length; index++) {
+      Object.assign(episodes, episodesFrom(runs[index]?.parsed?.episodes, batches[index]))
     }
 
     const candidates = mergeModelTags(runs, list)

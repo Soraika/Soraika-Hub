@@ -171,7 +171,15 @@ aiRouter.put('/ai/prompts', (req, res, next) => {
     /*
      * 写入是合并而不是覆盖：只 PUT 了 bundle 时，别的段不能因为这次保存被悄悄删掉。
      * 和出厂默认一样的部分不写进文件（还原成默认就等于「没改过」，以后升级默认提示词也生效）。
+     *
+     * **system 只认本次请求里显式给的**（`value.system`）：
+     * 设置页只编辑 custom，如果把"上一次生效的 system"也照抄进覆盖文件，出厂提示词以后升级
+     * 就永远盖不过它 —— 实测踩过：v11 的 system 被存进 data/prompts.json 后，v12 改了等于没改
+     * （模型照旧返回文件名做 key 的对象）。所以没给 system 就回落到**当前出厂默认**。
      */
+    const defaults = defaultPrompts()
+
+    /** 当前覆盖文件（可能不存在 / 可能是坏文件） */
     let existing = {}
     if (existsSync(OVERRIDE_FILE)) {
       try {
@@ -180,11 +188,10 @@ aiRouter.put('/ai/prompts', (req, res, next) => {
         existing = {} // 旧文件坏了：本次保存顺手把它修好
       }
     }
-    const defaults = defaultPrompts()
+
     const merged = { ...existing }
     for (const [key, value] of Object.entries(clean)) {
-      const prev = existing[key] || {}
-      const nextSystem = value.system ?? prev.system ?? defaults[key]?.system ?? ''
+      const nextSystem = value.system ?? defaults[key]?.system ?? ''
       const nextCustom = value.custom ?? prev.custom ?? ''
       const entry = {}
       if (nextSystem !== String(defaults[key]?.system || '').trim()) entry.system = nextSystem

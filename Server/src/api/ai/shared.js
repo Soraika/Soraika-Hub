@@ -92,6 +92,45 @@ export function dropIdentical(tags) {
 }
 
 /**
+ * 模型返回的集数 → `{ 文件名: 集数 }`（纯函数，便于离线验收）
+ * ---------------------------------------------------------------------------
+ * v12 起模型**按输入顺序返回数组**（`episodes: [12, null, "1-12", ...]`），
+ * 不再把文件名当 key 重复抄一遍 —— 输出 token 直接砍掉一半以上，而 AI 的耗时
+ * 几乎全在输出上。
+ *
+ * 仍然兼容旧的「对象」写法：模型偶尔不听话、或者用户自己改了提示词，
+ * 那句 `{ "文件名": 12 }` 也照收。两种都做**归一**（数字 / "1-12" / null），
+ * 别的写法一律丢掉（宁缺勿错）。
+ *
+ * @param {unknown} raw 模型给的 episodes
+ * @param {string[]} titles 这一批的文件名（数组形式时按序号对齐）
+ * @returns {Record<string, number|string|null>}
+ */
+export function episodesFrom(raw, titles) {
+  const list = Array.isArray(titles) ? titles : []
+  const out = {}
+  const put = (name, value) => {
+    if (!name) return
+    if (value === null) out[name] = null
+    else if (typeof value === 'number') out[name] = value
+    else if (typeof value === 'string') {
+      const text = value.trim()
+      if (/^\d{1,4}(-\d{1,4})?$/.test(text)) out[name] = text
+    }
+  }
+  if (Array.isArray(raw)) {
+    // 顺序即 index：第 i 个元素属于第 i 条文件名；比输入短就只认前面的（宁缺勿错）
+    const count = Math.min(raw.length, list.length)
+    for (let i = 0; i < count; i++) put(list[i], raw[i])
+    return out
+  }
+  if (raw && typeof raw === 'object') {
+    for (const [name, value] of Object.entries(raw)) put(name, value)
+  }
+  return out
+}
+
+/**
  * 把模型返回的多批标签合并成最终标签（纯函数，便于离线验收）
  * ---------------------------------------------------------------------------
  * 三件事：
