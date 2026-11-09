@@ -7,6 +7,8 @@
 
 ## P0 · 数据完整性（收尾确认）
 
+- [ ] **Schema v2**（身份 / 档案 / 排期拆三张表）—— 设计稿见 **`docs/SCHEMA-V2.md`**，等拍板再动手
+      要点：`mikan_bgm_map`（唯一不可重建）/ `bgm_subject`（dump 4 秒可重灌）/ `anime`（可重建）
 - [x] **`needArchive` 用 BGM 离线 dump 一次刷完**：`222 → 191`（`withScore 3711 → 3745`），
       3742 条 **4.3 秒**落库、一条上游请求都没发（`npm run archive -- --dir=<解压后的 dump>`）。
       剩下的 191 条是上游**确实没写简介**（dump 里 `summary` 就是空串），不是漏抓
