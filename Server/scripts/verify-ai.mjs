@@ -132,8 +132,8 @@ try {
     `四个能力的提示词都在 prompts.json 里（${promptKeys.join(' / ')}）`,
   )
   check(
-    aiPromptData.bundle.version === 'v7',
-    `合并调用版本 v7（数据里带版本，改 prompt 不必改代码）→ ${aiPromptData.bundle?.version}`,
+    aiPromptData.bundle.version === 'v9',
+    `合并调用版本 v9（数据里带版本，改 prompt 不必改代码）→ ${aiPromptData.bundle?.version}`,
   )
   const bundlePrompt = String(aiPromptData.bundle.system || '')
   check(
@@ -163,8 +163,19 @@ try {
     'TYPE_ORDER 用 `version`（与生成的标签 type 一致，排序不会失效）',
   )
   check(
-    /function dropCovered\(tags\)/.test(aiSharedSource) && /const tags = dropCovered\(/.test(aiPageSource),
-    '标签去重：去掉「被别的标签覆盖」的冗余项（HEVC-10bit 之于 HEVC、简繁内封字幕 之于 简繁内封）',
+    /function dropIdentical\(tags\)/.test(aiSharedSource) && /dropIdentical\(candidates\)/.test(aiPageSource),
+    '本地去重只兜「两组 match 完全等价」（判断性重复交给提示词，不写死"包含就算重复"）',
+  )
+  check(
+    !/b\.name\.length < a\.name\.length/.test(aiSharedSource) &&
+      String(aiPromptData.bundle.system).includes('【去重】') &&
+      String(aiPromptData.bundle.system).includes('简体内嵌'),
+    '去重规则写在提示词里（含「A 与 A+后缀只留 A」「能筛出不同子集要保留」两类反例）',
+  )
+  check(
+    String(aiPromptData.bundle.system).includes('【绝对不返回的维度】') &&
+      /容器格式（MP4/.test(String(aiPromptData.bundle.system)),
+    '「绝对不返回的维度」是显式黑名单（容器格式 / 音频编码 / 单集还是合集 / 修版）',
   )
   check(
     /const batches = chunk\(list, batchSize\)/.test(aiPageSource) &&

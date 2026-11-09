@@ -56,32 +56,35 @@ export const hashOf = (list) => createHash('sha1').update(list.join('\n')).diges
 export const promptHash = (text) => createHash('sha1').update(text).digest('hex').slice(0, 12)
 
 /**
- * 去掉「被别的标签覆盖」的重复项。
+ * 只去掉**完全等价**的标签（两组 match 一模一样 → 筛出来的资源完全相同）
  * ---------------------------------------------------------------------------
- * 模型很爱同时给 `HEVC` 与 `HEVC-10bit`、`简繁内封` 与 `简繁内封字幕`、`繁日` 与 `繁日字幕` ——
- * 后者只是在前者后面加了个后缀，点它筛出来的东西前者都能筛，纯噪音（而且看着"标签好乱"）。
+ * 为什么不是"包含就算重复"（这是上一版的规则，已废弃）：
+ *   字符串包含只能猜。「简体内嵌」与「简体内嵌·繁体外挂」后者包含前者，
+ *   但它是**多了一条字幕轨**，删掉就把一个真实选项藏了 —— 判断性重复必须交给模型
+ *  （prompt 里已经写清"同一维度只留一条、A 与 A+后缀只留 A"），这里不再二次猜。
  *
- * **为什么不让模型自己收敛**：prompt 里已经写了"不要返回重复维度"，但模型每次收敛程度不一样
- * （同一批它有时给 3 个有时给 6 个），而界面需要一个**稳定**的标签集 ——
- * 这种"纯字符串包含"的判断用本地规则是确定性的：免费、可测、每次结果一致。
- * prompt 负责"尽量少给"，这里负责"保证不漏"。
+ * 留下的这一种是**确定性**的：match 集合相同 ⇒ 筛出来的资源集合相同 ⇒ 一定是同一件事。
+ * 保留名字更短的那个（更通用、更好读）。
  *
- * 规则：同类型下，若 a 的任一写法包含 b 的某个写法（或 b 的名字），就去掉 a。
- * 加 `b.name.length < a.name.length` 是为了避免两个标签互删（相等长度时都不动）。
+ * @param {{ name:string, type:string, match:string[] }[]} tags
  */
-export function dropCovered(tags) {
-  return tags.filter(
-    (a) =>
-      !tags.some(
-        (b) =>
-          a !== b &&
-          a.type === b.type &&
-          b.name.length < a.name.length &&
-          a.match.some(
-            (am) =>
-              am.toLowerCase().includes(b.name.toLowerCase()) ||
-              b.match.some((bm) => am.toLowerCase().includes(bm.toLowerCase())),
-          ),
-      ),
-  )
+export function dropIdentical(tags) {
+  const seen = new Map()
+  const out = []
+  for (const tag of tags) {
+    // 排序后拼起来即"这个标签能筛出的资源集合"的指纹
+    const key = `${tag.type}|${[...tag.match].map((m) => m.toLowerCase()).sort().join('\u0001')}`
+    const prev = seen.get(key)
+    if (!prev) {
+      seen.set(key, tag)
+      out.push(tag)
+      continue
+    }
+    // 同一组 match：留名字更短的那个（下标替换，保持原顺序）
+    if (tag.name.length < prev.name.length) {
+      out[out.indexOf(prev)] = tag
+      seen.set(key, tag)
+    }
+  }
+  return out
 }

@@ -30,7 +30,7 @@ import {
   TYPE_ORDER,
   VALID_TYPES,
   chunk,
-  dropCovered,
+  dropIdentical,
   hashOf,
   mapLimit,
   uniqueTitles,
@@ -155,14 +155,24 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
     }
 
     const lowers = list.map((t) => t.toLowerCase())
-    const tags = dropCovered(
-      [...merged.values()]
-        .map((tag) => ({
-          ...tag,
-          all: lowers.every((title) => tag.match.some((m) => title.includes(m.toLowerCase()))),
-        }))
-        .filter((t) => t.name && t.match.length),
-    ).sort(
+    const candidates = [...merged.values()]
+      .map((tag) => ({
+        ...tag,
+        all: lowers.every((title) => tag.match.some((m) => title.includes(m.toLowerCase()))),
+      }))
+      .filter((t) => t.name && t.match.length)
+
+    /**
+     * 本地只兜**完全等价**这一种（两组 match 一模一样 ⇒ 筛出来的资源完全相同）。
+     * 「包含就算重复」那种判断已经从代码里删掉了 —— 它会把「简体内嵌 / 简体内嵌+繁体外挂」
+     * 这种真实差异误删。判断性去重交给提示词（prompts.json 的【去重】段）。
+     */
+    const deduped = dropIdentical(candidates)
+    if (deduped.length !== candidates.length) {
+      log.debug({ from: candidates.length, to: deduped.length }, 'ai.tags identical-duplicates')
+    }
+
+    const tags = deduped.sort(
       (a, b) =>
         Number(a.all) - Number(b.all) ||
         (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9) ||
