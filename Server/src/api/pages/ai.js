@@ -163,9 +163,23 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
         const name = String(raw?.display || '').trim()
         if (!name) continue
         const match = (Array.isArray(raw?.match) ? raw.match : [name]).map((m) => String(m || '').trim()).filter(Boolean)
+        /*
+         * `default`：提示词里允许模型给"这个取值建议默认勾上"（用户的补充要求里会写
+         * 「把 1080P 设为默认勾选」这类话）。多批合并时任一批说 true 就算 true。
+         */
+        const isDefault = raw?.default === true
         const hit = merged.get(name)
-        if (hit) hit.match = [...new Set([...hit.match, ...match])]
-        else merged.set(name, { name, type: VALID_TYPES.has(raw?.type) ? raw.type : 'other', match })
+        if (hit) {
+          hit.match = [...new Set([...hit.match, ...match])]
+          hit.default = Boolean(hit.default) || isDefault
+        } else {
+          merged.set(name, {
+            name,
+            type: VALID_TYPES.has(raw?.type) ? raw.type : 'other',
+            match,
+            default: isDefault,
+          })
+        }
       }
 
       for (const [name, value] of Object.entries(run.parsed?.episodes || {})) {
@@ -178,10 +192,11 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
 
     const lowers = list.map((t) => t.toLowerCase())
     const candidates = [...merged.values()]
-      .map((tag) => ({
-        ...tag,
-        all: lowers.every((title) => tag.match.some((m) => title.includes(m.toLowerCase()))),
-      }))
+      .map((tag) => {
+        const all = lowers.every((title) => tag.match.some((m) => title.includes(m.toLowerCase())))
+        // 整批一致的标签不做成筛选项，也就不该「默认勾选」（它根本点不了）
+        return { ...tag, all, default: all ? false : Boolean(tag.default) }
+      })
       .filter((t) => t.name && t.match.length)
 
     /*

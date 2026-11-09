@@ -57,6 +57,23 @@ export function useAiTags() {
 
   /** 字幕组 id → 标签结果 */
   const cache = new Map()
+
+  /**
+   * 模型标了「默认勾选」的标签（来自用户补充提示词，例如「把 1080P 设为默认勾选」）
+   * 上限 4 条：再多就等于没筛，反而让人以为自己选错了
+   */
+  const defaultNamesOf = (list) =>
+    list
+      .filter((tag) => tag.default && !tag.all)
+      .map((tag) => tag.name)
+      .slice(0, 4)
+
+  /** 把一批标签落到状态上（缓存命中与真请求共用；merge 时不动已选项） */
+  function applyTags(list, merge) {
+    tags.value = merge ? mergeTags(tags.value, list) : list
+    if (!merge) activeNames.value = defaultNamesOf(tags.value)
+    state.value = tags.value.length ? 'ready' : 'idle'
+  }
   /** AI 是否可用（第一次问过之后就不再问） */
   const enabled = ref(null)
   /**
@@ -106,9 +123,8 @@ export function useAiTags() {
     const key = `${subgroupId}|${list[0]}|${list.length}`
     const hit = cache.get(key)
     if (hit) {
-      tags.value = merge ? mergeTags(tags.value, hit.tags) : hit.tags
+      applyTags(hit.tags, merge)
       model.value = hit.model || model.value
-      state.value = tags.value.length ? 'ready' : 'idle'
       return
     }
 
@@ -118,9 +134,8 @@ export function useAiTags() {
       const res = await classifyReleaseTags(list, { animeTitle })
       if (myToken !== token) return // 已经切到别的字幕组了
       cache.set(key, res)
-      tags.value = merge ? mergeTags(tags.value, res.tags) : res.tags
+      applyTags(res.tags, merge)
       model.value = res.model || model.value
-      state.value = tags.value.length ? 'ready' : 'idle'
     } catch (err) {
       if (myToken !== token) return
       if (err?.code === 'AI_DISABLED') {

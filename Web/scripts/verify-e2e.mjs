@@ -209,8 +209,10 @@ try {
   )
   check(
     !/\.phase-(enter|leave)/.test(panelSource) &&
-      skeletonSource.includes('@keyframes sk-sweep'),
-    '不再有整块过渡样式；动效只剩骨架屏扫光（局部位置在动）',
+      skeletonSource.includes('@keyframes sk-sweep') &&
+      /@keyframes detail-in/.test(panelSource) &&
+      /prefers-reduced-motion/.test(panelSource),
+    '整块过渡已删除：骨架屏扫光 + 详情轻微淡入（detail-in，尊重 reduced-motion）',
   )
 
   /* ── ④c 资源区：字幕组 → AI 位 → 资源列表 ──────────────────────────── */
@@ -287,6 +289,17 @@ try {
   check(
     aiSlotSrc.includes('filterableTags') && aiSlotSrc.includes('featureTexts') && /tag\.all/.test(aiSlotSrc),
     'AI 标「整批一致」的维度不做筛选项，只当只读特征展示（单条/同格式时不再"像没识别出来"）',
+  )
+  /* 「默认勾选」链路：提示词里标 default → 服务端透传 → useAiTags 自动勾上（最多 4 条）。
+     踩过的坑：分组里没有可见字段会被整块过滤，所以这里的断言要直接看状态逻辑，不看样式。 */
+  const useAiTagsSrc = readFileSync(new URL('../src/composables/useAiTags.js', import.meta.url), 'utf8')
+  check(
+    /tag\.default/.test(useAiTagsSrc) && /defaultNamesOf/.test(useAiTagsSrc) && /applyTags\(/.test(useAiTagsSrc),
+    'AI 标了 default 的标签自动勾上（切字幕组重算；「显示更多」不打断已选）',
+  )
+  check(
+    /MIN_LOADING_MS = 260/.test(readFileSync(new URL('../src/composables/useAnimeDetail.js', import.meta.url), 'utf8')),
+    '换作品时骨架屏至少显示 260ms（不闪一帧，也盖住 AI 解析的等待）',
   )
   check(
     aiReady.includes('class="batch-toggle"') && aiReady.includes('单集') && aiReady.includes('合集') && aiReady.includes('全部'),

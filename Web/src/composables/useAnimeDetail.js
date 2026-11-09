@@ -30,7 +30,9 @@ export function useAnimeDetail() {
    * 本地接口 20~50ms 就回来了 → 不兜一下的话 loading 只渲染一帧，用户看到的是
    * "点了没反应、然后内容直接变了"。180ms 既看不出来慢、又能让刷新动画真的露出来。
    */
-  const MIN_LOADING_MS = 180
+  // 260ms：比一帧长得多（骨架动画看得清），又明显短于一次 AI 解析（通常 2s+），
+  // 既掩盖了骨架闪跳、也不会让人觉得切换变慢；观感再由面板的 detail-in 淡入补。
+  const MIN_LOADING_MS = 260
   const waitRest = async (startedAt) => {
     const rest = MIN_LOADING_MS - (Date.now() - startedAt)
     if (rest > 0) await new Promise((resolve) => setTimeout(resolve, rest))

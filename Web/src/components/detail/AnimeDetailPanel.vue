@@ -593,6 +593,25 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   display: flex;
   flex-direction: column;
   gap: 16px;
+  /*
+   * 换作品时**轻微淡入 + 上浮** 8px：骨架屏就地替换成内容，如果直接硬切，
+   * 观感是「闪一下就变了」。这条动画只在挂载时跑一次（详情带 :key=detail-id，
+   * 换作品 = 重新挂载），所以来回切也不会累计。
+   * 幅度刻意很小：动画是补观感，不是让人等它。
+   */
+  animation: detail-in 200ms var(--ease-out) both;
+}
+@keyframes detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+/* 用户要求减少动效（系统级设置）时不跑：内容直接出现，别跟无障碍设置对着干 */
+@media (prefers-reduced-motion: reduce) {
+  .detail {
+    animation: none;
+  }
 }
 
 /* ── 面板内的「换作品」不再有整块过渡 ─────────────────────────────────────
