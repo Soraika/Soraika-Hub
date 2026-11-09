@@ -428,6 +428,12 @@ console.log('\n— 设置页：提示词（只编辑用户补充）')
   )
   check(text.includes('系统段') && text.includes('程序维护'), '只说了一句「系统段由程序维护」')
   check(text.includes('prompts.json'), '需要改系统段时指了路（去改 JSON 文件）')
+  /* 标题字体要和卡片里的正文一致（base.css 把 h1~h4 交给楷体，漏写 font-family 就会"变体"） */
+  const titleEl = document.querySelector('.prompt-title')
+  const bodyEl = document.querySelector('.prompt-meta')
+  const titleFont = win.getComputedStyle(titleEl).fontFamily
+  const bodyFont = win.getComputedStyle(bodyEl).fontFamily
+  check(Boolean(titleFont) && titleFont === bodyFont, '标题字体与正文一致（没被 base.css 的楷体带走）', `${titleFont} vs ${bodyFont}`)
   check(text.includes('恢复这一段默认'), '有恢复默认的入口')
   check(/保存/.test(text), '有保存按钮')
 

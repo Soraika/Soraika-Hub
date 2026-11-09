@@ -7,10 +7,7 @@
       </h2>
       <span class="pill" :class="source === 'override' ? 'pill-accent' : 'pill-muted'">{{ sourceText }}</span>
       <p class="prompt-hint">
-        这里只写「你自己的要求」（偏好、措辞、额外约束），它会接在系统提示词后面一起发给模型，优先级更低。
-        系统提示词（输出结构那部分）由程序维护、在这里不展示 —— 需要调整请编辑
-        <code>Server/src/api/ai/prompts.json</code>（或放一份 <code>Server/data/prompts.json</code> 覆盖）。
-        保存后立即生效，不用重启。
+        只写你的偏好，会接在系统提示词后面一起发给模型。系统段由程序维护，改它请编辑 prompts.json。
       </p>
     </header>
 
@@ -37,14 +34,12 @@
 
       <p class="prompt-meta">
         <span>{{ activeTab.hint }}</span>
-        <span class="prompt-num">
-          系统段 {{ systemLengthOf(activeKey) }} 字（程序维护） · hash {{ hashOf(activeKey) }}
-        </span>
+        <span class="prompt-num">系统段 {{ systemLengthOf(activeKey) }} 字 · 程序维护</span>
       </p>
 
       <label class="prompt-label" :for="`p-custom-${activeKey}`">
         你的补充要求
-        <span class="prompt-label-hint">留空就是只用系统提示词；这段写错不会导致解析失败（服务端会自动回退默认）</span>
+        <span class="prompt-label-hint">留空 = 只用系统提示词</span>
       </label>
       <textarea
         :id="`p-custom-${activeKey}`"
@@ -137,7 +132,6 @@ const {
   error,
   message,
   source,
-  hashOf,
   systemLengthOf,
   isDirty,
   isOverridden,
@@ -176,7 +170,7 @@ onMounted(load)
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 4px 10px;
-  margin-bottom: 14px;
+  margin-bottom: 16px; /* 与页面里其它卡片的 .card-head 一致 */
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
 }
@@ -184,6 +178,9 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 8px;
+  /* base.css 把 h1~h4 交给了 --font-ui（霞鹜文楷），设置页统一压回正文体 ——
+     这里必须显式写一遍，否则这一张卡的标题会比别的卡片"变体"。 */
+  font-family: var(--font-body);
   color: var(--text-primary);
   font-size: 0.98rem;
   font-weight: 700;
@@ -195,16 +192,6 @@ onMounted(load)
   grid-column: 1 / -1;
   color: var(--text-tertiary);
   font-size: 0.75rem;
-  line-height: 1.7;
-}
-/* 说明里提到的文件路径用等宽字，方便照着找 */
-.prompt-hint code {
-  padding: 0 4px;
-  border-radius: 3px;
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
 }
 
 /* 页签 */

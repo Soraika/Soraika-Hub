@@ -1215,6 +1215,10 @@ try {
     '提示词卡片只暴露「你的补充要求」一个输入框（系统段不展示，去改 JSON）',
   )
   check(
+    /\.prompt-title\s*\{[^}]*font-family:\s*var\(--font-body\)/s.test(promptEditorSource),
+    '提示词卡片的标题字体与设置页其它卡片一致（base.css 会把 h2 换成楷体，必须显式压回正文体）',
+  )
+  check(
     usePromptsSource.includes('fetchAiPrompts') &&
       usePromptsSource.includes('saveAiPrompts') &&
       usePromptsSource.includes('resetAiPrompts'),
