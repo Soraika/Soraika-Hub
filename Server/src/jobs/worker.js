@@ -179,7 +179,8 @@ async function runLoop(log) {
  * 检查失败也会写 `checkedAt`（否则 30 秒一轮的循环会疯狂重试）。
  */
 function maybeUpdateDump(log) {
-  if (!config.bgm?.dumpAuto || workerState.dump.running) return
+  // 只在**半在线**模式下自动更新：没开「优先用离线包」就不该偷偷下 450MB
+  if (!config.bgm?.useDump || !config.bgm?.dumpAuto || workerState.dump.running) return
   const boundary = lastDailyBoundary(new Date(), config.bgm.dumpCheckAt)
   if (workerState.dump.checkedAt >= boundary) return
   if (Date.now() < workerState.dump.cooldownUntil) return

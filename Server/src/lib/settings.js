@@ -62,12 +62,14 @@ export const SETTINGS_FIELDS = [
 
   // ── 离线数据（Bangumi dump：每周三导一次全站，本地流式导入）──
   /* 打开 = 半在线：档案优先用 dump，但**缺的/过期的仍然现查 API**。
-     关掉 = 全在线：一切走 /v0/subjects（现在的行为）。 */
-  { path: 'bgm.useDump', env: 'BGM_USE_DUMP', group: 'dump', section: '模式', label: '优先用离线包', type: 'boolean', advanced: true, hint: '缺的条目仍会现查一次接口' },
+     关掉 = 全在线：一切走 /v0/subjects（现在的行为）。
+     这两个 + 检查时刻放**基础层**：它们是"要不要用离线包 / 什么时候更新"的功能开关，
+     不是调参项；镜像、索引、目录才是调参（收进高级）。 */
+  { path: 'bgm.useDump', env: 'BGM_USE_DUMP', group: 'dump', section: '模式', label: '优先用离线包', type: 'boolean', hint: '缺的条目仍会现查一次接口' },
   { path: 'bgm.dumpMaxAgeDays', env: 'BGM_DUMP_MAX_AGE_DAYS', group: 'dump', section: '模式', label: '档案过期天数', type: 'number', unit: '天', min: 1, max: 365, advanced: true, hint: '超过这么多天没更新就现查一次' },
 
-  { path: 'bgm.dumpAuto', env: 'BGM_DUMP_AUTO', group: 'dump', section: '自动更新', label: '自动更新', type: 'boolean', advanced: true, hint: '到点检查有没有新版，有才下载' },
-  { path: 'bgm.dumpCheckAt', env: 'BGM_DUMP_CHECK_AT', group: 'dump', section: '自动更新', label: '检查时刻', type: 'time', advanced: true, hint: '每天这个时间看一眼（包每周三更新）' },
+  { path: 'bgm.dumpAuto', env: 'BGM_DUMP_AUTO', group: 'dump', section: '自动更新', label: '自动更新', type: 'boolean', hint: '只在开启离线包时生效' },
+  { path: 'bgm.dumpCheckAt', env: 'BGM_DUMP_CHECK_AT', group: 'dump', section: '自动更新', label: '检查时刻', type: 'time', hint: '每天这个时间看一眼（包每周三更新）' },
 
   /* 索引与镜像都走「多地址」同一套控件：可拖拽、每条单独测速。
      镜像用 `{url}` 代表真实下载地址 —— "直连"就写 `{url}`，不用留空行。 */

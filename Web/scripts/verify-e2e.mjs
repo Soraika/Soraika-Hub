@@ -465,8 +465,27 @@ try {
     store.groups.value.flatMap((g) => g.sections).flatMap((s) => s.fields).every((f) => !f.advanced),
     `基础模式只显示必要项 → ${store.groups.value.flatMap((g) => g.sections).flatMap((s) => s.fields).length} 项`,
   )
+  /* 「离线数据」在**基础模式下就要看得见**：分组里没有可见字段会被整块过滤掉
+     （踩过：新分组的字段全标了 advanced → 用户刷新设置页看不到任何变化）。
+     所以三个功能开关（优先用离线包 / 自动更新 / 检查时刻）必须是常显项，
+     而镜像、索引、目录这些调参项仍留在高级里。 */
+  const dumpGroup = store.groups.value.find((g) => g.key === 'dump')
+  const dumpVisible = dumpGroup?.sections.flatMap((section) => section.fields) ?? []
+  check(
+    dumpVisible.length === 3 && dumpVisible.some((f) => f.path === 'bgm.dumpCheckAt'),
+    `基础模式能看到「离线数据」的 3 个开关（含更新时刻）→ ${dumpVisible.map((f) => f.path).join(' / ') || '整组被过滤掉了'}`,
+  )
   store.showAdvanced.value = true
   check(store.groups.value.length >= 4, `高级模式：设置分组 ${store.groups.value.length} 个（页面按分组渲染）`)
+  const dumpAdvanced =
+    store.groups.value
+      .find((g) => g.key === 'dump')
+      ?.sections.flatMap((section) => section.fields)
+      .filter((f) => f.advanced) ?? []
+  check(
+    dumpAdvanced.length >= 5,
+    `镜像 / 索引 / 目录 / 过期天数仍收在高级里 → ${dumpAdvanced.map((f) => f.path).join(' / ')}`,
+  )
   /* 页面就按 sections[].fields 渲染：结构错了会「渲染函数抛错 → 页面卡在加载态」，
      而 SSR 首帧没有数据、根本不渲染卡片，所以必须在这里直接验结构 */
   check(

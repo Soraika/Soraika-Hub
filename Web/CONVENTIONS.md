@@ -54,9 +54,12 @@
 - **基础模式里不许塞 advanced 项 —— 哪怕它被改过**（"改过的也显示"会让基础悄悄变成全部，
   使用者就会问"为什么基础里还有每条间隔"）；
 - 被收起的项里有改过的，就在顶栏「高级」按钮上挂**角标**（`高级 ③`）交代，别让人找不到自己改过什么；
-- 基础模式现在就是这 10 项：`mikan.bases` / `bgm.bases` / `ai.provider` / `ai.apiKey` / `ai.model` /
-  `ai.baseUrl` / `worker.dailyAt` / `worker.fetchSubgroups` / `qb.base` / `qb.apiKey`；
-  **`verify-settings` 有断言钉住"基础项 ≤ 10 且必须是这几项"**。
+- 基础模式现在是这 13 项：`mikan.bases` / `bgm.bases` / `bgm.useDump` / `bgm.dumpAuto` /
+  `bgm.dumpCheckAt` / `ai.provider` / `ai.apiKey` / `ai.model` / `ai.baseUrl` /
+  `worker.dailyAt` / `worker.fetchSubgroups` / `qb.base` / `qb.apiKey`；
+  **`verify-settings` 有断言钉住"基础项 ≤ 13 且必须是这几项"**。
+  > 离线包那三项是**功能开关**（要不要用 dump / 要不要自动更新 / 几点更新），不是调参；
+  > 藏进高级会让整张「离线数据」卡在基础模式下**整块消失**（分组里没有可见字段就会被过滤掉）。
 
 ## 5. 导出只留一个入口
 
