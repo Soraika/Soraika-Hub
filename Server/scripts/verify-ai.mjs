@@ -119,33 +119,51 @@ try {
 
   /* ── 能力层静态检查：改了 prompt 却不升版本，会被缓存挡住（看起来「提示词没生效」）── */
   const aiPageSource = readFileSync(new URL('../src/api/pages/ai.js', import.meta.url), 'utf8')
+  const aiPromptSource = readFileSync(new URL('../src/api/ai/prompts.js', import.meta.url), 'utf8')
+  const aiSharedSource = readFileSync(new URL('../src/api/ai/shared.js', import.meta.url), 'utf8')
+  const aiRoutSource = readFileSync(new URL('../src/rout/ai.js', import.meta.url), 'utf8')
+  const aiPromptData = JSON.parse(readFileSync(new URL('../src/api/ai/prompts.json', import.meta.url), 'utf8'))
+  const aiAllSource = [aiPageSource, aiPromptSource, aiSharedSource].join('\n')
+
+  /* 提示词是**数据**：四个能力各一段，都在 prompts.json 里，代码里不许再硬编码 */
+  const promptKeys = ['bundle', 'series', 'format', 'groupTags']
   check(
-    /BUNDLE_PROMPT_VERSION = 'v7'/.test(aiPageSource),
-    '提示词版本是 v7（合并调用：标签 + 集数一次拿齐）',
+    promptKeys.every((k) => aiPromptData[k]?.system && aiPromptData[k].system.length > 100),
+    `四个能力的提示词都在 prompts.json 里（${promptKeys.join(' / ')}）`,
   )
-  /* 合并调用：**一次 prompt 同时要三类产物**，旧的两个独立 prompt 必须已经删掉 */
   check(
-    /const BUNDLE_SYSTEM_PROMPT = `[\s\S]{0,1200}"tags"/.test(aiPageSource) &&
-      /"rawName"/.test(aiPageSource) &&
-      /"episodes"/.test(aiPageSource) &&
-      !/EPISODE_SYSTEM_PROMPT/.test(aiPageSource) &&
-      !/TAG_SYSTEM_PROMPT/.test(aiPageSource),
-    'AI 合并调用：一次 prompt 同时产 tags / rawName / season / episodes（旧的两个 prompt 已合并）',
+    aiPromptData.bundle.version === 'v7',
+    `合并调用版本 v7（数据里带版本，改 prompt 不必改代码）→ ${aiPromptData.bundle?.version}`,
   )
-  /* 缓存 key 必须带上 prompt 内容 hash + 模型名（换模型/改提示词不能命中旧结果） */
+  const bundlePrompt = String(aiPromptData.bundle.system || '')
   check(
-    /const bundleCacheKey = \(animeTitle, list\)/.test(aiPageSource) &&
-      /PROMPT_HASH\(BUNDLE_SYSTEM_PROMPT\)/.test(aiPageSource) &&
+    ['"tags"', '"rawName"', '"episodes"'].every((k) => bundlePrompt.includes(k)) &&
+      !/你是动漫资源文件名解析专家/.test(aiPageSource),
+    '一次 prompt 同时产 tags / rawName / season / episodes；**代码里没有硬编码提示词**',
+  )
+  check(
+    /mtimeOf\(/.test(aiPromptSource) && /data[\\/]prompts\.json|\.\.\/\.\.\/\.\.\/data/.test(aiPromptSource),
+    '提示词可被 data/prompts.json 覆盖，按 mtime 热加载（改完不用重启）',
+  )
+  check(
+    /aiRouter\.get\('\/ai\/prompts'/.test(aiRoutSource) && /aiRouter\.put\('\/ai\/prompts'/.test(aiRoutSource),
+    '提示词有读写接口（/api/ai/prompts）—— 后面设置页/画板直接改，不用动源码',
+  )
+  /* 改提示词 → hash 变 → 缓存自然失效（不需要谁记得升版本号） */
+  check(
+    /promptHashOf\('bundle'\)/.test(aiPageSource) &&
+      /promptHashOf\('format'\)/.test(aiPageSource) &&
+      /promptHashOf\('groupTags'\)/.test(aiPageSource) &&
       /config\.ai\.model/.test(aiPageSource),
-    '缓存 key 带「版本 + 模型 + prompt 内容 hash + 番名 + 文件名」—— 换模型/改提示词都不命中旧结果',
+    '缓存 key 带「模型 + 提示词内容 hash + 内容」—— 换模型/改提示词都不会命中旧结果',
   )
   /* 修订版标签的 type 必须是 version（早先 TYPE_ORDER 里写成 revision，排序会 NaN） */
   check(
-    /const TYPE_ORDER = \{ version: 0/.test(aiPageSource),
+    /TYPE_ORDER = \{ version: 0/.test(aiSharedSource),
     'TYPE_ORDER 用 `version`（与生成的标签 type 一致，排序不会失效）',
   )
   check(
-    /function dropCovered\(tags\)/.test(aiPageSource) && /const tags = dropCovered\(/.test(aiPageSource),
+    /function dropCovered\(tags\)/.test(aiSharedSource) && /const tags = dropCovered\(/.test(aiPageSource),
     '标签去重：去掉「被别的标签覆盖」的冗余项（HEVC-10bit 之于 HEVC、简繁内封字幕 之于 简繁内封）',
   )
   check(
@@ -189,6 +207,39 @@ try {
     /maxTitles: 40[,]?/.test(configSource) && /concurrency: 3/.test(configSource),
     '单批 40 条 × 并发 3（批小一点并发才用得上；120 条一批实测 18.7s → 40 条一批约 7s）',
   )
+
+  /* ── 提示词接口：提示词是**数据**，读得到、写得进、能恢复 ──────────────── */
+  const prompts0 = (await call('GET', '/api/ai/prompts')).body?.data
+  check(
+    prompts0?.keys?.length === 4 && Boolean(prompts0.prompts?.bundle?.hash),
+    `GET /api/ai/prompts → 4 段 + 每段内容 hash（source=${prompts0?.source}）`,
+  )
+  check(
+    Object.values(prompts0?.prompts || {}).every((p) => typeof p.system === 'string' && p.system.length > 100),
+    '接口能读到完整提示词正文（不用翻源码）',
+  )
+  if (prompts0?.source === 'default') {
+    // 只在没有用户覆盖时才做写测试（不能把人家自己的覆盖文件删了）
+    try {
+      const before = prompts0.prompts.series.hash
+      const put = await call('PUT', '/api/ai/prompts', {
+        prompts: { series: { system: `${prompts0.prompts.series.system}\n（验收临时改动：${Date.now()}）` } },
+      })
+      check(put.body?.data?.source === 'override', `PUT 写入覆盖 → source=${put.body?.data?.source}`)
+      const after = (await call('GET', '/api/ai/prompts')).body?.data
+      check(
+        after?.source === 'override' && after.prompts.series.hash !== before,
+        '热加载生效：来源变 override、内容 hash 变了（缓存随之失效，不用重启）',
+      )
+      const bad = await call('PUT', '/api/ai/prompts', { prompts: { bundle: { system: '' } } })
+      check(bad.res.status === 400, '空提示词被拒绝（400）—— 不拿空 prompt 污染缓存')
+    } finally {
+      const reset = await call('PUT', '/api/ai/prompts', { prompts: null })
+      check(reset.body?.data?.source === 'default', 'PUT prompts:null → 回退出厂默认（验收不留文件）')
+    }
+  } else {
+    console.log(`· 已有提示词覆盖文件（source=${prompts0?.source}）→ 跳过写入测试，不动你的文件`)
+  }
 
   /* ── 降级：没启用时调用要明确说「未配置」───────────────────────────── */
   const sample = ['[LoliHouse] 番名 - 01 [1080P][简繁][HEVC]', '[LoliHouse] 番名 - 02 [1080P][简繁][HEVC]']

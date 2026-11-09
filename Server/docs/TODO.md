@@ -50,13 +50,16 @@
 - 供应商目录可枚举（`GET /api/ai/providers`，models.dev，200 家、带模型名）
 - 每个 AI 能力有独立入口（`classifyReleaseTags` / `classifyEpisodes` / `classifyGroupTags` /
   `classifyReleaseFormat` / `classifySeries`）；标签与集数已经合并成**一次调用**
+- **提示词已经是数据**（`api/ai/prompts.json` + `data/prompts.json` 覆盖 + `GET/PUT /api/ai/prompts`）
+  —— 画板里可以直接改成"按事件编辑提示词"，不用动源码
 - 配置支持整份导出/导入（画板内容可以整个塞进 `ai.bindings`）
 
 落地顺序建议：
-1. 配置层：`ai.bindings = { [事件]: { baseUrl, apiKey?, model, maxTokens? } }`（缺省回落 `ai.*`）
-2. 调用层：`chatJson` 取 provider 时先查 `bindings[事件]`，没有再用全局
-3. UI：二级页面画布（节点 = 事件/供应商，连线 = 绑定）；先做「列表 + 下拉」的过渡版
-4. 验收：`verify-ai` 增加「同一事件按绑定选不同模型」的断言
+1. **设置页先加一段「提示词」编辑区**（读 `/api/ai/prompts`，直接编辑保存）—— 最小可用，先解决"改一句要动源码"
+2. 配置层：`ai.bindings = { [事件]: { baseUrl, apiKey?, model, maxTokens?, prompt? } }`（缺省回落 `ai.*`）
+3. 调用层：`chatJson` 取 provider 时先查 `bindings[事件]`，没有再用全局
+4. UI：二级页面画布（节点 = 事件/供应商，连线 = 绑定）；先做「列表 + 下拉」的过渡版
+5. 验收：`verify-ai` 增加「同一事件按绑定选不同模型」的断言
 
 ---
 

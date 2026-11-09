@@ -11,8 +11,17 @@
  * 错误照全局约定走 HTTP 状态码 + `{ ok:false, error }`；工具自身的失败不会用 200 假成功。
  */
 import { Router } from 'express'
+import { writeFileSync, rmSync, existsSync } from 'node:fs'
 import { AI_TOOLS, callAiTool } from '../api/ai-tools.js'
 import { aiCacheStats, classifyEpisodes, classifyReleaseTags } from '../api/pages/ai.js'
+import {
+  DEFAULT_FILE,
+  OVERRIDE_FILE,
+  PROMPT_KEYS,
+  promptHashOf,
+  promptSet,
+  promptSource,
+} from '../api/ai/prompts.js'
 import { aiProviderInfo, listModels } from '../api/sources/ai.js'
 import { listProviders } from '../api/sources/providers.js'
 import { fail } from '../lib/errors.js'
@@ -41,6 +50,75 @@ aiRouter.get('/ai/tools', (req, res) => {
       caches: aiCacheStats(),
     },
   })
+})
+
+/**
+ * GET /api/ai/prompts —— 当前生效的提示词（含来源与内容 hash）
+ * ---------------------------------------------------------------------------
+ * 提示词是**数据**（`api/ai/prompts.json` 出厂 + `data/prompts.json` 覆盖），
+ * 所以这里只读不写死：返回 `{ source, keys[], prompts: { key: { version, system, hash } } }`。
+ * `source` 会明确告诉你现在是出厂默认、还是读到了你的覆盖文件（覆盖文件写坏了也会写在这）。
+ */
+aiRouter.get('/ai/prompts', (req, res) => {
+  const prompts = promptSet()
+  res.json({
+    ok: true,
+    data: {
+      source: promptSource(),
+      overridable: true,
+      overrideFile: 'data/prompts.json',
+      defaultFile: 'src/api/ai/prompts.json',
+      keys: PROMPT_KEYS,
+      prompts: Object.fromEntries(
+        PROMPT_KEYS.map((key) => [
+          key,
+          { version: prompts[key]?.version ?? '', hash: promptHashOf(key), system: prompts[key]?.system ?? '' },
+        ]),
+      ),
+    },
+  })
+})
+
+/**
+ * PUT /api/ai/prompts —— 写覆盖文件（**不用改源码、不用重启**，按 mtime 热加载）
+ * ---------------------------------------------------------------------------
+ * body：`{ prompts: { bundle: { system, version? }, ... } }`
+ *   · 只写你想改的段即可，其余继续用出厂默认（逐段浅合并）
+ *   · `prompts: null` = 删掉覆盖文件，整份回退出厂默认
+ * 校验只做「能救命的」：段名合法、system 非空且长度 ≥ 20 —— 空 prompt 会把缓存和结果一起污染，
+ * 那种错误必须当场拦住（写坏了模型会返回一堆废话，排查成本远高于一次 400）。
+ */
+aiRouter.put('/ai/prompts', (req, res, next) => {
+  try {
+    const body = req.body || {}
+    if (body.prompts === null) {
+      if (existsSync(OVERRIDE_FILE)) rmSync(OVERRIDE_FILE, { force: true })
+      req.log.info('ai.prompts reset')
+      return res.json({ ok: true, data: { source: promptSource(), keys: PROMPT_KEYS } })
+    }
+
+    const incoming = body.prompts
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+      throw fail('BAD_REQUEST', 'body 需要是 { prompts: { bundle: { system } } }（传 null 表示恢复默认）')
+    }
+    const clean = {}
+    for (const [key, value] of Object.entries(incoming)) {
+      if (!PROMPT_KEYS.includes(key)) throw fail('BAD_REQUEST', `未知的提示词段 ${key}（可用：${PROMPT_KEYS.join(' / ')}）`)
+      const system = String(value?.system ?? '').trim()
+      if (system.length < 20) throw fail('BAD_REQUEST', `${key}.system 太短（至少要能说清任务；空 prompt 会污染缓存）`)
+      clean[key] = { system, ...(value?.version ? { version: String(value.version) } : {}) }
+    }
+    if (!Object.keys(clean).length) throw fail('BAD_REQUEST', 'prompts 是空的，没什么可保存')
+
+    writeFileSync(OVERRIDE_FILE, `${JSON.stringify(clean, null, 2)}\n`, 'utf8')
+    req.log.info({ keys: Object.keys(clean) }, 'ai.prompts update ok')
+    res.json({
+      ok: true,
+      data: { source: promptSource(), keys: PROMPT_KEYS, updated: Object.keys(clean) },
+    })
+  } catch (err) {
+    next(err)
+  }
 })
 
 /**
