@@ -194,10 +194,11 @@ const PROMPT_TEXT = {
 const PROMPTS = {
   source: 'override',
   keys: ['bundle', 'series', 'format', 'groupTags'],
-  customized: ['bundle'],
+  customized: ['bundle', 'series'],
   prompts: Object.fromEntries(
     Object.entries(PROMPT_TEXT).map(([key, system]) => {
-      const custom = key === 'bundle' ? '优先保留 1080P。' : ''
+      const custom =
+        key === 'bundle' ? '优先保留 1080P。' : key === 'series' ? '系列名统一用中文原名。' : ''
       return [
         key,
         {
@@ -406,7 +407,7 @@ console.log('\n— 下载页：卡片墙')
   if (process.env.VERIFY_PANEL_DEBUG) console.log('  [debug] 页面文本 =', text.slice(0, 160))
 }
 
-console.log('\n— 设置页：提示词（系统段 + 用户补充）')
+console.log('\n— 设置页：提示词（只编辑用户补充）')
 {
   const js = await buildEntry('prompts')
   const { win, text, errors } = await mountPage(js, 'http://127.0.0.1:3100/', 400)
@@ -417,17 +418,21 @@ console.log('\n— 设置页：提示词（系统段 + 用户补充）')
     '四个页签都在',
   )
   check(text.includes('有改动（用着你的版本）'), '顶部胶囊显示「有改动」（source=override）')
-  check(text.includes('系统提示词') && text.includes('用户补充'), '两段都有标题（系统提示词 / 用户补充）')
-  check(document.querySelectorAll('textarea').length === 2, '两段各一个输入框（都能改）')
-  check(
-    document.querySelector('textarea')?.value?.includes('"tags"'),
-    '系统段输入框里是带 JSON 结构的那段（真正的契约）',
-  )
-  check(text.includes('保存提示词'), '有保存按钮（没有改动时文案是「保存提示词」）')
-  check(text.includes('恢复这一段默认') && text.includes('全部恢复默认'), '有恢复默认的入口')
 
-  /* 改补充段 → 该页签出现未保存标记、按钮变成「保存 1 段」 */
-  const customBox = document.querySelectorAll('textarea')[1]
+  /* 系统段不展示：只留一个输入框，且里面是自定义段 */
+  check(document.querySelectorAll('textarea').length === 1, '只有一个输入框（系统段不在界面出现）')
+  check(!text.includes('你是动漫资源文件名解析专家'), '系统提示词正文没有出现在界面上')
+  check(
+    String(document.querySelector('textarea')?.value || '').includes('优先保留 1080P'),
+    '输入框里是「我的补充要求」',
+  )
+  check(text.includes('系统段') && text.includes('程序维护'), '只说了一句「系统段由程序维护」')
+  check(text.includes('prompts.json'), '需要改系统段时指了路（去改 JSON 文件）')
+  check(text.includes('恢复这一段默认'), '有恢复默认的入口')
+  check(/保存/.test(text), '有保存按钮')
+
+  /* 改补充段 → 页签出现未保存标记、按钮变成「保存 1 段」 */
+  const customBox = document.querySelector('textarea')
   customBox.value = '优先保留 2160P。'
   customBox.dispatchEvent(new win.Event('input', { bubbles: true }))
   await new Promise((r) => setTimeout(r, 120))
@@ -436,12 +441,12 @@ console.log('\n— 设置页：提示词（系统段 + 用户补充）')
   check(Boolean(document.querySelector('.tab-dot')), '改过的页签带未保存圆点')
   check(!realErrors(errors).length, '编辑没有渲染期异常', realErrors(errors)[0] || 'ok')
 
-  /* 切页签：输入框里换成那一段的内容（textarea 的 value 不进 textContent） */
+  /* 切页签：输入框换成那一段的补充（textarea 的 value 不进 textContent） */
   const seriesTab = [...document.querySelectorAll('.prompt-tab')].find((b) => b.textContent.includes('系列归一'))
   seriesTab?.dispatchEvent(new win.Event('click', { bubbles: true }))
   await new Promise((r) => setTimeout(r, 120))
-  const systemValue = String(document.querySelectorAll('textarea')[0]?.value || '')
-  check(systemValue.includes('namingStyle'), '点「系列归一」后输入框换成对应那段提示词')
+  const value = String(document.querySelector('textarea')?.value || '')
+  check(value.includes('系列名统一用中文原名'), '点「系列归一」后输入框换成那一段的补充')
   check(!realErrors(errors).length, '切页签没有渲染期异常', realErrors(errors)[0] || 'ok')
 }
 

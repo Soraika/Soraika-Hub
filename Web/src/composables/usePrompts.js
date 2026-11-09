@@ -1,15 +1,16 @@
 /**
- * 提示词编辑 —— 两段：系统段（我们的要求）+ 用户补充段
+ * 提示词编辑 —— 界面只暴露「用户补充」这一段
  * ---------------------------------------------------------------------------
- * 分工（也是后端保存时的校验依据）：
- *   system  输出契约（JSON 结构、字段名、禁止事项）。改坏它模型就回不出可用结构，
- *           所以保存时后端会检查关键字段名，缺了就 400；界面上照原样给提示。
- *   custom  使用者自己的补充（偏好、措辞、额外约束）。写什么都不影响结构。
- * 实际发给模型的是两段拼起来（服务端 composePrompt），前端不用管顺序。
+ * 两段的分工（跟后端一致）：
+ *   system  输出契约（JSON 结构、字段名、禁止事项）。不在界面展示：
+ *           它决定模型能不能回出可用结构，普通用户不该在这里动它。
+ *           会改文件的人直接编辑 Server/data/prompts.json 或出厂文件。
+ *   custom  使用者自己的补充（偏好、措辞、额外约束）。界面只编辑这段。
+ * 因此保存时只提交 custom：system 一律不碰，避免界面把别人手改的系统段覆盖回去。
  *
  * 三个刻意的决定：
  *   · 草稿与已保存值分开：编辑期间不动服务端，点保存才算数
- *   · 只提交改过的段：没改的段不入库，以后升级出厂默认也能生效
+ *   · 只提交改过的段，没改的不入库
  *   · 保存后重新拉一遍：界面显示的永远是服务端实际生效的内容
  */
 import { computed, ref } from 'vue'
@@ -18,7 +19,7 @@ import { fetchAiPrompts, resetAiPrompts, saveAiPrompts } from '@/api/ai'
 export function usePrompts() {
   /** @type {import('vue').Ref<null | { source:string, keys:string[], defaults:object, prompts:object }>} */
   const data = ref(null)
-  /** 草稿：段名 → { system, custom } */
+  /** 草稿：段名 → 补充段正文（系统段不参与编辑，也不放进草稿） */
   const draft = ref({})
   const loading = ref(false)
   const saving = ref(false)
@@ -28,18 +29,18 @@ export function usePrompts() {
 
   const keys = computed(() => data.value?.keys ?? [])
   const source = computed(() => data.value?.source ?? '')
-  const textOf = (key, part = 'system') => String(data.value?.prompts?.[key]?.[part] ?? '')
+  const textOf = (key, part = 'custom') => String(data.value?.prompts?.[key]?.[part] ?? '')
   const defaultOf = (key) => String(data.value?.defaults?.[key] ?? '')
   const hashOf = (key) => String(data.value?.prompts?.[key]?.hash ?? '')
-  const draftOf = (key, part = 'system') => String(draft.value?.[key]?.[part] ?? '')
+  /** 系统段字数：界面只显示一句「系统段 N 字（由程序维护）」，不给编辑 */
+  const systemLengthOf = (key) => String(data.value?.prompts?.[key]?.system ?? '').length
+  const draftOf = (key) => String(draft.value?.[key] ?? '')
 
-  /** 这一段改过没有（系统段或自定义段任一） */
-  const isDirty = (key) =>
-    Boolean(data.value) &&
-    (draftOf(key, 'system') !== textOf(key, 'system') || draftOf(key, 'custom') !== textOf(key, 'custom'))
+  /** 这一段改过没有（只比补充段：界面不编辑系统段） */
+  const isDirty = (key) => Boolean(data.value) && draftOf(key) !== textOf(key)
 
-  /** 这一段是不是「用户改动版」（自定义段有内容，或系统段和出厂默认不同） */
-  const isOverridden = (key) => textOf(key, 'custom').trim().length > 0 || textOf(key, 'system') !== defaultOf(key)
+  /** 这一段是不是「有用户改动」（补充段有内容，或系统段被换过） */
+  const isOverridden = (key) => textOf(key).trim().length > 0 || textOf(key, 'system') !== defaultOf(key)
 
   const dirtyKeys = computed(() => keys.value.filter((key) => isDirty(key)))
   const overriddenKeys = computed(() => keys.value.filter((key) => isOverridden(key)))
@@ -50,12 +51,7 @@ export function usePrompts() {
     try {
       const res = await fetchAiPrompts()
       data.value = res
-      draft.value = Object.fromEntries(
-        (res.keys || []).map((key) => [
-          key,
-          { system: String(res.prompts?.[key]?.system ?? ''), custom: String(res.prompts?.[key]?.custom ?? '') },
-        ]),
-      )
+      draft.value = Object.fromEntries((res.keys || []).map((key) => [key, String(res.prompts?.[key]?.custom ?? '')]))
     } catch (err) {
       error.value = err
       data.value = null
@@ -64,24 +60,13 @@ export function usePrompts() {
     }
   }
 
-  /** 某一段恢复出厂默认：系统段回默认正文、自定义段清空（只改草稿，点保存才写） */
-  function restoreDraft(key) {
-    draft.value = { ...draft.value, [key]: { system: defaultOf(key), custom: '' } }
-  }
-
-  function restoreAllDrafts() {
-    draft.value = Object.fromEntries(keys.value.map((key) => [key, { system: defaultOf(key), custom: '' }]))
-  }
-
   /** 放弃编辑（回到已保存内容） */
   function revert() {
-    draft.value = Object.fromEntries(
-      keys.value.map((key) => [key, { system: textOf(key, 'system'), custom: textOf(key, 'custom') }]),
-    )
+    draft.value = Object.fromEntries(keys.value.map((key) => [key, textOf(key)]))
   }
 
   /**
-   * 保存：只发改过的段（system + custom 一起发，后端会校验系统段的结构说明）
+   * 保存：只提交补充段（system 一律不碰）
    * @returns {Promise<boolean>}
    */
   async function save() {
@@ -92,15 +77,7 @@ export function usePrompts() {
       return false
     }
     const payload = {}
-    for (const key of changed) {
-      const system = draftOf(key, 'system').trim()
-      const custom = draftOf(key, 'custom').trim()
-      if (!system) {
-        message.value = '系统提示词不能为空'
-        return false
-      }
-      payload[key] = { system, custom }
-    }
+    for (const key of changed) payload[key] = { custom: draftOf(key).trim() }
 
     saving.value = true
     error.value = null
@@ -108,7 +85,7 @@ export function usePrompts() {
     try {
       await saveAiPrompts(payload)
       await load()
-      message.value = `已保存 ${changed.length} 段`
+      message.value = `已保存 ${changed.length} 段补充`
       return true
     } catch (err) {
       error.value = err
@@ -119,7 +96,10 @@ export function usePrompts() {
     }
   }
 
-  /** 立即把某一段写回出厂默认（直接写盘，不走草稿） */
+  /**
+   * 把某一段整段恢复出厂默认（系统段回默认 + 补充段清空）
+   * 这是显式动作，所以连系统段一起还原 —— 系统段平时不在界面出现。
+   */
   async function restoreOne(key) {
     if (saving.value) return
     saving.value = true
@@ -163,6 +143,7 @@ export function usePrompts() {
     textOf,
     defaultOf,
     hashOf,
+    systemLengthOf,
     draftOf,
     isDirty,
     isOverridden,
@@ -171,8 +152,6 @@ export function usePrompts() {
     load,
     save,
     revert,
-    restoreDraft,
-    restoreAllDrafts,
     restoreOne,
     restoreAll,
   }

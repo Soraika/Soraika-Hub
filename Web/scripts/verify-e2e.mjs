@@ -1208,11 +1208,11 @@ try {
     '提示词卡片挂在 AI 分组下面（不参与分组保存：它是外置配置）',
   )
   check(
-    (promptEditorSource.match(/<textarea/g) || []).length === 2 &&
-      promptEditorSource.includes('系统提示词') &&
-      promptEditorSource.includes('用户补充') &&
-      promptEditorSource.includes('保存提示词'),
-    '提示词卡片：系统段与补充段各有输入框，并有保存按钮',
+    (promptEditorSource.match(/<textarea/g) || []).length === 1 &&
+      promptEditorSource.includes('你的补充要求') &&
+      promptEditorSource.includes('prompts.json') &&
+      promptEditorSource.includes('保存'),
+    '提示词卡片只暴露「你的补充要求」一个输入框（系统段不展示，去改 JSON）',
   )
   check(
     usePromptsSource.includes('fetchAiPrompts') &&

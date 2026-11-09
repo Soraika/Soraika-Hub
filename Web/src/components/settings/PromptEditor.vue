@@ -7,8 +7,10 @@
       </h2>
       <span class="pill" :class="source === 'override' ? 'pill-accent' : 'pill-muted'">{{ sourceText }}</span>
       <p class="prompt-hint">
-        分两段：系统段是我们的输出要求（保存时会校验 JSON 结构与字段名，缺了不让存）；
-        补充段是你自己的偏好，拼在系统段后面、优先级更低。保存后立即生效，不用重启。
+        这里只写「你自己的要求」（偏好、措辞、额外约束），它会接在系统提示词后面一起发给模型，优先级更低。
+        系统提示词（输出结构那部分）由程序维护、在这里不展示 —— 需要调整请编辑
+        <code>Server/src/api/ai/prompts.json</code>（或放一份 <code>Server/data/prompts.json</code> 覆盖）。
+        保存后立即生效，不用重启。
       </p>
     </header>
 
@@ -28,7 +30,7 @@
           @click="activeKey = tab.key"
         >
           {{ tab.label }}
-          <span v-if="isOverridden(tab.key)" class="tab-flag" title="这一段有改动或补充（和出厂默认不同）">改</span>
+          <span v-if="isOverridden(tab.key)" class="tab-flag" title="这一段有你的补充（或系统段被换过）">改</span>
           <span v-if="isDirty(tab.key)" class="tab-dot" title="有未保存的修改" />
         </button>
       </div>
@@ -36,33 +38,20 @@
       <p class="prompt-meta">
         <span>{{ activeTab.hint }}</span>
         <span class="prompt-num">
-          hash {{ hashOf(activeKey) }} · 系统 {{ draftOf(activeKey, 'system').length }} 字 · 补充
-          {{ draftOf(activeKey, 'custom').length }} 字
+          系统段 {{ systemLengthOf(activeKey) }} 字（程序维护） · hash {{ hashOf(activeKey) }}
         </span>
       </p>
 
-      <label class="prompt-label" :for="`p-system-${activeKey}`">
-        系统提示词
-        <span class="prompt-label-hint">输出契约在里面（JSON 结构、字段名），删掉就会存不进去</span>
-      </label>
-      <textarea
-        :id="`p-system-${activeKey}`"
-        v-model="draft[activeKey].system"
-        class="prompt-text prompt-text-system input-surface"
-        spellcheck="false"
-        rows="12"
-      />
-
       <label class="prompt-label" :for="`p-custom-${activeKey}`">
-        用户补充
-        <span class="prompt-label-hint">可以随便写；留空就是只用系统段</span>
+        你的补充要求
+        <span class="prompt-label-hint">留空就是只用系统提示词；这段写错不会导致解析失败（服务端会自动回退默认）</span>
       </label>
       <textarea
         :id="`p-custom-${activeKey}`"
-        v-model="draft[activeKey].custom"
+        v-model="draft[activeKey]"
         class="prompt-text input-surface"
         spellcheck="false"
-        rows="4"
+        rows="10"
         :placeholder="activeTab.example"
       />
 
@@ -70,18 +59,19 @@
         <button
           class="prompt-link"
           type="button"
-          :disabled="saving"
-          title="系统段回到出厂正文、补充段清空（只改草稿，点保存才写入）"
-          @click="restoreDraft(activeKey)"
+          :disabled="saving || !isOverridden(activeKey)"
+          title="这一段恢复出厂默认（补充清空；会真的写入）"
+          @click="askRestore(activeKey)"
         >
           <IconRestore :size="13" /> 恢复这一段默认
         </button>
         <button
+          v-if="overriddenKeys.length"
           class="prompt-link"
           type="button"
           :disabled="saving"
-          title="四段都改回出厂默认（只改草稿，点保存才写入）"
-          @click="restoreAllDrafts"
+          title="四段全部恢复出厂默认（删除 data/prompts.json）"
+          @click="askRestore('*')"
         >
           <IconRestore :size="13" /> 全部恢复默认
         </button>
@@ -89,10 +79,10 @@
           撤销改动
         </button>
 
-        <span class="prompt-msg" :class="{ bad: /失败|不能为空/.test(message) }">{{ message }}</span>
+        <span class="prompt-msg" :class="{ bad: /失败/.test(message) }">{{ message }}</span>
 
         <button class="prompt-save" type="button" :disabled="saving" @click="onSave">
-          {{ saving ? '保存中…' : dirtyKeys.length ? `保存 ${dirtyKeys.length} 段` : '保存提示词' }}
+          {{ saving ? '保存中…' : dirtyKeys.length ? `保存 ${dirtyKeys.length} 段` : '保存' }}
         </button>
       </div>
     </template>
@@ -106,26 +96,23 @@ import StateBlock from '@/components/ui/StateBlock.vue'
 import { usePrompts } from '@/composables/usePrompts'
 
 /*
- * 提示词（系统段 + 用户补充）
+ * 提示词（只编辑「用户补充」那段）
  * ---------------------------------------------------------------------------
- * 为什么拆两段：系统段是输出契约（JSON 里必须有 tags / episodes 这些字段），
- * 改坏就会「标签突然全没了」；补充段是纯偏好，写错顶多解析得差一点。
- * 所以两段都能改，但系统段保存时由后端校验关键字段名，缺了直接 400。
- *
- * 模型跑偏（返回的不是约定结构）时，服务端会自动用出厂默认再跑一次，
- * 结果里带 promptFallback，界面上不额外打扰（面板的 AI 位本来就有状态提示）。
+ * 系统段是输出契约（JSON 里必须有 tags / episodes 这些字段），改坏就会「标签突然全没了」。
+ * 普通用户不需要它，所以界面不展示；会改文件的人直接改 JSON（那里有完整注释）。
+ * 界面上只留补充段：写偏好、措辞都不会破坏结构，写偏了服务端也会回退默认。
  */
 const TABS = [
   {
     key: 'bundle',
     label: '标签 + 集数',
-    hint: '一次调用同时产出筛选标签与每条资源的集数，最常改的就是这段。',
+    hint: '一次调用同时产出筛选标签与每条资源的集数，最常需要补充的就是这段。',
     example: '例如：优先保留 1080P；简繁内嵌优先；字幕组相关判断从严。',
   },
   {
     key: 'series',
     label: '系列归一',
-    hint: '判断命名风格、系列总名、番外归类。链序由代码给出，这里只负责归类与命名。',
+    hint: '判断命名风格、系列总名、番外归类。链序由代码给出，这里只补充命名偏好。',
     example: '例如：系列名统一用中文原名；剧场版一律算番外。',
   },
   {
@@ -137,7 +124,7 @@ const TABS = [
   {
     key: 'groupTags',
     label: '组标记 → 组名',
-    hint: '把文件名开头的组标记对应到库里的组名。系统段里的 {{NAMES}} 占位符不能删。',
+    hint: '把文件名开头的组标记对应到库里的组名；系统段里的 {{NAMES}} 是字典占位符。',
     example: '例如：库里没有的组一律给 null，不要新造名字。',
   },
 ]
@@ -151,15 +138,16 @@ const {
   message,
   source,
   hashOf,
-  draftOf,
+  systemLengthOf,
   isDirty,
   isOverridden,
   dirtyKeys,
+  overriddenKeys,
   load,
   save,
   revert,
-  restoreDraft,
-  restoreAllDrafts,
+  restoreOne,
+  restoreAll,
 } = usePrompts()
 
 const activeKey = ref('bundle')
@@ -167,6 +155,14 @@ const activeTab = computed(() => TABS.find((tab) => tab.key === activeKey.value)
 const sourceText = computed(() => (source.value === 'override' ? '有改动（用着你的版本）' : source.value ? '出厂默认' : ''))
 
 const onSave = () => save()
+
+/** 恢复默认会真的写盘，所以确认一次 */
+function askRestore(which) {
+  const label = which === '*' ? '四段提示词' : `「${TABS.find((t) => t.key === which)?.label}」这段的补充要求`
+  if (!window.confirm(`把${label}恢复成出厂默认？\n你写的补充会被删除。`)) return
+  if (which === '*') restoreAll()
+  else restoreOne(which)
+}
 
 onMounted(load)
 </script>
@@ -199,7 +195,16 @@ onMounted(load)
   grid-column: 1 / -1;
   color: var(--text-tertiary);
   font-size: 0.75rem;
-  line-height: 1.6;
+  line-height: 1.7;
+}
+/* 说明里提到的文件路径用等宽字，方便照着找 */
+.prompt-hint code {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
 }
 
 /* 页签 */
@@ -270,7 +275,6 @@ onMounted(load)
   font-size: 0.7rem;
 }
 
-/* 两段的标题行：左边是段名，右边一句极小说明 */
 .prompt-label {
   display: flex;
   align-items: baseline;
@@ -291,13 +295,9 @@ onMounted(load)
   padding: 10px 12px;
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 0.74rem;
-  line-height: 1.6;
+  font-size: 0.76rem;
+  line-height: 1.65;
   resize: vertical;
-}
-/* 系统段要比补充段更"重"：它是契约，一眼看出这段不能乱删 */
-.prompt-text-system {
-  background: color-mix(in srgb, var(--accent) 4%, var(--bg-input));
 }
 .prompt-text:focus {
   outline: none;
@@ -309,7 +309,7 @@ onMounted(load)
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  margin-top: 12px;
+  margin-top: 10px;
 }
 .prompt-link {
   display: inline-flex;
