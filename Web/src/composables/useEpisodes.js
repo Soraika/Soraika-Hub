@@ -17,10 +17,6 @@ export function useEpisodes() {
   const state = ref('idle')
   /** title → 集号 / 范围 */
   const episodes = ref({})
-  /** 模型认出的季（下载重命名会用） */
-  const season = ref(null)
-  /** 去掉季数标识的纯番名 */
-  const rawName = ref('')
   /** @type {import('vue').Ref<import('@/api/http').ApiError | null>} */
   const error = ref(null)
 
@@ -32,7 +28,7 @@ export function useEpisodes() {
   let token = 0
 
   /**
-   * @param {string} animeTitle 作品标题（帮模型认清季数）
+   * @param {string} animeTitle 作品标题（帮模型认清这批资源属于谁）
    * @param {string[]} titles 这一批资源文件名（一批最多 120 条）
    * @param {{ merge?: boolean, season?: string|number }} [options]
    *   merge=true 时累加到已有结果（「显示更多」拉下一批）；season 只做消歧（进 prompt，不进缓存 key）
@@ -45,8 +41,6 @@ export function useEpisodes() {
     const hit = cache.get(key)
     if (hit) {
       episodes.value = merge ? { ...hit.episodes, ...episodes.value } : hit.episodes || {}
-      season.value = merge ? season.value ?? hit.season : hit.season ?? null
-      rawName.value = merge ? rawName.value || hit.rawName : hit.rawName || ''
       state.value = 'ready'
       return
     }
@@ -59,9 +53,6 @@ export function useEpisodes() {
       if (myToken !== token) return // 已经切到别的字幕组/作品了
       cache.set(key, res)
       episodes.value = merge ? { ...res.episodes, ...episodes.value } : res.episodes || {}
-      // 季与番名以**首批**为准（同一部作品的资源不会各有各的季）
-      season.value = merge ? season.value ?? res.season ?? null : res.season ?? null
-      rawName.value = merge ? rawName.value || res.rawName : res.rawName || ''
       state.value = 'ready'
     } catch (err) {
       if (myToken !== token) return
@@ -75,5 +66,5 @@ export function useEpisodes() {
     }
   }
 
-  return { state, episodes, season, rawName, error, load }
+  return { state, episodes, error, load }
 }

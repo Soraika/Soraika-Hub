@@ -132,14 +132,15 @@ try {
     `四个能力的提示词都在 prompts.json 里（${promptKeys.join(' / ')}）`,
   )
   check(
-    aiPromptData.bundle.version === 'v9',
-    `合并调用版本 v9（数据里带版本，改 prompt 不必改代码）→ ${aiPromptData.bundle?.version}`,
+    /^v\d+$/.test(String(aiPromptData.bundle.version || '')),
+    `合并调用提示词带版本标记（现在 ${aiPromptData.bundle?.version}；版本在数据里，改 prompt 不必改代码）`,
   )
   const bundlePrompt = String(aiPromptData.bundle.system || '')
   check(
-    ['"tags"', '"rawName"', '"episodes"'].every((k) => bundlePrompt.includes(k)) &&
+    ['"tags"', '"episodes"'].every((k) => bundlePrompt.includes(k)) &&
+      !bundlePrompt.includes('"rawName"') &&
       !/你是动漫资源文件名解析专家/.test(aiPageSource),
-    '一次 prompt 同时产 tags / rawName / season / episodes；**代码里没有硬编码提示词**',
+    '一次 prompt 只产 tags + episodes（番名我们本来就传进去了，季由系列季位决定）；代码里没有硬编码提示词',
   )
   check(
     /mtimeOf\(/.test(aiPromptSource) && /data[\\/]prompts\.json|\.\.\/\.\.\/\.\.\/data/.test(aiPromptSource),

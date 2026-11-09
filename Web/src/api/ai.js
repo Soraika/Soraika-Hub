@@ -26,12 +26,7 @@ export const fetchAiProviders = () => apiGet('/api/ai/providers', { timeout: 200
 
 /**
  * 资源文件名 → 筛选标签
- * @param {string[]} titles 资源文件名列表
- * @returns {Promise<{ tags:Array<{name:string,type:string,match:string[]}>, info:string[],
- *                     model:string, cached:boolean, ms:number }>}
- */
-/**
- * 资源文件名 → 筛选标签（带作品上下文；**全量**分析：后端按 `ai.maxTitles` 单批上限切批、并发跑完）
+ * 带作品上下文；全量分析：后端按单批上限切批、批间并发跑完，结果按内容哈希缓存。
  * @param {string[]} titles 资源文件名
  * @param {{ animeTitle?: string, season?: string|number }} [context]
  * @returns {Promise<{ tags:Array<{name:string,type:string,all:boolean,match:string[]}>,
@@ -42,12 +37,13 @@ export function classifyReleaseTags(titles, { animeTitle = '', season = '' } = {
 }
 
 /**
- * 资源文件名 → 集数 / 季 / 纯番名
- * 集数**由 AI 逐条解析**（前端本地规则只做兜底）：文件名写法补不完，
+ * 资源文件名 → 每条资源的集数
+ * 集数由 AI 逐条解析（前端本地规则只做兜底）：文件名写法补不完，
  * 而 AI 对 `- 1180 (B-Global …)`、`S01E12`、`第1180集` 这类一律认得。
- * @param {string} animeTitle 作品标题（帮模型认清季数）
+ * 番名与季不在返回里：番名就是传进去的 animeTitle，季由系列的季位决定。
+ * @param {string} animeTitle 作品标题（帮模型认清这批资源属于谁）
  * @param {string[]} titles 资源文件名
- * @returns {Promise<{ rawName:string, season:number, episodes:Record<string, number|string|null>,
+ * @returns {Promise<{ episodes:Record<string, number|string|null>,
  *                     model:string, batches:number, cached:boolean, ms:number }>}
  */
 export function classifyEpisodes(animeTitle, titles, { season = '' } = {}) {

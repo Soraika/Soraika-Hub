@@ -1,22 +1,20 @@
 /**
  * AI 能力层 —— 把「一段文件名」变成面板能直接用的标签 / 集数
  * ---------------------------------------------------------------------------
- * 两个能力（对应旧版 classifier.js 的 classifyTags / classifyDownload）：
- *   ① classifyReleaseTags  —— 从资源文件名里提筛选标签（分辨率 / 字幕 / 片源…）
- *   ② classifyEpisodes     —— 从资源文件名里提「纯番名 / 第几季 / 每条资源的集数」
+ * 两个入口（对应旧版 classifier.js 的 classifyTags / classifyDownload）：
+ *   1. classifyReleaseTags  从资源文件名里提筛选标签（分辨率 / 字幕 / 片源…）
+ *   2. classifyEpisodes     从资源文件名里提每条资源的集数
  *
- * 为什么要它们：Mikan 给的文件名是「文案」，不能直接拿来筛和重命名 ——
- *   标签给面板当筛选条件（点「1080P」就只剩 1080P 的资源），
- *   集数给下载重命名用（`番名 S01E03`）。
+ * 为什么要它们：Mikan 给的文件名是文案，不能直接拿来筛和重命名。
+ * 标签给面板当筛选条件（点「1080P」就只剩 1080P 的资源），集数给下载重命名用。
  *
  * 约定与边界：
- *   · 结果是**成品**：标签已按类型排好序（后端排序，前端不排序），集数已归一成数字或范围串
- *   · **提示词是数据**：四段 prompt 在 `api/ai/prompts.json`（可被 `data/prompts.json` 覆盖，热加载）；
- *     这个文件只管"怎么调"，不管"说什么"—— 改措辞不用改代码、不用重启
- *   · 缓存按「文件名内容哈希 + 提示词内容哈希 + 模型」做 key（改 prompt / 换模型都会自然 miss）
- *   · 不做的事：不落库 —— AI 结果属可重算的派生数据，进程内缓存够用（要持久化再加表）
- *   · 集数解析**分批串行**：一次任务可能上百条资源，串行能把上游限流风险压到最低，
- *     代价是慢（每批一次调用）；想快就把循环改成并发 3 左右
+ *   · 结果是成品：标签已按类型排好序（后端排序，前端不排序），集数已归一成数字或范围串
+ *   · 提示词是数据：四段 prompt 在 api/ai/prompts.json（可被 data/prompts.json 覆盖，热加载）。
+ *     这个文件只管「怎么调」，不管「说什么」—— 改措辞不用改代码、不用重启
+ *   · 缓存 key = 模型 + 提示词内容哈希 + 文件名内容哈希（改 prompt / 换模型都会自然 miss）
+ *   · 不落库：AI 结果属可重算的派生数据，进程内缓存够用（要持久化再加表）
+ *   · 番名与季不由这里产出：番名是调用方传进来的，季由系列的季位决定
  */
 import { config } from '../../config.js'
 import { fail } from '../../lib/errors.js'
@@ -42,10 +40,10 @@ const tagCache = createMemCache({ ttlMs: () => config.ai.tagCacheTtlMs, max: 200
 const episodeCache = createMemCache({ ttlMs: () => config.ai.episodeCacheTtlMs, max: 200 })
 
 /* ── ① 标签 + 集数（一次调用拿齐）────────────────────────────────────────────
-   **全量**：有多少条文件名就分析多少条。单批大小是内部常数（`ai.maxTitles`，默认 40），
-   切批后**批间并发**按 `ai.concurrency`（并发上限，默认 3）跑完，结果合并去重 —— 绝不"只分析前 N 条"。
-   提示词本身在 `api/ai/prompts.json`（可被 `data/prompts.json` 覆盖，热加载）——
-   这个文件只管**怎么调**，不管**说什么**。 */
+   全量：有多少条文件名就分析多少条。单批大小是内部常数（ai.maxTitles，默认 40），
+   切批后批间并发按 ai.concurrency（并发上限，默认 3）跑完，结果合并去重，绝不只分析前 N 条。
+   提示词本身在 api/ai/prompts.json（可被 data/prompts.json 覆盖，热加载），
+   这个文件只管怎么调，不管说什么。 */
 
 /** 拼一次请求的 user prompt：带作品上下文（番名 / 季），让模型知道自己在分析什么 */
 const bundleUserPrompt = (batch, context) =>
@@ -54,35 +52,34 @@ const bundleUserPrompt = (batch, context) =>
     .join('\n')}`
 
 /**
- * 缓存 key：**版本 + 模型 + prompt 内容 hash + 番名 + 文件名** 都参与
+ * 缓存 key：版本 + 模型 + 提示词内容 hash + 番名 + 文件名
  * ---------------------------------------------------------------------------
- * 早先只带「版本 + 文件名」——换模型、或改了提示词却忘了升版本号时，
- * 旧结果会继续命中（表现出来就是"改了没生效"）。现在三个要素都进 key。
- * **季不参与 key**：同一个番名 + 同一批文件名，问一次就够了；
- * 把季写进 key 会让「标签带季、集数不带季」变成两次调用（合并调用的意义就没了）。
+ * 早先只带「版本 + 文件名」：换模型、或改了提示词却忘了升版本号时，旧结果会继续命中
+ * （表现出来就是「改了没生效」）。现在这些要素都进 key。
+ * 季不参与 key：同一个番名 + 同一批文件名，问一次就够了；把季写进 key 会让
+ * 「标签带季、集数不带季」变成两次调用（合并调用的意义就没了）。
  */
 const bundleCacheKey = (animeTitle, list) =>
   [promptVersion('bundle'), config.ai.model, promptHashOf('bundle'), hashOf([animeTitle, ...list])].join(':')
 
 /**
- * 同一个 key 的**在途请求**（并发合流）
+ * 同一个 key 的在途请求（并发合流）
  * ---------------------------------------------------------------------------
- * 面板会同时发两个请求：`/classify/tags` 和 `/classify/episodes` —— 它们算的是**同一个 bundle**
- * （同一番名 + 同一批文件名），原来两边都查缓存、都 miss，于是**并发打两次模型**
- * （实测日志里成对出现：`5466ms` + `5546ms`，同一批 36 条）。
+ * 面板会同时发两个请求：/classify/tags 和 /classify/episodes。它们算的是同一个 bundle
+ * （同一番名 + 同一批文件名），原来两边都查缓存、都 miss，于是并发打两次模型
+ * （实测日志里成对出现：5466ms + 5546ms，同一批 36 条）。
  * 后果：延迟翻倍（同 key 的并发请求会被供应商排队）、token 翻倍。
  *
- * 现在：第一个请求负责真的去问模型，其余同 key 的请求**挂在同一个 Promise 上**，
- * 拿到结果后各自按 `cached: true` 返回 —— 一次模型调用，两个入口都用得上。
+ * 现在：第一个请求负责真的去问模型，其余同 key 的请求挂在同一个 Promise 上，
+ * 拿到结果后各自按 cached:true 返回。一次模型调用，两个入口都用得上。
  */
 const inflight = new Map()
 
 /**
- * **一次调用拿三类产物**：标签 + 纯番名/季 + 每条集数
+ * 一次调用拿两类产物：标签 + 每条集数
  * ---------------------------------------------------------------------------
- * 全量分批（单批 `ai.maxTitles` 条，批间按 `ai.concurrency` 并发），结果合并：
- *   · 标签：同名把 `match` 合起来，`all` 由**全量**重算（单批模型判断覆盖不了全部）
- *   · 番名 / 季：以**第一批**为准（同一部作品不会各有各的季）
+ * 全量分批（单批 ai.maxTitles 条，批间按 ai.concurrency 并发），结果合并：
+ *   · 标签：同名把 match 合起来，all 由全量重算（单批模型判断覆盖不了全部）
  *   · 集数：逐条合并，认不出就给 null（宁缺勿错）
  * 结果同时写进两个缓存（标签 30 分钟 / 集数 24 小时），各自按自己的 TTL 命中。
  */
@@ -124,13 +121,11 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
 
     const model = runs[runs.length - 1]?.model || config.ai.model
 
-    /* ① 标签：同名合并 match；all 按全量重算 */
+    /* 标签：同名合并 match；all 按全量重算 */
     const merged = new Map()
     const episodes = {}
-    let rawName = String(animeTitle || '').trim()
-    let seasonNo = 1
 
-    for (const [index, run] of runs.entries()) {
+    for (const run of runs) {
       for (const raw of Array.isArray(run.parsed?.tags) ? run.parsed.tags : []) {
         const name = String(raw?.display || '').trim()
         if (!name) continue
@@ -138,12 +133,6 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
         const hit = merged.get(name)
         if (hit) hit.match = [...new Set([...hit.match, ...match])]
         else merged.set(name, { name, type: VALID_TYPES.has(raw?.type) ? raw.type : 'other', match })
-      }
-
-      // 番名 / 季以第一批为准
-      if (index === 0) {
-        if (run.parsed?.rawName) rawName = String(run.parsed.rawName).trim()
-        if (Number(run.parsed?.season) > 0) seasonNo = Number(run.parsed.season)
       }
 
       for (const [name, value] of Object.entries(run.parsed?.episodes || {})) {
@@ -162,10 +151,10 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
       }))
       .filter((t) => t.name && t.match.length)
 
-    /**
-     * 本地只兜**完全等价**这一种（两组 match 一模一样 ⇒ 筛出来的资源完全相同）。
-     * 「包含就算重复」那种判断已经从代码里删掉了 —— 它会把「简体内嵌 / 简体内嵌+繁体外挂」
-     * 这种真实差异误删。判断性去重交给提示词（prompts.json 的【去重】段）。
+    /*
+     * 本地只兜「完全等价」这一种（两组 match 一模一样，筛出来的资源完全相同）。
+     * 「包含就算重复」那种判断已经从代码里删掉了：它会把「简体内嵌」与
+     * 「简体内嵌+繁体外挂」这种真实差异误删。判断性去重交给提示词（prompts.json 的【去重】段）。
      */
     const deduped = dropIdentical(candidates)
     if (deduped.length !== candidates.length) {
@@ -179,16 +168,20 @@ async function classifyBundle(titles, { log = logger, animeTitle = '', season = 
         a.name.localeCompare(b.name),
     )
 
-    /* 修订版：字幕组修版重发（v2 / 修正版 / Rework / Repack…），这个标签**仍由本地规则**统一
-       —— 它是确定性判定（`lib/format.js` 的 revisionOf），而且 `kind: 'revision'` 要驱动前端的
-       「优选」语义（同集有修订用修订、没有的照旧保留），这条不能交给模型自由发挥。 */
+    /*
+     * 修订版（v2 / 修正版 / Rework / Repack）这个标签仍由本地规则统一：
+     * 它是确定性判定（lib/format.js 的 revisionOf），而且 kind=revision 要驱动前端的
+     * 「优选」语义（同集有修订用修订、没有的照旧保留），不能交给模型自由发挥。
+     */
     const revised = list.filter((title) => revisionOf(title) >= 2).length
     if (revised) tags.unshift({ name: '修订版', type: 'version', kind: 'revision', count: revised, match: [] })
 
+    /*
+     * 结果里只有标签与集数。番名不进结果：调用方本来就把它传进来了（animeTitle），
+     * 让模型再吐一遍纯属多花 token、多一次出错机会；季由系列的季位决定，也不该由这里猜。
+     */
     const result = {
       tags,
-      rawName,
-      season: seasonNo,
       episodes,
       model,
       ms: Date.now() - startedAt,
@@ -234,17 +227,16 @@ export async function classifyReleaseTags(titles, options = {}) {
 }
 
 
-/* ── ② 集数 / 季 / 纯番名解析 ───────────────────────────────────────────── */
+/* ── ② 集数解析 ───────────────────────────────────────────────────────────── */
 
 /**
- * 资源文件名 → 纯番名 / 季 / 每条资源的集数（**合并调用**里的那部分）
+ * 资源文件名 → 每条资源的集数（合并调用里的那部分）
  * ---------------------------------------------------------------------------
- * 与 `classifyReleaseTags` 走**同一次模型调用**（v7 起合并）：命中缓存时零成本，
- * 没命中时一次拿齐三类产物 —— 所以「先解析标签、再解析集数」不会变成两次调用。
- * 番名 / 季以第一批为准；集数逐条合并（认不出给 null）。
- * @param {string} animeTitle 作品标题（帮模型认清季数）
+ * 与 classifyReleaseTags 走同一次模型调用：命中缓存时零成本，没命中时一次拿齐。
+ * 番名不进结果（调用方本来就传进来了），季由系列的季位决定。
+ * @param {string} animeTitle 作品标题（帮模型认清这批资源属于谁）
  * @param {string[]} titles 资源文件名列表
- * @returns {Promise<{ rawName:string, season:number, episodes:Record<string, number|string|null>,
+ * @returns {Promise<{ episodes:Record<string, number|string|null>,
  *                     model:string, batches:number, analyzed:number, cached:boolean, ms:number }>}
  */
 export async function classifyEpisodes(animeTitle, titles, options = {}) {
@@ -259,8 +251,6 @@ export async function classifyEpisodes(animeTitle, titles, options = {}) {
     kind: 'episodes',
   })
   return {
-    rawName: bundle.rawName,
-    season: bundle.season,
     episodes: bundle.episodes,
     model: bundle.model,
     batches: bundle.batches,
@@ -271,10 +261,10 @@ export async function classifyEpisodes(animeTitle, titles, options = {}) {
 }
 
 /* ── ③ 系列归一（命名风格 / 系列总名 / 番外归类）─────────────────────────────
-   与标签、集数不同：**链序不由 AI 判断**（正传链是代码按「续集/前传」走出来的，作为输入给它），
-   它只决定三件事：`namingStyle`（S01 还是 01 名字）、`rootTitle`（顶层目录名）、番外的归类。
-   结果落在 anime 表（series_* 那几列），所以这里**不需要另设缓存**。
-   改了下面的 prompt 必须同步升 SERIES_PROMPT_VERSION（否则老库里的旧结果看起来「没生效」）。 */
+   与标签、集数不同：链序不由 AI 判断（正传链是代码按「续集/前传」走出来的，作为输入给它），
+   它只决定三件事：namingStyle（S01 还是 01 名字）、rootTitle（顶层目录名）、番外的归类。
+   结果落在 anime 表（series_* 那几列），所以这里不需要另设缓存。
+   提示词在 prompts.json 的 series 段（改措辞不用动这里，缓存 key 带内容 hash）。 */
 
 
 /**

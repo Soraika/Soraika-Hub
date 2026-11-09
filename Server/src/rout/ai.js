@@ -55,9 +55,10 @@ aiRouter.get('/ai/tools', (req, res) => {
 /**
  * GET /api/ai/prompts —— 当前生效的提示词（含来源与内容 hash）
  * ---------------------------------------------------------------------------
- * 提示词是**数据**（`api/ai/prompts.json` 出厂 + `data/prompts.json` 覆盖），
- * 所以这里只读不写死：返回 `{ source, keys[], prompts: { key: { version, system, hash } } }`。
- * `source` 会明确告诉你现在是出厂默认、还是读到了你的覆盖文件（覆盖文件写坏了也会写在这）。
+ * 提示词是数据（api/ai/prompts.json 出厂 + data/prompts.json 覆盖），
+ * 所以这里只读不写死。返回答：
+ *   { source, keys[], prompts: { key: { version, system, hash } } }
+ * source 会说明现在是出厂默认、还是读到了覆盖文件（覆盖文件写坏了也写在这里）。
  */
 aiRouter.get('/ai/prompts', (req, res) => {
   const prompts = promptSet()
@@ -80,13 +81,13 @@ aiRouter.get('/ai/prompts', (req, res) => {
 })
 
 /**
- * PUT /api/ai/prompts —— 写覆盖文件（**不用改源码、不用重启**，按 mtime 热加载）
+ * PUT /api/ai/prompts —— 写覆盖文件（不用改源码、不用重启，按 mtime 热加载）
  * ---------------------------------------------------------------------------
- * body：`{ prompts: { bundle: { system, version? }, ... } }`
- *   · 只写你想改的段即可，其余继续用出厂默认（逐段浅合并）
- *   · `prompts: null` = 删掉覆盖文件，整份回退出厂默认
- * 校验只做「能救命的」：段名合法、system 非空且长度 ≥ 20 —— 空 prompt 会把缓存和结果一起污染，
- * 那种错误必须当场拦住（写坏了模型会返回一堆废话，排查成本远高于一次 400）。
+ * body：{ prompts: { bundle: { system, version? }, ... } }
+ *   · 只写想改的段即可，其余继续用出厂默认（逐段浅合并）
+ *   · prompts: null 表示删掉覆盖文件，整份回退出厂默认
+ * 校验只做能救命的：段名合法、system 非空且长度不小于 20。空 prompt 会把结果和缓存
+ * 一起污染，这种错误必须当场拦住（比事后排查一堆废话便宜得多）。
  */
 aiRouter.put('/ai/prompts', (req, res, next) => {
   try {
