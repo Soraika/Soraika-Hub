@@ -175,19 +175,24 @@ check(archivePatch(subjectLines[0], { episodes: 3 }).total_episodes === 3, '总�
 
 /* ── 建库：4 行（1 空、2 已有旧值、5 集数偏小、999 不在 dump 里）──────────── */
 const now = Date.now()
-db.prepare('INSERT INTO anime (bgm_id, title, created_at, updated_at) VALUES (?, ?, ?, ?)').run('1', '番甲', now, now)
+db.prepare('INSERT INTO anime (bgm_id, title_mikan, updated_at) VALUES (?, ?, ?)').run('1', '番甲', now)
+db.prepare('INSERT INTO anime (bgm_id, title_mikan, updated_at) VALUES (?, ?, ?)').run('999', '番丙', now)
+db.prepare('INSERT INTO anime (bgm_id, title_mikan, updated_at) VALUES (?, ?, ?)').run('5', '番戊', now)
+// 2 号：档案已经有一份"旧值"（档案在 bgm_subject，不再放 anime）
+db.prepare('INSERT INTO anime (bgm_id, title_mikan, updated_at) VALUES (?, ?, ?)').run('2', '番乙', now)
 db.prepare(
-  'INSERT INTO anime (bgm_id, title, score, tags, summary, total_episodes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-).run('2', '番乙', 9.9, JSON.stringify(['旧标签']), '旧简介', 12, now, now)
-db.prepare('INSERT INTO anime (bgm_id, title, created_at, updated_at) VALUES (?, ?, ?, ?)').run('999', '番丙', now, now)
+  `INSERT INTO bgm_subject (bgm_id, title_bgm, score, tags, summary, total_episodes, synced_at, source)
+   VALUES (?, ?, ?, ?, ?, ?, ?, 'api')`,
+).run('2', '番乙', 9.9, JSON.stringify(['旧标签']), '旧简介', 12, now)
 db.prepare(
-  'INSERT INTO anime (bgm_id, title, total_episodes, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-).run('5', '番戊', 5, now, now)
+  `INSERT INTO bgm_subject (bgm_id, title_bgm, total_episodes, synced_at, source)
+   VALUES (?, ?, ?, ?, 'api')`,
+).run('5', '番戊', 5, now)
 
-const rowOf = (bgmId) => db.prepare('SELECT * FROM anime WHERE bgm_id = ?').get(bgmId)
+const rowOf = (bgmId) => db.prepare('SELECT * FROM v_anime WHERE bgm_id = ?').get(bgmId)
 const countRows = () => db.prepare('SELECT COUNT(*) AS n FROM anime').get().n
 const needArchive = () => db.prepare(`
-  SELECT COUNT(*) AS n FROM anime
+  SELECT COUNT(*) AS n FROM v_anime
   WHERE bgm_id IS NOT NULL AND (score IS NULL OR tags IS NULL OR summary IS NULL)
 `).get().n
 
@@ -198,7 +203,7 @@ check(first.patched === 2 && first.skipped === 1, '字段齐的那条跳过，�
 check(countRows() === 4, 'dump 里多出来的条目（id=3）不会建行', `rows=${countRows()}`)
 
 const a = rowOf('1')
-check(a.title_cn === '测试番甲' && a.score === 8.4, '新建档案：中文名 + 评分', `${a.title_cn} / ${a.score}`)
+check(a.title_bgm === '测试番甲' && a.score === 8.4, '新建档案：中文名 + 评分', `${a.title_bgm} / ${a.score}`)
 check(a.rating_total === 25, '评分人数落库', String(a.rating_total))
 check(a.tags === '["机战","TV"]', '标签落库（JSON 数组）', a.tags)
 check(a.watching === 33 && a.summary === '简介甲' && a.air_date === '2015-10-04', '在看 / 简介 / 放送日')
@@ -248,7 +253,7 @@ writeFileSync(zipPath, zipBuf)
 const zipSource = resolveDumpSource(zipPath)
 check(zipSource?.kind === 'zip', '给 .zip 路径 → 识别成 zip 源（不需要同名解压目录）', String(zipSource?.kind))
 
-db.prepare('UPDATE anime SET score = NULL, tags = NULL, summary = NULL, total_episodes = NULL').run()
+db.prepare('UPDATE bgm_subject SET score = NULL, tags = NULL, summary = NULL, total_episodes = NULL').run()
 const fromZip = await runArchiveImport({ dir: zipPath, log: silent })
 check(fromZip.matched === 3 && fromZip.patched === 3, '从 zip 里读出两个条目并导入', `matched=${fromZip.matched} patched=${fromZip.patched}`)
 check(

@@ -10,6 +10,7 @@ import { mkdirSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { config } from '../config.js'
 import { logger } from '../lib/logger.js'
+import { finishV2, needsV2, startV2 } from './migrate-v2.js'
 
 const dbPath = resolve(process.cwd(), config.dbFile)
 mkdirSync(dirname(dbPath), { recursive: true })
@@ -155,60 +156,18 @@ ensureColumns()
  * 进去建索引会直接报 `no such table: anime`（verify-settings 用临时库启动就踩到了）。
  */
 const schemaSql = readFileSync(resolve(import.meta.dirname, 'schema.sql'), 'utf8')
+
+/*
+ * v1 → v2 迁移（一次性）：老库的 `anime` 里混着身份/档案/排期。
+ * 必须在 schema.sql **之前**把它改名，否则 `CREATE TABLE IF NOT EXISTS anime` 会被跳过，
+ * 新表永远建不出来。顺序：备份+改名 → schema → 从 anime_v1 回填三张表 → 删老表。
+ */
+const legacyV1 = needsV2(db)
+if (legacyV1) startV2(db, dbPath)
+
 db.exec(schemaSql)
 
-/**
- * 一次性回填「身份映射」`mikan_bgm_map`（幂等）
- * ---------------------------------------------------------------------------
- * 老库里映射是塞在 `anime` 里的（`mikan_id` + `bgm_id`）。拆表后必须补一份，
- * 否则档案补齐队列会以为"全都没映射过"，把几千条重扫一遍。
- * `INSERT OR IGNORE` + 主键/唯一索引保证重复启动不会出错。
- */
-function backfillMikanMap() {
-  const hasAnime = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'anime'").get()
-  if (!hasAnime) return
-  const cols = new Set(db.prepare('PRAGMA table_info(anime)').all().map((col) => col.name))
-  if (!cols.has('mikan_id') || !cols.has('bgm_id')) return
-  const now = Date.now()
-  const res = db
-    .prepare(
-      `INSERT OR IGNORE INTO mikan_bgm_map (mikan_id, bgm_id, title_mikan, checked_at, created_at, updated_at)
-       SELECT mikan_id, MAX(bgm_id), MAX(title), MAX(bgm_checked_at), ?, ?
-         FROM anime WHERE mikan_id IS NOT NULL
-        GROUP BY mikan_id`,
-    )
-    .run(now, now)
-  if (res.changes) logger.info({ rows: res.changes }, 'db.migrate backfill mikan_bgm_map')
-}
-
-backfillMikanMap()
-
-/**
- * 一次性回填「BGM 档案」`bgm_subject`（幂等）
- * ---------------------------------------------------------------------------
- * 老库里档案字段在 `anime` 上；拆表后先补一份，之后 `npm run dump` 直接覆盖它。
- * `INSERT OR IGNORE`：已经有了就别动（避免把 dump 灌进去的新值又用旧值盖回来）。
- */
-function backfillSubjects() {
-  const hasAnime = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'anime'").get()
-  if (!hasAnime) return
-  const cols = new Set(db.prepare('PRAGMA table_info(anime)').all().map((col) => col.name))
-  if (!cols.has('score') || !cols.has('title_cn')) return
-  const res = db
-    .prepare(
-      `INSERT OR IGNORE INTO bgm_subject
-         (bgm_id, title_bgm, title_bgm_origin, summary, score, rating_total, tags, watching,
-          first_air_date, total_episodes, synced_at, source)
-       SELECT bgm_id, MAX(title_cn), MAX(title), MAX(summary), MAX(score), MAX(rating_total),
-              MAX(tags), MAX(watching), MAX(air_date), MAX(total_episodes), MAX(bgm_checked_at), 'api'
-         FROM anime WHERE bgm_id IS NOT NULL
-        GROUP BY bgm_id`,
-    )
-    .run()
-  if (res.changes) logger.info({ rows: res.changes }, 'db.migrate backfill bgm_subject')
-}
-
-backfillSubjects()
+if (legacyV1) finishV2(db)
 
 ensureSeriesPositionUnique()
 

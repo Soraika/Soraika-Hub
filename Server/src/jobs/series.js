@@ -42,13 +42,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const stmt = {
   next: db.prepare(`
-    SELECT * FROM anime
+    SELECT * FROM v_anime
     WHERE bgm_id IS NOT NULL AND series_checked_at IS NULL AND id < ?
     ORDER BY id DESC LIMIT 1
   `),
   /** 批量取（并发跑时用）：一次领 N 条，领完就推进游标 —— 不会重复处理同一条 */
   batch: db.prepare(`
-    SELECT * FROM anime
+    SELECT * FROM v_anime
     WHERE bgm_id IS NOT NULL AND series_checked_at IS NULL AND id < ?
     ORDER BY id DESC LIMIT ?
   `),
@@ -331,7 +331,13 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
   // 根名兜底：AI 对「单部作品（链上只有它自己）」经常返回空 rootTitle ——
   // 这时用作品自己的展示名（title_cn 优先），总比顶层目录叫「未归类」强。
   // 注意：日志里报的必须是**最终落库的那个值**，否则会看到「日志说空、库里其实有」的假象。
-  const rootName = ai.rootTitle || rootRow?.series_root_title || repRow?.title_cn || repRow?.title || ''
+  const rootName =
+    ai.rootTitle ||
+    rootRow?.series_root_title ||
+    repRow?.title_bgm ||
+    repRow?.title_mikan ||
+    repRow?.title_bgm_origin ||
+    ''
   if (repRow) {
     writeMember(repRow, {
       // 全剧场版系列强制 volume：归档目录是「哆啦A梦剧场版/01 大雄的恐龙」，不是 S01

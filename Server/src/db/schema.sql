@@ -10,52 +10,56 @@
 --   3. 时间戳统一用毫秒整数（JS Date.now()），跨语言/跨库都好处理
 -- ============================================================================
 
--- ── 动漫信息检索表：全站事实表（首页 / 发现 / 搜索 / 下载页都读它） ──────
+-- ── 排期表：首页 / 发现 / 搜索 / 下载页都读它（**不再存档案**） ──────────────
+-- 档案（评分/标签/简介/放送日/集数/平台/原名）在 `bgm_subject`，身份映射在 `mikan_bgm_map`。
+-- 重建这张表只丢排期：映射与档案都能各自恢复（见 docs/SCHEMA-V2.md）。
+-- id 不再 AUTOINCREMENT：upsert 命中冲突时不会烧号（实测旧表烧掉 8500 个号）。
 CREATE TABLE IF NOT EXISTS anime (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,  -- ← 接口给前端的 id
-  mikan_id       TEXT,             -- 来源：Mikan（排期主源）
-  bgm_id         TEXT,             -- 来源：Bangumi（评分 / 评分人数 / 标签）
-  title          TEXT NOT NULL,    -- 番名（Mikan 侧给的是中文名）
-  title_cn       TEXT,             -- 中文名（Bangumi name_cn）
-  poster_path    TEXT,             -- 本地缓存后的相对路径（出图接口写它）
-  poster_src     TEXT,             -- 原始海报地址（出图接口读它）
-  score          REAL,             -- 评分（Bangumi rating.score）
-  rating_total   INTEGER,          -- 评分人数（Bangumi rating.total）
-  tags           TEXT,             -- 标签，JSON 数组（给「标签解析 AI」+ 拼题材行）
-  watching       INTEGER,          -- 在看人数（Bangumi collection.doing；题材缺失时用它拼文案）
-  summary        TEXT,             -- 简介（下载页侧栏）
-  year           INTEGER,          -- 放送年份
-  season         TEXT,             -- 放送季度：春 / 夏 / 秋 / 冬
-  weekday        INTEGER,          -- 0=周日 … 6=周六；7=剧场版；8=OVA（与 Mikan WeekDay 一致）
-  air_date       TEXT,             -- 首播日期 YYYY-MM-DD（Bangumi date / Mikan 详情）
-  total_episodes INTEGER,          -- 总集数（下载页「已下载 / 总集数」）
-  source         TEXT,             -- 最近一次写入的来源：mikan / bgm / manual
-  bgm_checked_at INTEGER,          -- 最后一次「补齐/刷新档案」的时间（每日更新的分界依据）
-  bgm_miss_count INTEGER,          -- 连续几次拿不到 bgmId（Mikan 详情页没挂链接）—— 超限后不再频繁重试
+  id                INTEGER PRIMARY KEY,  -- 接口给前端的 id；无外部含义
+  mikan_id          TEXT,                 -- 来源：Mikan（排期主源）
+  bgm_id            TEXT,                 -- 来源：Bangumi（档案去 bgm_subject 取）
+  title_mikan       TEXT,                 -- Mikan 侧标题（骨架行为空）
+  poster_path       TEXT,                 -- 本地缓存后的相对路径（出图接口写它）
+  poster_src        TEXT,                 -- 原始海报地址（出图接口读它）
+  year              INTEGER,              -- 放送年份（只有 Mikan 写）
+  season            TEXT,                 -- 放送季度：春 / 夏 / 秋 / 冬（只有 Mikan 写）
+  weekday           INTEGER,              -- 0=周日 … 6=周六；7=剧场版；8=OVA（只有 Mikan 写）
 
   -- ── 系列链（后台走 BGM 关系算出来的产物；下载归档目录要用，见 CONVENTIONS.md §10.1/§10.2）──
-  series_id         INTEGER,       -- 系列标识 = 代表行的 id（我们自己的主键；同一系列同一个值）
-  series_index      INTEGER,       -- 链位 1,2,3…（正传 = 第几季）；番外为 NULL
-  series_relation   TEXT,          -- 归一后的绝对类别：续集 / OVA / 剧场版 / 总集篇 / 衍生 / 其他
-                                   -- 为什么不存 BGM 的原始 relation：它是「相对当前条目」的
-                                   -- （实测 LOST GIRLS 在 S1 是「番外篇」、在 S2/S3 是「衍生」），直接存会随入口变
-  naming_style      TEXT,          -- season（同名续季 → S01）/ volume（异名平行作 → 01 名字）；只写代表行
-  series_root_title TEXT,          -- 系列总名（顶层目录名）；只写代表行
-  series_checked_at INTEGER,       -- 算过系列信息的时间；NULL = 待算
-  series_all_movies INTEGER,       -- 1 = 整条系列都是剧场版（AI 判定；存下来别丢）
+  series_id         INTEGER,
+  series_index      INTEGER,
+  series_relation   TEXT,
+  naming_style      TEXT,
+  series_root_title TEXT,
+  series_checked_at INTEGER,
+  series_all_movies INTEGER,
 
-  created_at     INTEGER NOT NULL,
-  updated_at     INTEGER NOT NULL  -- 缓存新鲜度判定用它
+  -- 补齐簿记（档案队列/每日更新的退避窗口）
+  bgm_checked_at    INTEGER,
+  updated_at        INTEGER NOT NULL  -- 缓存新鲜度判定用它
 );
 
 -- 两个来源各自唯一（可空列在 SQLite 里不参与唯一冲突，所以「只有一边」也能共存）
 CREATE UNIQUE INDEX IF NOT EXISTS idx_anime_mikan ON anime(mikan_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_anime_bgm   ON anime(bgm_id);
--- 首页按「年 + 季 + 星期」取整季；发现页/搜索页按评分排序
+-- 首页按「年 + 季 + 星期」取整季
 CREATE INDEX IF NOT EXISTS idx_anime_season ON anime(year, season, weekday);
-CREATE INDEX IF NOT EXISTS idx_anime_score  ON anime(score);
 -- 系列：查「同系列有哪些作品」
 CREATE INDEX IF NOT EXISTS idx_anime_series ON anime(series_id);
+
+-- ── 读取视图：排期 + 档案拼成一行（读代码不用到处写 JOIN） ──────────────────
+-- 名字保留 `air_date` 这类旧名：前端契约与映射层不关心它是哪张表给的。
+CREATE VIEW IF NOT EXISTS v_anime AS
+SELECT a.id, a.mikan_id, a.bgm_id, a.title_mikan, a.poster_path, a.poster_src,
+       a.year, a.season, a.weekday,
+       a.series_id, a.series_index, a.series_relation, a.naming_style,
+       a.series_root_title, a.series_checked_at, a.series_all_movies,
+       a.bgm_checked_at, a.updated_at,
+       b.title_bgm, b.title_bgm_origin, b.summary, b.score, b.rating_total,
+       b.tags, b.watching, b.platform, b.first_air_date AS air_date,
+       b.total_episodes, b.synced_at
+  FROM anime a
+  LEFT JOIN bgm_subject b ON b.bgm_id = a.bgm_id;
 
 -- ============================================================================
 -- ============================================================================

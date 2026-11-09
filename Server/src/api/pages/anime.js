@@ -157,7 +157,7 @@ export async function getAnimeSeries(id, { log = logger } = {}) {
       animeId: m.id,
       bgmId: m.bgm_id,
       /** 成品展示名：优先中文名（与 toAnimeDetail 同口径，不在前端拼） */
-      title: m.title_cn || m.title,
+      title: m.title_bgm || m.title_mikan || m.title_bgm_origin,
       index: m.series_index,
       relation: m.series_relation,
       current: m.id === row.id,
@@ -208,7 +208,7 @@ async function tagNameMap(row, items, { log }) {
   if (!tags.length) return {}
 
   const mapped = await classifyGroupTags(tags.map((t) => t.tag), listSubgroupDict(), { log })
-  const title = String(row.title_cn || row.title || '').trim()
+  const title = String(row.title_bgm || row.title_mikan || row.title_bgm_origin || '').trim()
   const map = {}
   for (const { tag } of tags) {
     const name = mapped?.[tag] || null

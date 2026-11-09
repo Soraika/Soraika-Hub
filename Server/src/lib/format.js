@@ -227,7 +227,7 @@ export function releaseToItem(release) {
 export function mikanToRow(item, { year, season }) {
   return {
     mikan_id: item.mikanId == null ? null : String(item.mikanId),
-    title: item.title,
+    title_mikan: item.title,
     poster_src: absoluteUrl(primaryBase('mikan'), item.deParamCoverSrc),
     year,
     season,

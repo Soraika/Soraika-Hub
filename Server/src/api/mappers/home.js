@@ -17,7 +17,7 @@ export function toCardItem(row) {
   const hasScore = row.score != null && total > 0
   return {
     id: row.id,
-    title: row.title_cn || row.title,
+    title: row.title_bgm || row.title_mikan || row.title_bgm_origin,
     poster: posterUrlOf(row),
     score: hasScore ? row.score : null,
     scoreText: hasScore ? scoreText(row.score) : '',

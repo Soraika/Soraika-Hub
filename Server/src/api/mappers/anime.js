@@ -36,9 +36,9 @@ export function toAnimeDetail(row) {
   const hasScore = row.score != null && total > 0
   const watching = Number(row.watching) || 0
 
-  // 主标题优先中文名（Bangumi name_cn 更规范）；原名与它相同就不再重复给一行
-  const title = row.title_cn || row.title
-  const titleOriginal = row.title_cn && row.title && row.title_cn !== row.title ? row.title : ''
+  // 主标题优先 BGM 中文名；没有再退回 Mikan 标题、BGM 原名
+  const title = row.title_bgm || row.title_mikan || row.title_bgm_origin || ''
+  const titleOriginal = row.title_bgm_origin && row.title_bgm_origin !== title ? row.title_bgm_origin : ''
 
   // 标签区与卡片信息行同口径：只给题材（TV / 日本这类平台地域标签剔掉）；
   // 整部作品只有平台类标签时（极少数）才退回原始标签，免得标签区空着

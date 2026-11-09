@@ -98,7 +98,7 @@ export const countStale = ({ olderThan }) => stmt.countStale.get(val(staleYear()
  */
 const archiveStmt = {
   next: db.prepare(`
-    SELECT * FROM anime
+    SELECT * FROM v_anime
     WHERE bgm_id IS NOT NULL
       AND (score IS NULL OR tags IS NULL OR summary IS NULL)
       AND (bgm_checked_at IS NULL OR bgm_checked_at < ?)
@@ -111,7 +111,7 @@ const archiveStmt = {
     WHERE id = ? AND bgm_id IS NOT NULL AND bgm_checked_at IS ?
   `),
   count: db.prepare(`
-    SELECT COUNT(*) AS n FROM anime
+    SELECT COUNT(*) AS n FROM v_anime
     WHERE bgm_id IS NOT NULL AND (score IS NULL OR tags IS NULL OR summary IS NULL)
       AND (bgm_checked_at IS NULL OR bgm_checked_at < ?)
   `),

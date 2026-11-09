@@ -109,7 +109,7 @@ function cardOf(row, torrents) {
     /** 卡片契约里的主键就叫 id（`CardGrid` / `orderKeyOf` 全站认这一个字段） */
     id: row.id,
     animeId: row.id,
-    title: row.title_cn || row.title,
+    title: row.title_bgm || row.title_mikan || row.title_bgm_origin,
     poster: posterUrlOf(row),
     count: items.length,
     doneCount: done.length,
@@ -220,7 +220,14 @@ export async function getAnimeDownloads(animeId, { log = logger } = {}) {
   const row = findById(Number(animeId))
   if (!row) throw fail('NOT_FOUND', `没有 id=${animeId} 的作品记录`)
 
-  const base = { animeId: row.id, title: row.title_cn || row.title, groups: [], items: [], total: 0, sizeText: '' }
+  const base = {
+    animeId: row.id,
+    title: row.title_bgm || row.title_mikan || row.title_bgm_origin,
+    groups: [],
+    items: [],
+    total: 0,
+    sizeText: '',
+  }
   if (!qbConfigured()) return base
 
   const torrents = (await qbTorrents()).filter((t) => resolveAnime(t)?.id === row.id)
@@ -265,7 +272,7 @@ export async function addDownloads({ animeId, subgroup = '', season = 1, items =
   if (!Array.isArray(items) || !items.length) throw fail('BAD_REQUEST', '没有要下载的资源')
 
   const root = config.qb?.saveRoot
-  const title = row.title_cn || row.title
+  const title = row.title_bgm || row.title_mikan || row.title_bgm_origin
   const savePath = archiveDirOf({ title, season, root })
   /** 基础标签：`soraika`（本程序加的）+ `mid`（认回作品的关键）+ `sg`（字幕组） */
   const baseTags = buildTags({ mikanId: row.mikan_id || '', subgroup })

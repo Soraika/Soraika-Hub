@@ -67,12 +67,14 @@
 
 | 组 | 列 | 谁写 |
 |---|---|---|
-| 身份 | `id`(PK) / `mikan_id` / `bgm_id` / `title` / `title_cn` | 扫描 / 排期 / 补齐 |
+| 身份 | `id`(PK) / `mikan_id` / `bgm_id` / `title_mikan` | 扫描 / 排期 / 补齐 |
 | 海报 | `poster_src`（图源 URL）/ `poster_path`（本地缓存文件名） | 出图接口 / 后台预热 |
-| 档案 | `score` `rating_total` `tags` `watching` `summary` `total_episodes` `air_date` | BGM（API 或**离线 dump**，见 §3） |
 | 排期 | `year` `season` `weekday` | **只有 Mikan 排期页写**（§10.3） |
-| 补齐簿记 | `bgm_checked_at`（上次刷档案）/ `bgm_miss_count` | worker |
+| 补齐簿记 | `bgm_checked_at`（上次刷档案的时间） | worker |
 | 系列 | `series_id` `series_index` `series_relation` `naming_style` `series_root_title` `series_checked_at` | `jobs/series.js` |
+
+> **档案不在这张表**：评分/标签/简介/放送日/集数/平台/原名在 `bgm_subject`（见 §2.4），
+> 身份映射在 `mikan_bgm_map`（§2.3）。读取统一走视图 `v_anime`（排期 LEFT JOIN 档案）。
 
 **关键不变式**
 

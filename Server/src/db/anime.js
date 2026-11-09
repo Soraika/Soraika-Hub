@@ -10,26 +10,8 @@ import { config } from '../config.js'
 import { db, val } from './index.js'
 import { rememberMikan } from './map.js'
 
-/** 全部列（顺序与 insert 占位符一一对应） */
-const COLUMNS = [
-  'mikan_id',
-  'bgm_id',
-  'title',
-  'title_cn',
-  'poster_path',
-  'poster_src',
-  'score',
-  'rating_total',
-  'tags',
-  'watching',
-  'summary',
-  'year',
-  'season',
-  'weekday',
-  'air_date',
-  'total_episodes',
-  'source',
-]
+/** 排期表的列（顺序与 insert 占位符一一对应）；**档案列已搬到 `bgm_subject`** */
+const COLUMNS = ['mikan_id', 'bgm_id', 'title_mikan', 'poster_path', 'poster_src', 'year', 'season', 'weekday']
 
 const placeholders = COLUMNS.map(() => '?').join(', ')
 // 注意 poster_src 的方向是**反的**：已有值优先 —— Bangumi 的封面更大（/l/ 原图），
@@ -44,8 +26,8 @@ const updateAssignments = COLUMNS.filter((c) => !['mikan_id', 'bgm_id'].includes
 
 /** Mikan 排期入库：以 mikan_id 为冲突键，空缺字段不覆盖已有值 */
 const upsertByMikanSql = `
-INSERT INTO anime (${COLUMNS.join(', ')}, created_at, updated_at)
-VALUES (${placeholders}, ?, ?)
+INSERT INTO anime (${COLUMNS.join(', ')}, updated_at)
+VALUES (${placeholders}, ?)
 ON CONFLICT(mikan_id) DO UPDATE SET
     ${updateAssignments},
     bgm_id = COALESCE(excluded.bgm_id, anime.bgm_id),
@@ -54,8 +36,8 @@ ON CONFLICT(mikan_id) DO UPDATE SET
 
 /** Bangumi 侧补齐：以 bgm_id 为冲突键（只有 bgm 的条目也能先落库） */
 const upsertByBgmSql = `
-INSERT INTO anime (${COLUMNS.join(', ')}, created_at, updated_at)
-VALUES (${placeholders}, ?, ?)
+INSERT INTO anime (${COLUMNS.join(', ')}, updated_at)
+VALUES (${placeholders}, ?)
 ON CONFLICT(bgm_id) DO UPDATE SET
     ${updateAssignments},
     mikan_id = COALESCE(excluded.mikan_id, anime.mikan_id),
@@ -65,39 +47,33 @@ ON CONFLICT(bgm_id) DO UPDATE SET
 const stmt = {
   upsertByMikan: db.prepare(upsertByMikanSql),
   upsertByBgm: db.prepare(upsertByBgmSql),
-  byId: db.prepare('SELECT * FROM anime WHERE id = ?'),
-  byMikanId: db.prepare('SELECT * FROM anime WHERE mikan_id = ?'),
-  byBgmId: db.prepare('SELECT * FROM anime WHERE bgm_id = ?'),
+  byId: db.prepare('SELECT * FROM v_anime WHERE id = ?'),
+  byMikanId: db.prepare('SELECT * FROM v_anime WHERE mikan_id = ?'),
+  byBgmId: db.prepare('SELECT * FROM v_anime WHERE bgm_id = ?'),
   /**
    * 按番名找（下载页用：老种子的标签丢了，只能靠归档目录名认回来）
-   * 只认**完全相等**的中文名或原名 —— 模糊匹配会把「碧蓝之海」和「碧蓝之海 第二季」认错，
+   * 只认**完全相等**的中文名/原名 —— 模糊匹配会把「碧蓝之海」和「碧蓝之海 第二季」认错，
    * 那种错认比「认不出、归到未识别」更糟（会把两部的集数混在一起）
    */
-  byTitle: db.prepare('SELECT * FROM anime WHERE title_cn = ? OR title = ? LIMIT 1'),
+  byTitle: db.prepare('SELECT * FROM v_anime WHERE title_bgm = ? OR title_mikan = ? OR title_bgm_origin = ? LIMIT 1'),
 
   bySeason: db.prepare(`
-    SELECT * FROM anime
+    SELECT * FROM v_anime
     WHERE year = ? AND season = ?
     ORDER BY weekday ASC, score IS NULL, score DESC, id ASC
   `),
   maxUpdatedAt: db.prepare('SELECT MAX(updated_at) AS t FROM anime WHERE year = ? AND season = ?'),
   countAll: db.prepare('SELECT COUNT(*) AS n FROM anime'),
-  /** 只补元数据，不动排期归属（year/season/weekday 永远由 Mikan 决定） */
+  /**
+   * 只绑定身份/海报，不动排期归属（year/season/weekday 永远由 Mikan 决定）。
+   * 档案（评分/标签/…）现在写 `bgm_subject`，不在这里。
+   */
   updateMeta: db.prepare(`
     UPDATE anime SET
       bgm_id       = COALESCE(?, bgm_id),
-      title_cn     = COALESCE(?, title_cn),
       -- 海报源换了就清掉本地缓存路径，让出图接口下次重新抓（否则会一直发旧图）
       poster_path  = CASE WHEN ? IS NOT NULL AND ? IS NOT poster_src THEN NULL ELSE poster_path END,
       poster_src   = COALESCE(?, poster_src),
-      score        = COALESCE(?, score),
-      rating_total = COALESCE(?, rating_total),
-      tags         = COALESCE(?, tags),
-      watching     = COALESCE(?, watching),
-      summary      = COALESCE(?, summary),
-      air_date     = COALESCE(?, air_date),
-      total_episodes = COALESCE(?, total_episodes),
-      source       = COALESCE(?, source),
       updated_at   = ?
     WHERE id = ?
   `),
@@ -121,10 +97,10 @@ const stmt = {
       SUM(CASE WHEN bgm_id IS NOT NULL THEN 1 ELSE 0 END)                      AS withBgm,
       SUM(CASE WHEN mikan_id IS NOT NULL AND bgm_id IS NULL THEN 1 ELSE 0 END) AS mikanOnly,
       SUM(CASE WHEN score IS NOT NULL THEN 1 ELSE 0 END)                       AS withScore,
-      -- 有 bgm_id 但档案还空着的（评分/标签/简介任一为空）→ 触发④「档案补齐」的目标
+      -- 有 bgm_id 但档案还空着的（评分/标签/简介任一为空）→ 档案补齐队列的目标
       SUM(CASE WHEN bgm_id IS NOT NULL AND (score IS NULL OR tags IS NULL OR summary IS NULL)
                THEN 1 ELSE 0 END)                                              AS needArchive
-    FROM anime
+    FROM v_anime
   `),
 }
 
@@ -140,10 +116,10 @@ export function upsertManyFromMikan(rows = []) {
   try {
     for (const row of rows) {
       const now = Date.now()
-      stmt.upsertByMikan.run(...COLUMNS.map((c) => val(row[c])), now, now)
+      stmt.upsertByMikan.run(...COLUMNS.map((c) => val(row[c])), now)
       // 顺手把「mikan ↔ bgm」登记进身份表：**重建 anime 时它是唯一留下的东西**。
       // 排期页只有 mikan_id（bgm 还没解析），所以 bgm_id 传 null，等补齐队列去确认。
-      rememberMikan(row.mikan_id, row.title)
+      rememberMikan(row.mikan_id, row.title_mikan)
     }
     db.exec('COMMIT')
   } catch (err) {
@@ -159,38 +135,30 @@ export function upsertManyFromMikan(rows = []) {
  * mikan_id 的唯一索引）；表里没有对应记录时才插入（必须带 title，由调用方从 Mikan 侧带过来）。
  */
 export function applyBgmMeta(row) {
+  const normalized = { ...row, title_mikan: row.title_mikan ?? row.title }
   const existing =
     (row.mikan_id && stmt.byMikanId.get(val(row.mikan_id))) ||
     (row.bgm_id && stmt.byBgmId.get(val(row.bgm_id))) ||
     null
 
   if (!existing) {
-    if (!row.title) throw new Error('applyBgmMeta：新建记录必须带 title')
+    if (!normalized.title_mikan) throw new Error('applyBgmMeta：新建记录必须带 title')
     const now = Date.now()
-    stmt.upsertByBgm.run(...COLUMNS.map((c) => val(row[c])), now, now)
-    if (row.mikan_id) rememberMikan(row.mikan_id, row.title, row.bgm_id)
+    stmt.upsertByBgm.run(...COLUMNS.map((c) => val(normalized[c])), now)
+    if (row.mikan_id) rememberMikan(row.mikan_id, normalized.title_mikan, row.bgm_id)
     return { id: stmt.byBgmId.get(val(row.bgm_id))?.id ?? null, created: true }
   }
 
   stmt.updateMeta.run(
     val(row.bgm_id),
-    val(row.title_cn),
     val(row.poster_src), // CASE：新海报地址非空 …
     val(row.poster_src), // CASE：… 且与原地址不同 → 清掉本地缓存
     val(row.poster_src), // poster_src 本体
-    val(row.score),
-    val(row.rating_total),
-    val(row.tags),
-    val(row.watching),
-    val(row.summary),
-    val(row.air_date),
-    val(row.total_episodes),
-    val(row.source),
     Date.now(),
     existing.id,
   )
   // 身份确认成功 → 记进映射表（重建 anime 也不会丢）
-  if (row.mikan_id) rememberMikan(row.mikan_id, row.title, row.bgm_id)
+  if (row.mikan_id) rememberMikan(row.mikan_id, normalized.title_mikan, row.bgm_id)
   return { id: existing.id, created: false }
 }
 
@@ -207,36 +175,21 @@ export function applyBgmMeta(row) {
  * （当年番的每日更新不看它，仍然照常走 API）。
  */
 const archiveStmt = {
-  /** 待补的行：只认已有 bgm_id 的（没有 bgm_id 的靠 Mikan 映射/扫描先拿到 id） */
-  targets: db.prepare('SELECT id, bgm_id, score, tags, summary FROM anime WHERE bgm_id IS NOT NULL'),
-  update: db.prepare(`
-    UPDATE anime SET
-      title_cn       = COALESCE(?, title_cn),
-      score          = COALESCE(?, score),
-      rating_total   = COALESCE(?, rating_total),
-      tags           = COALESCE(?, tags),
-      watching       = COALESCE(?, watching),
-      summary        = COALESCE(?, summary),
-      air_date       = COALESCE(?, air_date),
-      -- 总集数只增不减：dump 是周更快照，连载中的番章节日志可能还没登记全，
-      -- 直接覆盖会把“共 12 集”改成“共 8 集”，下载页的「已下载 8 / 共 12」就假了。
-      total_episodes = CASE
-                         WHEN ? IS NULL THEN total_episodes
-                         WHEN ? > COALESCE(total_episodes, 0) THEN ?
-                         ELSE total_episodes
-                       END,
-      bgm_checked_at = COALESCE(?, bgm_checked_at),
-      updated_at     = ?
-    WHERE id = ?
-  `),
+  /** 待补的行：只认已有 bgm_id 的（档案字段现在从 `v_anime` 取，即 bgm_subject） */
+  targets: db.prepare('SELECT id, bgm_id, score, tags, summary FROM v_anime WHERE bgm_id IS NOT NULL'),
+  /**
+   * 档案本体已搬到 `bgm_subject`（导入侧单独写）；这里只记「刷过了」——
+   * 档案队列/每日更新的退避窗口还是看 anime 上的 `bgm_checked_at`（簿记，不是档案）。
+   */
+  touch: db.prepare('UPDATE anime SET bgm_checked_at = COALESCE(?, bgm_checked_at), updated_at = ? WHERE id = ?'),
 }
 
 /** 库里所有「有 bgm_id」的行（离线 dump 导入的目标集合） */
 export const listBgmTargets = () => archiveStmt.targets.all()
 
 /**
- * 一批档案写库（一个事务）
- * @param {Array<{id:number} & Record<string, any>>} rows `id` + 档案字段
+ * 一批导入完成后的「簿记」写库（一个事务）
+ * @param {Array<{ id:number }>} rows
  * @param {{ checkedAt?: number|null }} [options] `checkedAt` 为 null 表示不改 `bgm_checked_at`
  * @returns {number} 写入行数
  */
@@ -245,23 +198,7 @@ export function applyArchiveBatch(rows = [], { checkedAt = Date.now() } = {}) {
   const now = Date.now()
   db.exec('BEGIN')
   try {
-    for (const row of rows) {
-      archiveStmt.update.run(
-        val(row.title_cn),
-        val(row.score),
-        val(row.rating_total),
-        val(row.tags),
-        val(row.watching),
-        val(row.summary),
-        val(row.air_date),
-        val(row.total_episodes),
-        val(row.total_episodes),
-        val(row.total_episodes),
-        val(checkedAt),
-        now,
-        val(row.id),
-      )
-    }
+    for (const row of rows) archiveStmt.touch.run(val(checkedAt), now, val(row.id))
     db.exec('COMMIT')
   } catch (err) {
     db.exec('ROLLBACK')
@@ -413,8 +350,8 @@ const seriesStmt = {
    * 冲突就什么都不做（已经存在说明这条本来就在库）—— 由调用方再读回来。
    */
   insertStub: db.prepare(`
-    INSERT INTO anime (bgm_id, title, title_cn, source, series_checked_at, created_at, updated_at)
-    VALUES (?, ?, ?, 'bgm', ?, ?, ?)
+    INSERT INTO anime (bgm_id, title_mikan, series_checked_at, updated_at)
+    VALUES (?, ?, ?, ?)
     ON CONFLICT(bgm_id) DO NOTHING
   `),
 }
@@ -504,8 +441,9 @@ export function ensureBgmStub({ bgmId, title, titleCn = null, seriesCheckedAt = 
   const existing = stmt.byBgmId.get(val(id))
   if (existing) return existing
   const now = Date.now()
-  const name = String(title ?? '').trim() || `BGM ${id}`
-  seriesStmt.insertStub.run(val(id), val(name), val(titleCn), val(seriesCheckedAt ?? now), now, now)
+  // 骨架行没有 Mikan 标题，用 Bangumi 中文名（退原名）占位；展示时 title_bgm 会优先
+  const name = String(titleCn ?? title ?? '').trim() || `BGM ${id}`
+  seriesStmt.insertStub.run(val(id), val(name), val(seriesCheckedAt ?? now), now)
   return stmt.byBgmId.get(val(id)) ?? null
 }
 
@@ -521,8 +459,9 @@ export function findByBgmIds(bgmIds = []) {
   if (!ids.length) return []
   const placeholders = ids.map(() => '?').join(',')
   return db
-    .prepare(`SELECT id, bgm_id, title, title_cn, series_id, series_index, series_relation,
-                     naming_style, series_root_title, series_all_movies, air_date, year, season
-                FROM anime WHERE bgm_id IN (${placeholders})`)
+    .prepare(`SELECT id, bgm_id, title_mikan, title_bgm, title_bgm_origin, series_id, series_index,
+                     series_relation, naming_style, series_root_title, series_all_movies,
+                     air_date, year, season, platform, total_episodes
+                FROM v_anime WHERE bgm_id IN (${placeholders})`)
     .all(...ids.map((v) => val(v)))
 }
