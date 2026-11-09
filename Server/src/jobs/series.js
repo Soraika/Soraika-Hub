@@ -265,9 +265,15 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
   // 季位按「本次真正能写的成员」连续编号 —— 不直接用走链给的序号。三个原因：
   //   · 补骨架行有单趟上限（超上限的节点建不出来）→ 用链序号会留空洞（实测蜡笔小新剧场版 24/33）
   //   · 链头本身是剧场版（被降级、不给季位）时，后面的正传不该从 2 开始（实测《弦音》）
-  //   · **整条系列都是剧场版**时（AI 判 allMovies：哆啦A梦剧场版 31 部），番外也按年排进季位，
-  //     否则一半是 S01..S25、另一半全是「番外」，看着就是坏的
-  const movieOnly = ai.allMovies === true || Number(rootRow?.series_all_movies) === 1
+  //   · **整条系列都是剧场版**时，番外也按年排进季位，否则一半是 S01..、另一半全是「番外」
+  // 判据优先看 **platform**（dump 里 3 = 剧场版，确定性、不用 AI）；
+  // AI 的 allMovies 只在 platform 缺失时兜底（API 路径拿不到 platform）。
+  const members = [
+    ...chain.filter((node) => libMap.has(node.id)).map((node) => libMap.get(node.id)),
+    ...extras.filter((item) => libMap.has(item.id)).map((item) => libMap.get(item.id)),
+  ]
+  const allMoviesByPlatform = members.length > 0 && members.every((m) => Number(m.platform) === 3)
+  const movieOnly = ai.allMovies === true || allMoviesByPlatform
   /** 排序键：air_date（YYYY-MM）优先，退到 年+季；都没有的排最后 */
   const dateRank = (row) => {
     const d = String(row?.air_date || '')
@@ -343,8 +349,6 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
       // 全剧场版系列强制 volume：归档目录是「哆啦A梦剧场版/01 大雄的恐龙」，不是 S01
       namingStyle: movieOnly ? 'volume' : ai.namingStyle || rootRow?.naming_style,
       seriesRootTitle: rootName,
-      // AI 判过的「全是剧场版」要落库：后续走链会因「根名已有」跳过 AI，判据不能丢
-      seriesAllMovies: ai.allMovies === true ? 1 : null,
       seriesCheckedAt: now,
     })
   }

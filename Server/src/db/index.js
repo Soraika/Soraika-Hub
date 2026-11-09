@@ -123,6 +123,8 @@ const MIGRATIONS = {
     { column: 'naming_style', ddl: 'TEXT' },
     { column: 'series_root_title', ddl: 'TEXT' },
     { column: 'series_checked_at', ddl: 'INTEGER' },
+    // v2：链（确定性）与起名（AI）分开记 —— 根名改成"点开系列时才补"
+    { column: 'series_named_at', ddl: 'INTEGER' },
     // 「整条系列都是剧场版」的判定结果（AI 给的 allMovies）—— 存下来，
     // 否则后续走链因为「根名已有」跳过 AI，会把这个判据丢掉 → 番外又被清零。
     { column: 'series_all_movies', ddl: 'INTEGER' },
@@ -165,9 +167,48 @@ const schemaSql = readFileSync(resolve(import.meta.dirname, 'schema.sql'), 'utf8
 const legacyV1 = needsV2(db)
 if (legacyV1) startV2(db, dbPath)
 
+/*
+ * 视图每次启动重建：`CREATE VIEW IF NOT EXISTS` 不会更新旧定义，
+ * 而结构改过（比如视图里新增 series_named_at、去掉 series_all_movies）后旧视图会直接报错。
+ * 视图是纯派生对象，删了马上重建，零风险。
+ */
+db.exec('DROP VIEW IF EXISTS v_anime')
+
 db.exec(schemaSql)
 
 if (legacyV1) finishV2(db)
+
+/**
+ * 清理已废弃的列（一次性、可重入）
+ * ---------------------------------------------------------------------------
+ * `series_all_movies` 是靠 AI 现算的判据，现在改成看 `bgm_subject.platform = 3`
+ * （dump 的平台码，确定性）。老库上这列还在 → 直接删；SQLite 3.35+ 支持 DROP COLUMN。
+ * 失败只 warn：删不掉也不影响读取（代码已经不看它了）。
+ */
+function dropDeprecatedColumns() {
+  const cols = new Set(db.prepare('PRAGMA table_info(anime)').all().map((col) => col.name))
+  if (!cols.has('series_all_movies')) return
+  try {
+    db.exec('ALTER TABLE anime DROP COLUMN series_all_movies')
+    logger.warn('db.migrate drop anime.series_all_movies')
+  } catch (err) {
+    logger.warn({ err: err.message }, 'db.migrate drop series_all_movies fail')
+  }
+}
+
+dropDeprecatedColumns()
+
+/** `series_named_at` 补一份历史值：老库上「算过链」就等于「已经起过名」 */
+try {
+  const filled = db
+    .prepare(
+      'UPDATE anime SET series_named_at = series_checked_at WHERE series_named_at IS NULL AND series_checked_at IS NOT NULL',
+    )
+    .run()
+  if (filled.changes) logger.info({ rows: filled.changes }, 'db.migrate backfill series_named_at')
+} catch (err) {
+  logger.warn({ err: err.message }, 'db.migrate backfill series_named_at fail')
+}
 
 ensureSeriesPositionUnique()
 

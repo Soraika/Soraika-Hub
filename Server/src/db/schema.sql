@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS anime (
   naming_style      TEXT,
   series_root_title TEXT,
   series_checked_at INTEGER,
-  series_all_movies INTEGER,
+  series_named_at   INTEGER,          -- 根名/命名风格补过的时间（AI，点开系列时才补）
 
   -- 补齐簿记（档案队列/每日更新的退避窗口）
   bgm_checked_at    INTEGER,
@@ -53,7 +53,7 @@ CREATE VIEW IF NOT EXISTS v_anime AS
 SELECT a.id, a.mikan_id, a.bgm_id, a.title_mikan, a.poster_path, a.poster_src,
        a.year, a.season, a.weekday,
        a.series_id, a.series_index, a.series_relation, a.naming_style,
-       a.series_root_title, a.series_checked_at, a.series_all_movies,
+       a.series_root_title, a.series_checked_at, a.series_named_at,
        a.bgm_checked_at, a.updated_at,
        b.title_bgm, b.title_bgm_origin, b.summary, b.score, b.rating_total,
        b.tags, b.watching, b.platform, b.first_air_date AS air_date,
@@ -166,6 +166,18 @@ CREATE TABLE IF NOT EXISTS bgm_subject (
   source            TEXT             -- 'api' / 'dump'
 );
 CREATE INDEX IF NOT EXISTS idx_subject_score ON bgm_subject(score);
+
+-- ============================================================================
+-- 映射扫描水位（单行表）
+-- ----------------------------------------------------------------------------
+-- Mikan 的动画 id 是**递增**的，新番只会在尾部出现；老 id 大量是 404。
+-- 所以日常只扫「水位之后」：连续 N 个空页就停（说明还没到下一季），不用遍历 5400 个。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS mikan_scan (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  watermark  INTEGER NOT NULL,   -- 已确认过的最大 mikan id
+  updated_at INTEGER NOT NULL
+);
 
 -- ============================================================================
 -- 以下表结构已按架构图设计好，但本次还没做到，做到对应功能时再启用。

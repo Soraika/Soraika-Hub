@@ -20,7 +20,7 @@
  */
 import { pathToFileURL } from 'node:url'
 import { getAnimeBangumiId, getAnimeTitle } from '../clients/Mikan.js'
-import { listScannedMikanIds, markMapChecked, rememberMikan } from '../db/map.js'
+import { getScanWatermark, listScannedMikanIds, markMapChecked, maxScannedMikanId, rememberMikan, setScanWatermark } from '../db/map.js'
 import { logger } from '../lib/logger.js'
 import { tryBases } from '../lib/multi-source.js'
 
@@ -156,16 +156,97 @@ export async function runSweep(options = {}) {
   return result
 }
 
+/* ── 尾部扫描（日常用）──────────────────────────────────────────────────────
+ * 为什么不再全量遍历 1~5400：Mikan 的动画 id 是**递增**的，新番只出现在尾部；
+ * 老 id 大量是 404（实测有效区间 183~4124，扫完 3235 个"ok" 之外全是空气）。
+ *
+ * 做法：从 `mikan_scan.watermark + 1` 往后逐个取详情页
+ *   · 有标题 → 写映射（有 bgm 链接就记 bgm），水位推到这个 id
+ *   · 404 / 连标题都没有 → 连续空计数 +1；连续 `stopAfter` 个就停（还没到下一季）
+ *   · 网络/超时 → **不计入空**（上游抖一下不代表没有），但有 maxPages 上限
+ * 日常只花几十个请求；切季时新番自然被扫进来。
+ * @param {{ stopAfter?:number, maxPages?:number, log?:object }} [options]
+ */
+export async function runTailScan({ stopAfter = 200, maxPages = 2000, log = logger } = {}) {
+  const start = Math.max(getScanWatermark(), maxScannedMikanId()) + 1
+  const stat = {
+    start,
+    scanned: 0,
+    ok: 0,
+    noLink: 0,
+    empty: 0,
+    failed: 0,
+    lastConfirmed: start - 1,
+    stoppedEarly: false,
+    stopAfter,
+  }
+  let consecutiveEmpty = 0
+
+  for (let id = start; id < start + maxPages; id++) {
+    stat.scanned++
+    let html = ''
+    try {
+      html = await tryBases(
+        'mikan',
+        (base) =>
+          fetch(`${base}/Home/Bangumi/${id}`, { signal: AbortSignal.timeout(12000) }).then(async (res) => {
+            if (res.status !== 200) throw Object.assign(new Error(`HTTP ${res.status}`), { __status: res.status })
+            return res.text()
+          }),
+        { log, tip: 'tail' },
+      )
+    } catch (err) {
+      if (err?.__status) {
+        stat.empty++
+        consecutiveEmpty++
+      } else {
+        stat.failed++
+        log.warn({ mikanId: id, err: err.message }, 'sweep.tail fetch fail')
+        continue // 上游抖动：不算"空"，也不算确认
+      }
+    }
+
+    if (html) {
+      const bgmId = getAnimeBangumiId(html, { quiet: true })?.bangumiId ?? null
+      const title = getAnimeTitle(html)
+      if (!title && !bgmId) {
+        stat.empty++
+        consecutiveEmpty++
+      } else {
+        rememberMikan(String(id), title || null, bgmId || null)
+        markMapChecked(String(id), bgmId || null)
+        stat.lastConfirmed = id
+        consecutiveEmpty = 0
+        if (bgmId) stat.ok++
+        else stat.noLink++
+      }
+    }
+
+    if (consecutiveEmpty >= Math.max(10, stopAfter)) {
+      stat.stoppedEarly = true
+      break
+    }
+  }
+
+  const watermark = setScanWatermark(stat.lastConfirmed)
+  log.info({ ...stat, watermark }, 'sweep.tail done')
+  return { ...stat, watermark }
+}
+
 /* ── CLI（npm run sweep）─────────────────────────────────────────────────── */
 const isCli = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url
 if (isCli) {
-  await runSweep({
-    from: arg('from', 1),
-    to: arg('to', 5400),
-    conc: arg('conc', 4),
-    limit: arg('limit', 0),
-    timeoutMs: arg('timeout', DEFAULT_TIMEOUT_MS),
-    stopAfterEmpty: arg('stop-after-empty', 300),
-    dryRun: flag('dry-run'),
-  })
+  if (flag('tail')) {
+    await runTailScan({ stopAfter: arg('stop-after', 200), maxPages: arg('max', 2000) })
+  } else {
+    await runSweep({
+      from: arg('from', 1),
+      to: arg('to', 5400),
+      conc: arg('conc', 4),
+      limit: arg('limit', 0),
+      timeoutMs: arg('timeout', DEFAULT_TIMEOUT_MS),
+      stopAfterEmpty: arg('stop-after-empty', 300),
+      dryRun: flag('dry-run'),
+    })
+  }
 }

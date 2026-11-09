@@ -87,10 +87,10 @@ export function finishV2(db) {
         `INSERT OR IGNORE INTO anime
            (id, mikan_id, bgm_id, title_mikan, poster_path, poster_src, year, season, weekday,
             series_id, series_index, series_relation, naming_style, series_root_title,
-            series_checked_at, series_all_movies, bgm_checked_at, updated_at)
+            series_checked_at, series_named_at, bgm_checked_at, updated_at)
          SELECT id, mikan_id, bgm_id, ${col('title')}, ${col('poster_path')}, ${col('poster_src')},
                 year, season, weekday, series_id, series_index, series_relation, naming_style,
-                series_root_title, series_checked_at, ${col('series_all_movies')},
+                series_root_title, series_checked_at, ${col('series_checked_at')},
                 bgm_checked_at, updated_at
            FROM anime_v1`,
       )

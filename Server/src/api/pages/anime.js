@@ -148,10 +148,23 @@ export async function getAnimeSeries(id, { log = logger } = {}) {
   // 根名 / 命名风格只写在「代表行」上（代表行的 id 就是 series_id）
   const representative = members.find((m) => m.id === row.series_id)
 
+  /*
+   * 根名 / 命名风格：**点开才算**（设计稿 §4.1）。
+   * 链已经算过、但还没起名（series_named_at 为空）→ 后台补一次 AI，**不阻塞本次返回**：
+   * 面板先显示兜底名（根名空时前端显示「同系列」），下次打开就是正式名。
+   * 只在配了 AI 时才试；失败只 warn，不影响打开面板。
+   */
+  if (representative && !representative.series_named_at && config.ai.enabled) {
+    void fillSeriesFor(representative, { log }).catch((err) =>
+      log.warn({ id: numId, err: err.message }, 'anime.series name fail'),
+    )
+  }
+
   log.debug({ id: numId, seriesId: row.series_id, members: members.length }, 'anime.series ok')
   return {
     rootTitle: representative?.series_root_title || '',
     namingStyle: representative?.naming_style || null,
+    namedAt: representative?.series_named_at ?? null,
     currentIndex: row.series_index ?? null,
     items: members.map((m) => ({
       animeId: m.id,

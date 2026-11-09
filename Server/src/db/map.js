@@ -49,6 +49,11 @@ const stmt = {
   /** 扫描用：已经扫到过的 mikan id（增量） */
   scannedIds: db.prepare('SELECT mikan_id FROM mikan_bgm_map'),
   maxMikanId: db.prepare('SELECT MAX(CAST(mikan_id AS INTEGER)) AS maxId FROM mikan_bgm_map'),
+  getScan: db.prepare('SELECT watermark FROM mikan_scan WHERE id = 1'),
+  setScan: db.prepare(`
+    INSERT INTO mikan_scan (id, watermark, updated_at) VALUES (1, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET watermark = excluded.watermark, updated_at = excluded.updated_at
+  `),
 }
 
 export const getMapByMikan = (mikanId) => stmt.byMikan.get(val(mikanId)) ?? null
@@ -90,3 +95,15 @@ export const listScannedMikanIds = () => stmt.scannedIds.all().map((row) => row.
 
 /** 目前见过的最大 mikan id（尾部扫描的水位起点） */
 export const maxScannedMikanId = () => Number(stmt.maxMikanId.get()?.maxId) || 0
+
+/** 扫描水位（没扫过就是 0） */
+export const getScanWatermark = () => Number(stmt.getScan.get()?.watermark) || 0
+
+/** 记扫描水位（只前进，不后退） */
+export function setScanWatermark(watermark) {
+  const value = Number(watermark) || 0
+  const current = getScanWatermark()
+  if (value <= current) return current
+  stmt.setScan.run(value, Date.now())
+  return value
+}

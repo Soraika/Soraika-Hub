@@ -317,8 +317,8 @@ const seriesStmt = {
       series_relation   = COALESCE(?, series_relation),
       naming_style      = COALESCE(?, naming_style),
       series_root_title = COALESCE(?, series_root_title),
-      series_all_movies = COALESCE(?, series_all_movies),
       series_checked_at = COALESCE(?, series_checked_at),
+      series_named_at   = COALESCE(?, series_named_at),
       updated_at        = ?
     WHERE id = ?
   `),
@@ -360,8 +360,8 @@ const seriesStmt = {
  * 写一部作品的系列信息（只传要更新的字段；传 null 不覆盖已有值）
  * @param {number} id 作品主键
  * @param {{ seriesId?:number, seriesIndex?:number|null, seriesRelation?:string,
- *           namingStyle?:string, seriesRootTitle?:string, seriesAllMovies?:number,
- *           seriesCheckedAt?:number }} [meta]
+ *           namingStyle?:string, seriesRootTitle?:string,
+ *           seriesCheckedAt?:number, seriesNamedAt?:number }} [meta]
  */
 export function setSeriesMeta(id, meta = {}) {
   const now = Date.now()
@@ -371,8 +371,8 @@ export function setSeriesMeta(id, meta = {}) {
     val(meta.seriesRelation),
     val(meta.namingStyle),
     val(meta.seriesRootTitle),
-    val(meta.seriesAllMovies),
     val(meta.seriesCheckedAt ?? now),
+    val(meta.seriesNamedAt ?? now),
     now,
     val(id),
   )
@@ -388,16 +388,23 @@ export const listSeriesMembers = (seriesId) => seriesStmt.bySeries.all(val(serie
 export const resetSeriesPositions = (seriesId) => seriesStmt.clearPositions.run(val(seriesId)).changes
 
 /**
- * 这条作品所在的系列是不是「整条都是剧场版」（AI 判定，标志存在代表行上）
- * 用途：档案补齐刚写进 `air_date` 时触发一次重排 —— 剧场版系列就是按上映日期排的，
- * 早补晚补都能对回原位。
+ * 这条作品所在的系列是不是「整条都是剧场版」
+ * ---------------------------------------------------------------------------
+ * 判据看 `bgm_subject.platform === 3`（dump 的剧场版平台码，确定性、不问 AI）。
+ * platform 拿不到（API 路径 / 老数据）时返回 null —— 宁可不动，也不误判。
+ * 用途：档案补齐刚写进 air_date 时触发一次重排（剧场版系列按上映日期排）。
  * @returns {number|null} 是的话返回 series_id，否则 null
  */
 export function isMovieOnlySeries(rowId) {
-  const row = stmt.byId.get(val(rowId))
+  const row = db.prepare('SELECT series_id FROM anime WHERE id = ?').get(val(rowId))
   if (!row?.series_id) return null
-  const rep = stmt.byId.get(val(row.series_id))
-  return Number(rep?.series_all_movies) === 1 ? row.series_id : null
+  const stat = db
+    .prepare(
+      `SELECT COUNT(*) AS n, SUM(CASE WHEN platform = 3 THEN 1 ELSE 0 END) AS movies
+         FROM v_anime WHERE series_id = ?`,
+    )
+    .get(val(row.series_id))
+  return stat?.n > 0 && Number(stat.movies) === Number(stat.n) ? row.series_id : null
 }
 
 /**
@@ -460,7 +467,7 @@ export function findByBgmIds(bgmIds = []) {
   const placeholders = ids.map(() => '?').join(',')
   return db
     .prepare(`SELECT id, bgm_id, title_mikan, title_bgm, title_bgm_origin, series_id, series_index,
-                     series_relation, naming_style, series_root_title, series_all_movies,
+                     series_relation, naming_style, series_root_title,
                      air_date, year, season, platform, total_episodes
                 FROM v_anime WHERE bgm_id IN (${placeholders})`)
     .all(...ids.map((v) => val(v)))

@@ -187,15 +187,17 @@ try {
     '全剧场版系列：AI 判 allMovies → 番外按年占季位 + 命名风格 volume',
   )
 
-  /* 「全剧场版系列」的判据要落库（`series_all_movies`）：后续走链会因「根名已有」跳过 AI，
-     判据丢了番外就会被清零；档案补齐写进 air_date 时还要靠它触发重排。 */
+  /* 「全剧场版系列」的判据改成 **platform**（dump 的剧场版平台码 = 3，确定性、不问 AI）；
+     `series_all_movies` 已删（判据靠 AI 现算，走链时「根名已有」会跳过 AI 而丢失）。 */
   check(
-    /series_all_movies/.test(
-      readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8'),
-    ) &&
+    /platform/.test(readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8')) &&
+      !/series_all_movies/.test(
+        readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8'),
+      ) &&
       /isMovieOnlySeries/.test(animeDbSource) &&
+      /platform = 3/.test(animeDbSource) &&
       /renumberMovieSeries/.test(readFileSync(new URL('../src/jobs/enrich.js', import.meta.url), 'utf8')),
-    '全剧场版判据落库（series_all_movies），档案补到 air_date 时自动重排',
+    '全剧场版判据看 platform=3（series_all_movies 已删），档案补到 air_date 时自动重排',
   )
   /* 排之前先把缺的日期补上 —— 剧场版系列按上映日期排，缺日期就只能被扔到最后（看着就是乱排） */
   check(
