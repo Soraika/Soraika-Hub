@@ -19,6 +19,72 @@ import { logger } from './logger.js'
 /** 上次成功的下标（进程内记忆，重启即重置） */
 const preferred = { mikan: 0, bgm: 0 }
 
+/** 延迟探测结果的缓存（每个源一份；`sources.pickFastest` 关掉时不用它） */
+const probed = { mikan: { at: 0, bases: [] }, bgm: { at: 0, bases: [] } }
+
+/**
+ * 探测一个地址的「首字节延迟」（毫秒）；失败返回 null
+ * ---------------------------------------------------------------------------
+ * 只发一个 2 字节的 Range 请求就把 body 取消掉 —— 我们只想知道"多久能连上"，
+ * 不想为一个探测真把页面下载下来。5xx 与网络错误都算失败；
+ * 4xx 仍然算"通"（说明域名在、只是路径不对），延迟有效。
+ */
+export async function probeMs(url, { timeoutMs = 2000, range = 'bytes=0-1' } = {}) {
+  const started = process.hrtime.bigint()
+  try {
+    const res = await fetch(url, { headers: { Range: range }, signal: AbortSignal.timeout(timeoutMs) })
+    try {
+      await res.body?.cancel()
+    } catch {
+      /* body 可能已经空了 */
+    }
+    if (res.status >= 500) return null
+    return Number(process.hrtime.bigint() - started) / 1e6
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 按延迟排序的候选地址（只在 `sources.pickFastest` 打开、且候选 ≥ 2 时才探测）
+ * ---------------------------------------------------------------------------
+ * **不阻塞请求**：有缓存就用缓存；没有就先按列表顺序返回，同时后台探一轮
+ * （探测最长 2 秒，挡在首页请求前面的话，第一次打开会白等 2 秒）。
+ * 探测失败的地址**不丢弃**，只是排到最后 —— 探测失败不等于真的不能用
+ * （有些 CDN 会挡掉带 Range 的探测请求）。
+ * @param {'mikan'|'bgm'} kind
+ * @param {{ log?: object, wait?: boolean }} [options] `wait: true` = 这次就等探测结果（脚本/测试用）
+ */
+export async function rankedBases(kind, { log = logger, wait = false } = {}) {
+  const bases = basesOf(kind)
+  if (!config.sources?.pickFastest || bases.length < 2) return bases
+
+  const cache = probed[kind]
+  const ttl = Number(config.sources?.probeTtlMs) || 10 * 60 * 1000
+  if (cache.bases.length === bases.length && Date.now() - cache.at < ttl) return cache.bases
+
+  const task = (async () => {
+    const timed = await Promise.all(bases.map(async (base) => ({ base, ms: await probeMs(base) })))
+    const alive = timed.filter((item) => item.ms !== null).sort((a, b) => a.ms - b.ms).map((item) => item.base)
+    const out = [...alive, ...bases.filter((base) => !alive.includes(base))]
+    probed[kind] = { at: Date.now(), bases: out }
+    log.info(
+      {
+        kind,
+        order: timed.map((item) => `${item.base}=${item.ms === null ? 'fail' : `${Math.round(item.ms)}ms`}`),
+      },
+      'source.probe ranked',
+    )
+    return out
+  })().catch(() => bases)
+
+  if (!wait) {
+    void task // 后台测速，这次先用列表顺序
+    return bases
+  }
+  return task
+}
+
 /**
  * 某个源的候选地址（去掉空项）
  * @param {'mikan'|'bgm'} kind
@@ -48,8 +114,14 @@ export async function tryBases(kind, attempt, { log = logger, tip = kind } = {})
     throw fail('INTERNAL', `${kind} 没有配置任何可用地址（设置页里至少要留一条）`)
   }
 
-  const start = Math.min(Math.max(preferred[kind] || 0, 0), bases.length - 1)
-  const order = [...bases.slice(start), ...bases.slice(0, start)]
+  // 竞速模式：按探测出的延迟顺序；否则沿用"上次成功的那个开头"的轮转
+  let order = bases
+  if (config.sources?.pickFastest) {
+    order = await rankedBases(kind, { log })
+  } else {
+    const start = Math.min(Math.max(preferred[kind] || 0, 0), bases.length - 1)
+    order = [...bases.slice(start), ...bases.slice(0, start)]
+  }
   let firstError
 
   for (const base of order) {

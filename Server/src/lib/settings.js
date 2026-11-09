@@ -19,6 +19,7 @@ import { fail } from './errors.js'
  */
 export const SETTINGS_GROUPS = [
   { key: 'sources', label: '数据源', hint: '排期来自 Mikan，评分与档案来自 Bangumi' },
+  { key: 'dump', label: '离线数据', hint: '用 Bangumi 每周的离线包批量补档案，可自动更新' },
   { key: 'ai', label: 'AI', hint: '资源标签与集数解析，留空 Key 即关闭' },
   { key: 'worker', label: '后台任务', hint: '档案补齐与今年番剧的每日更新' },
   { key: 'cache', label: '缓存与图片', hint: '首页排期缓存、海报出图与浏览器缓存' },
@@ -49,10 +50,32 @@ export const SETTINGS_FIELDS = [
   { path: 'mikan.bases', env: 'MIKAN_BASE_URLS', group: 'sources', section: 'Mikan 排期源', label: '站点地址', type: 'list', hint: '一行一个，按顺序切换' },
   { path: 'mikan.timeoutMs', env: 'MIKAN_TIMEOUT_MS', group: 'sources', section: 'Mikan 排期源', label: '请求超时', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true },
 
+  /* 选择策略：Mikan / Bangumi / dump 镜像共用一个开关。
+     外链与海报地址**永远用列表第一条**（链接不能跟着测速漂移），只有取数请求走"最快的那个"。 */
+  { path: 'sources.pickFastest', env: 'SOURCES_PICK_FASTEST', group: 'sources', section: '选择策略', label: '自动选最快', type: 'boolean', advanced: true, hint: '多个地址时先测延迟；外链仍用第一条' },
+  { path: 'sources.probeTtlMs', env: 'SOURCES_PROBE_TTL_MS', group: 'sources', section: '选择策略', label: '测速缓存', type: 'number', unit: 'ms', format: 'duration', min: 10000, advanced: true, hint: '多久重新测一次延迟' },
+
   { path: 'bgm.bases', env: 'BGM_API_BASES', group: 'sources', section: 'Bangumi 评分源', label: '接口地址', type: 'list', hint: '一行一个，按顺序切换' },
   { path: 'bgm.token', env: 'BGM_TOKEN', group: 'sources', section: 'Bangumi 评分源', label: 'Token', type: 'secret', advanced: true, hint: '官方接口要求时填写' },
   { path: 'bgm.userAgent', env: 'BGM_USER_AGENT', group: 'sources', section: 'Bangumi 评分源', label: 'User-Agent', type: 'text', hint: '官方接口要求携带', advanced: true },
   { path: 'bgm.timeoutMs', env: 'BGM_TIMEOUT_MS', group: 'sources', section: 'Bangumi 评分源', label: '请求超时', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true },
+
+  // ── 离线数据（Bangumi dump：每周三导一次全站，本地流式导入）──
+  /* 打开 = 半在线：档案优先用 dump，但**缺的/过期的仍然现查 API**。
+     关掉 = 全在线：一切走 /v0/subjects（现在的行为）。 */
+  { path: 'bgm.useDump', env: 'BGM_USE_DUMP', group: 'dump', section: '模式', label: '优先用离线包', type: 'boolean', advanced: true, hint: '缺的条目仍会现查一次接口' },
+  { path: 'bgm.dumpMaxAgeDays', env: 'BGM_DUMP_MAX_AGE_DAYS', group: 'dump', section: '模式', label: '档案过期天数', type: 'number', unit: '天', min: 1, max: 365, advanced: true, hint: '超过这么多天没更新就现查一次' },
+
+  { path: 'bgm.dumpAuto', env: 'BGM_DUMP_AUTO', group: 'dump', section: '自动更新', label: '自动更新', type: 'boolean', advanced: true, hint: '到点检查有没有新版，有才下载' },
+  { path: 'bgm.dumpCheckAt', env: 'BGM_DUMP_CHECK_AT', group: 'dump', section: '自动更新', label: '检查时刻', type: 'time', advanced: true, hint: '每天这个时间看一眼（包每周三更新）' },
+
+  /* 索引与镜像都走「多地址」同一套控件：可拖拽、每条单独测速。
+     镜像用 `{url}` 代表真实下载地址 —— "直连"就写 `{url}`，不用留空行。 */
+  { path: 'bgm.dumpIndex', env: 'BGM_DUMP_INDEX', group: 'dump', section: '地址与镜像', label: '版本索引', type: 'list', maxItems: 6, advanced: true, hint: '一行一个地址，前一个失败试下一个' },
+  { path: 'bgm.dumpMirrors', env: 'BGM_DUMP_MIRRORS', group: 'dump', section: '地址与镜像', label: '下载镜像', type: 'list', template: true, maxItems: 8, advanced: true, hint: '用 {url} 代表真实地址，顺序随意' },
+
+  { path: 'bgm.dumpDir', env: 'BGM_DUMP_DIR', group: 'dump', section: '落盘', label: '下载目录', type: 'text', advanced: true, hint: '相对服务端工作目录；导入后默认删掉' },
+  { path: 'bgm.dumpKeepZip', env: 'BGM_DUMP_KEEP_ZIP', group: 'dump', section: '落盘', label: '保留压缩包', type: 'boolean', advanced: true, hint: '导入后不删 zip，想复用或归档时打开' },
 
   // ── AI ──
   /* 先选**提供商**，再谈地址：使用者脑子里是"用哪家"，不是"哪个 URL"。
@@ -205,6 +228,15 @@ export function validateValue(field, raw) {
       if (!uniq.length) return { ok: false, message: `${field.label} 至少要填一个地址` }
       const max = field.maxItems ?? 10
       if (uniq.length > max) return { ok: false, message: `${field.label} 最多 ${max} 个地址` }
+      // `template: true` 的列表是**地址模板**（镜像用 `{url}` 占位）：
+      // 校验"必须含 {url}"而不是"必须是 http(s)"，否则直连那一项没法表示。
+      if (field.template) {
+        const bad = uniq.findIndex((s) => !s.includes('{url}'))
+        if (bad >= 0) {
+          return { ok: false, message: `${field.label} 第 ${bad + 1} 条缺少 {url} 占位符` }
+        }
+        return { ok: true, value: uniq }
+      }
       const bad = uniq.find((s) => !isHttpUrl(s))
       if (bad) return { ok: false, message: `${field.label} 里有不是 http(s):// 的地址：${bad}` }
       return { ok: true, value: uniq }

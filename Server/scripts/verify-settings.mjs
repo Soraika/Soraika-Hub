@@ -164,6 +164,25 @@ try {
     listFields.includes('mikan.bases') && listFields.includes('bgm.bases'),
     `数据源支持多地址 → ${listFields.join(' / ')}`,
   )
+  /* 离线 dump：索引进「数据源」那套列表，镜像进「离线数据」；镜像用 {url} 模板 */
+  check(
+    listFields.includes('bgm.dumpIndex') && listFields.includes('bgm.dumpMirrors'),
+    `离线包也有多地址（索引 + 镜像）→ ${listFields.filter((p) => p.startsWith('bgm.dump')).join(' / ')}`,
+  )
+  const mirrorsField = settings.fields.find((f) => f.path === 'bgm.dumpMirrors')
+  check(
+    String(mirrorsField?.default || '')
+      .split('\n')
+      .filter(Boolean)
+      .every((line) => line.includes('{url}')),
+    '镜像默认值都是 {url} 模板（直连就写 {url}）',
+    JSON.stringify(mirrorsField?.default),
+  )
+  check(
+    settings.groups.some((g) => g.key === 'dump') &&
+      settings.fields.filter((f) => f.group === 'dump').length >= 6,
+    `新增「离线数据」分组 → ${settings.fields.filter((f) => f.group === 'dump').length} 项`,
+  )
   check(
     settings.fields
       .filter((f) => f.type === 'list')
@@ -248,6 +267,25 @@ try {
   check(partlyBad.res.status === 400, `多地址里有一条非法 → 400（${partlyBad.body?.error?.detail?.errors?.[0]?.message}）`)
   const badTime = await call('PUT', '/api/settings', { values: { 'worker.dailyAt': '25:00' } })
   check(badTime.res.status === 400, '非法时刻 → 400')
+  /* 镜像列表是**模板**（`{url}` 占位），校验规则与普通地址不同：
+     缺占位符就没法替换成真实下载地址，必须在保存时挡住并指出第几条。 */
+  const badMirror = await call('PUT', '/api/settings', {
+    values: { 'bgm.dumpMirrors': '{url}\nhttps://gh-proxy.com/' },
+  })
+  check(
+    badMirror.res.status === 400 && /第 2 条/.test(String(badMirror.body?.error?.detail?.errors?.[0]?.message)),
+    `镜像缺 {url} → 400 且指出第几条（${badMirror.body?.error?.detail?.errors?.[0]?.message}）`,
+  )
+  const goodMirror = await call('PUT', '/api/settings', {
+    values: { 'bgm.dumpMirrors': '{url}\nhttps://gh-proxy.com/{url}' },
+  })
+  check(goodMirror.res.ok, '带 {url} 的镜像模板可以保存')
+  check(
+    String(fieldOf(goodMirror.body.data.settings, 'bgm.dumpMirrors').value).includes('gh-proxy.com/{url}'),
+    '镜像列表按「一行一个」回显',
+  )
+  const badDumpTime = await call('PUT', '/api/settings', { values: { 'bgm.dumpCheckAt': '7:5' } })
+  check(badDumpTime.res.status === 400, '离线包的检查时刻也要 HH:MM → 400')
   const unknown = await call('PUT', '/api/settings', { values: { 'nope.field': 1 } })
   check(unknown.res.status === 400, '未知配置项 → 400')
   const empty = await call('PUT', '/api/settings', { values: {} })

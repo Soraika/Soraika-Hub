@@ -864,7 +864,14 @@ try {
   )
   check(/grid-template-columns:\s*repeat\(auto-fill, minmax\(240px, 1fr\)\)/.test(settingsSource), '字段用自适应多列铺满')
   check(!/max-width:\s*920px/.test(settingsSource), '页面撑满，没有被限宽')
-  check(settingsSource.includes('class="card-save"') && settingsSource.includes('save-btn'), '每张卡片底部有自己的保存按钮')
+  check(
+    settingsSource.includes('dump: IconCloudDownload'),
+    '新增「离线数据」分组有图标（后端清单加了分组，前端不补图标就会空一块）',
+  )
+  check(
+    settingsSource.includes('class="card-save"') && settingsSource.includes('save-btn'),
+    '每张卡片底部有自己的保存按钮',
+  )
   /* 保存 = 整组落库（不是只写 diff）：否则库里只有改过的那几个键，看着像「设置没存」 */
   const useSettingsSource = readFileSync(new URL('../src/composables/useSettings.js', import.meta.url), 'utf8')
   check(

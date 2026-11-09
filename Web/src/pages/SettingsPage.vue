@@ -210,6 +210,7 @@ import {
   IconBrain,
   IconCheck,
   IconClockHour4,
+  IconCloudDownload,
   IconDatabase,
   IconDownload,
   IconRefresh,
@@ -238,6 +239,7 @@ import { useSettings } from '@/composables/useSettings'
  */
 const GROUP_ICONS = {
   sources: IconWorld,
+  dump: IconCloudDownload,
   ai: IconBrain,
   worker: IconClockHour4,
   cache: IconDatabase,

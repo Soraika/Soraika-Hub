@@ -103,7 +103,7 @@
 | | 资源列表 | `/RSS/Bangumi?bangumiId=&subgroupid=` | **带 subgroupid 只给最近 100 条**；不带才是完整历史 |
 | **BGM 镜像** | 评分/人数/标签/简介/集数/放送日 | `/v0/subjects/{id}` | 需要 UA（配 token 可提高额度） |
 | | 1 跳关系（系列链） | `/v0/subjects/{id}/subjects` | 关系是「相对当前条目」的；剧场版也可能挂在「续集」边上 |
-| **BGM 离线 dump** | **批量**刷新以上档案（本地 1.3GB jsonlines，一条请求都不发） | `github.com/bangumi/Archive` releases（`aux/latest.json` 给最新地址，每周三 05:00 GMT+8） | 只有 wiki 原文，**没有封面**；`total_episodes` 要自己数 `type=0` 的章节 |
+| **BGM 离线 dump** | **批量**刷新以上档案（本地 1.3GB jsonlines，一条请求都不发） | `github.com/bangumi/Archive` releases（`aux/latest.json` 给最新地址，每周三 05:00 GMT+8） | 只有 wiki 原文，**没有封面**；`total_episodes` 要自己数 `type=0` 的章节；索引与下载都多源（镜像 + 断点续传） |
 | **AI**（可选） | 资源标签 / 集数 / 系列归一 / 格式特征 / **组标记→组名映射** | OpenAI 兼容 `/chat/completions` | 没配 key = **未配置**（501），不是失败；逐条归类不做 AI（改用组标记确定性匹配） |
 
 **统一入口**：`lib/http-client.js`（超时 + 指数退避重试 + 4xx 不重试）。
@@ -135,7 +135,7 @@ Mikan 额外一层 **解析级重试**：200 但连标题都解析不出来 = �
 - **自愈**：`runLoop` 兜住任何异常（记 `lastError` + 清残留认领 + 退避重进）——
   一次上游 404 曾把整个守护进程打死
 
-**一次性任务（CLI）**：`npm run sweep`（Mikan→BGM 全量扫描）/ `enrich` / `backfill` / `series` / `archive`（离线 dump，见决策 46）
+**一次性任务（CLI）**：`npm run sweep`（Mikan→BGM 全量扫描）/ `enrich` / `backfill` / `series` / `archive`（手动导入 dump）/ `dump`（检查 + 自动更新 dump，见决策 46/47）
 
 ---
 
@@ -234,6 +234,7 @@ Mikan 额外一层 **解析级重试**：200 但连标题都解析不出来 = �
 | 44 | **提示词是数据，不是代码** | 调一句 prompt 就要改源码 + 重启，还得手动对齐版本号 —— 每次都败在"忘了升版本 → 命中旧缓存 → 以为没生效"。现在四段提示词都在 `api/ai/prompts.json`（出厂默认，进 git 可 review），**`data/prompts.json` 覆盖 + 按 mtime 热加载**（改完立即生效、不用重启），并且有 `GET/PUT /api/ai/prompts`。缓存 key 用**提示词内容 hash**：改了就自然 miss，不再依赖谁记得升版本（版本号退化成元信息）。空提示词一律 400 |
 | 45 | **提示词拆两段：系统契约（我们的）+ 用户补充（你的），跑偏就回退默认** | 模型能不能用取决于提示词里有没有把 JSON 结构写清楚；用户调措辞时最容易顺手删掉结构说明，结果模型返回散文，现象是「资源区标签突然全没了」，很难联想到提示词。所以：① 每段提示词分 `system`（输出结构、字段名、禁止事项）与 `custom`（偏好、措辞）两块，发送时 system 在前、custom 在后（`composePrompt`）；② 保存时校验 `system` 必须保留关键字段名（bundle 要 `"tags"`/`"display"`/`"match"`/`"episodes"`，series 要 `namingStyle`/`rootTitle`/`extras`，format 要 `prefix`/`literals`，groupTags 要 `{{NAMES}}`），缺了就 400 并指出缺什么，`custom` 随便写（限 4000 字）；③ **模型跑偏时自动回退**：JSON 解析失败或 tags 与 episodes 同时为空 → 用出厂默认的 system 段（不带 custom）重跑该批，结果带 `promptFallback: true`，日志 `ai.bundle fallback-default`。回退只影响这一次请求，不改任何配置；④ **界面只编辑 custom**：系统段在设置页不展示（普通用户不该动契约），只显示「系统段 N 字（程序维护）」+ 指路 JSON 文件；保存只提交 custom，不会覆盖别人手改的系统段 |
 | 46 | **老番档案用 BGM 离线 dump 批量刷，不走逐条 API** | 档案补齐是「一条一次请求」，3762 部老番要跑几十分钟还会被限流（镜像 20 次/秒就 429）。`github.com/bangumi/Archive` 每周三导一次全站，`subject.jsonlines` + `episode.jsonlines` 一共 1.3GB —— 本地流式扫一遍，**3742 条 4.3 秒**就落完，一条请求都不发（实测 `needArchive 222 → 191`、`withScore 3711 → 3745`）。四条约束：① **只补库里已有 `bgm_id` 的行**（dump 是全站含漫画/游戏/三次元，主表入口仍然只有 Mikan 排期）；② **不写 `year`/`season`/`weekday`**（排期归属只有 Mikan 能写），**不写 `poster_src`**（dump 里没有封面）；③ **总集数只增不减**（周更快照会比上游登记慢，直接覆盖会把「共 12 集」改成「共 8 集」，下载页的「已下载 8 / 共 12」就假了）；④ 落库顺手写 `bgm_checked_at`，档案队列不再为这些行打上游（当年番的每日更新不受影响，仍走 API 拿当天数据）。字段口径与 `bgmToRow` 完全一致（`meta_tags` 优先、标签最多 8 个、`rating_total` = 各档人数之和） |
+| 47 | **离线 dump 自动更新：digest 比对 → 镜像竞速 → 断点续传 → 流式解压** | 手点每周一次不现实，但每天拉 450MB 更荒唐。做法：① `dump_state` 存上次导入的 sha256，索引（539B）digest 一样就直接结束 —— **一周 6 天只花一次 539 字节请求**；② 索引与下载都多源（raw / jsDelivr / gh-proxy），`sources.pickFastest` 决定"竞速选最快"还是"按列表"；③ 下载写 `.part` + `Range` 续传（跨镜像也能续），边下边算 sha256，**不符就删**；④ **不解压到磁盘**：直接从 zip 中央目录取两个条目，`zlib.createInflateRaw` 流式喂给解析（磁盘峰值 450MB vs 1.75GB）；⑤ 失败只记日志 + 10min/1h/6h 退避，旧数据照用。实测：缓存 zip 导入 3742 条 **5.1 秒**，整趟 6.4 秒；`--check` 二次调用直接 up-to-date |
 
 ---
 
@@ -267,7 +268,7 @@ Mikan 额外一层 **解析级重试**：200 但连标题都解析不出来 = �
 | `verify-detail.mjs` | 详情 + 系列（含名字判定）+ 字幕组 + 资源 + 表结构不变式 |
 | `verify-ai.mjs` | 工具清单、入参校验、未配置降级、**全量分批**、缓存命中 |
 | `verify-settings.mjs` | 字段清单、校验、密钥打码、导出导入、连通测试、重置 |
-| `verify-archive.mjs` | 离线 dump 的字段映射（meta_tags 优先级 / 人数求和 / 只数正篇 / 空值不覆盖）、只补已有 bgm_id、`--only-missing`、`bgm_checked_at` |
+| `verify-archive.mjs` | 离线 dump 的字段映射（meta_tags 优先级 / 人数求和 / 只数正篇 / 空值不覆盖）、只补已有 bgm_id、`--only-missing`、`bgm_checked_at`、**从 zip 直接导入**、**自动更新（索引多源 / digest 跳过 / Range 续传 / sha256 / 镜像切换）** |
 | `verify-worker.mjs` | 队列谓词与计数一致、认领 CAS、系列队列不丢任务 |
 | `Web/scripts/verify-e2e.mjs` | 真数据渲染 + 面板三态 + 骨架屏 + 排序/分页 + 各组件结构断言 |
 

@@ -16,6 +16,7 @@
 import { pathToFileURL } from 'node:url'
 import { loadStoredSettings } from '../api/pages/settings.js'
 import { config } from '../config.js'
+import { getDumpState } from '../db/dump.js'
 import {
   claimNextArchive,
   claimNextMissingBgm,
@@ -31,6 +32,7 @@ import {
 } from '../db/queue.js'
 import { logger } from '../lib/logger.js'
 import { enrichOne, lastDailyBoundary, refreshStaleOne } from './enrich.js'
+import { updateDump } from './dump-update.js'
 import { fillSeriesFor } from './series.js'
 
 /** 运行状态（模块内私有：外部只能通过 getWorkerState() 拿快照，避免被随手改） */
@@ -45,6 +47,16 @@ const workerState = {
   daily: { at: '', year: 0, boundaryAt: 0, refreshed: 0, due: 0, doneAt: 0 },
   /** 触发③：系列链补齐（新作品入库后算一次；老系列不主动重算 —— 见 CONVENTIONS.md §10.1） */
   series: { processed: 0, done: 0, skipped: 0, pending: 0, doneTotal: 0, cooldownUntil: 0 },
+  /** 离线 dump 的自动更新（每天到点检查一次；下载/导入是后台异步跑的，不挡其它队列） */
+  dump: {
+    at: '',
+    checkedAt: 0,
+    importedAt: 0,
+    name: '',
+    running: false,
+    lastError: null,
+    cooldownUntil: 0,
+  },
   /** 三个队列都空了几轮 */
   idleCycles: 0,
   lastError: null,
@@ -58,6 +70,8 @@ let running = false
 /** 触发③的失败退避：连续失败就指数拉长冷却（最多 10 分钟），别在上游抖动时反复打 */
 let seriesFailStreak = 0
 let seriesCooldownUntil = 0
+/** dump 更新的失败退避（最多 6 小时；换进程后由 dump_state.checked_at 决定还要不要再查） */
+let dumpFailStreak = 0
 /** 循环的 promise（优雅停机时等它退出） */
 let loopDone = null
 /** 唤醒正在休眠的循环：停机时不用干等一个 idleMs */
@@ -90,6 +104,12 @@ export function startWorker({ log = logger } = {}) {
   workerState.series.pending = countSeriesPending()
   workerState.series.doneTotal = countSeriesDone()
   if (released) log.warn({ released }, 'worker.series release-stale')
+  // dump 上次检查时间来自库（进程重启不该重新打一次索引）
+  const dumpState = getDumpState()
+  workerState.dump.checkedAt = Number(dumpState?.checked_at) || 0
+  workerState.dump.importedAt = Number(dumpState?.imported_at) || 0
+  workerState.dump.name = dumpState?.name || ''
+  workerState.dump.at = config.bgm?.dumpCheckAt || ''
   log.info(
     {
       gapMs: config.worker.gapMs,
@@ -148,6 +168,45 @@ async function runLoop(log) {
   }
 }
 
+/**
+ * 离线 dump 的每日检查（**发射后不管**，不阻塞主循环）
+ * ---------------------------------------------------------------------------
+ * 为什么异步：下载 450MB 可能十几分钟，await 它会把补齐 / 每日更新全卡住，
+ * 优雅停机也得等它跑完。这里只判断"到点了没"，真正的工作在后台跑，
+ * 状态写进 `workerState.dump`（`/api/health` 能看到）。
+ *
+ * 失败退避：10 分钟 → 20 → 40 … 最多 6 小时 —— 上游挂了不能每轮都去打索引。
+ * 检查失败也会写 `checkedAt`（否则 30 秒一轮的循环会疯狂重试）。
+ */
+function maybeUpdateDump(log) {
+  if (!config.bgm?.dumpAuto || workerState.dump.running) return
+  const boundary = lastDailyBoundary(new Date(), config.bgm.dumpCheckAt)
+  if (workerState.dump.checkedAt >= boundary) return
+  if (Date.now() < workerState.dump.cooldownUntil) return
+
+  workerState.dump.running = true
+  workerState.dump.at = config.bgm.dumpCheckAt
+  void (async () => {
+    try {
+      const res = await updateDump({ log })
+      workerState.dump.checkedAt = Date.now()
+      workerState.dump.lastError = null
+      dumpFailStreak = 0
+      if (res.index?.name) workerState.dump.name = res.index.name
+      if (res.status === 'imported') workerState.dump.importedAt = Date.now()
+    } catch (err) {
+      workerState.dump.checkedAt = Date.now()
+      workerState.dump.lastError = err?.message || String(err)
+      dumpFailStreak++
+      const cooldown = Math.min(6 * 60 * 60 * 1000, 10 * 60 * 1000 * 2 ** (dumpFailStreak - 1))
+      workerState.dump.cooldownUntil = Date.now() + cooldown
+      log.warn({ err: workerState.dump.lastError, cooldownMs: cooldown }, 'worker.dump fail backoff')
+    } finally {
+      workerState.dump.running = false
+    }
+  })()
+}
+
 async function loop(log) {
   while (!stopped) {
     let worked = false
@@ -167,6 +226,9 @@ async function loop(log) {
       worked = true
       await pause(config.worker.gapMs)
     }
+
+    // ── 离线 dump 的每日检查（异步：下载/导入不挡其它队列）──────────────
+    maybeUpdateDump(log)
 
     // ── 触发②：今年的番剧每日更新（整份档案重刷）─────────────────────────
     // 三个触发**每轮各推进一条**：若改成「先清空补齐队列再处理每日更新」，

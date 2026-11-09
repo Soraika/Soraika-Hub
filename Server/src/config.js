@@ -40,12 +40,52 @@ export const config = {
     timeoutMs: 20000,
   },
 
+  /**
+   * 多源地址的选取策略（Mikan / Bangumi / dump 镜像共用）
+   * ---------------------------------------------------------------------------
+   * `pickFastest`：候选 ≥ 2 时先探测一次首字节延迟，按快的先试（结果缓存 probeTtlMs）。
+   * 关掉就严格按设置页里的列表顺序 —— 给"我就想用某个特定地址"的人留一条路。
+   * 无论开关如何，**外链与海报地址永远用列表第一条**（链接不能跟着测速漂移）。
+   */
+  sources: {
+    pickFastest: true,
+    probeTtlMs: 10 * 60 * 1000,
+  },
+
   bgm: {
     /** 评分 / 评分人数 / 标签（走镜像，不需要梯子）；同样支持多个地址故障切换 */
     bases: ['https://bgmapi.anibt.net', 'https://api.bgm.tv'],
     token: '',
     userAgent: 'SoraikaHub/0.1 (https://github.com/soraika)',
     timeoutMs: 20000,
+
+    /**
+     * 离线 dump（bangumi/Archive）—— 半在线模式的档案来源
+     * -----------------------------------------------------------------------
+     * · `useDump`：设置页显式开关。打开 = 半在线；**仍然保留全在线的兜底**
+     *   （档案缺失 / 超过 dumpMaxAgeDays 时现场打一次 API）
+     * · `dumpIndex`：版本索引（一行 JSON）；多源，前一个失败试下一个
+     * · `dumpMirrors`：下载镜像**模板**，`{url}` 会替换成真实地址；`{url}` 就是直连
+     * · `dumpAuto` / `dumpCheckAt`：每天到这个时刻检查一次（digest 没变只花 539B）
+     */
+    useDump: false,
+    dumpMaxAgeDays: 14,
+    dumpAuto: true,
+    dumpCheckAt: '06:00',
+    dumpDir: 'data/dump',
+    dumpKeepZip: false,
+    dumpIndex: [
+      'https://raw.githubusercontent.com/bangumi/Archive/master/aux/latest.json',
+      'https://cdn.jsdelivr.net/gh/bangumi/Archive@master/aux/latest.json',
+      'https://ghproxy.net/https://raw.githubusercontent.com/bangumi/Archive/master/aux/latest.json',
+    ],
+    dumpMirrors: [
+      '{url}',
+      'https://hk.gh-proxy.com/{url}',
+      'https://gh-proxy.com/{url}',
+      'https://ghfast.top/{url}',
+      'https://ghproxy.net/{url}',
+    ],
   },
 
   image: {

@@ -28,6 +28,7 @@
  *     Mikan 挂的是哪个条目就用哪个条目，不在这里二次判定类型。
  */
 import { createReadStream } from 'node:fs'
+import { StringDecoder } from 'node:string_decoder'
 
 /** dump 里我们用得到的两个文件（其余 person / character 等与本项目无关） */
 export const DUMP_FILES = Object.freeze({
@@ -39,7 +40,7 @@ export const DUMP_FILES = Object.freeze({
 export const TAG_LIMIT = 8
 
 /**
- * 流式读 jsonlines
+ * 流式读 jsonlines（任何可读流都行：文件、zip 解压流）
  * ---------------------------------------------------------------------------
  * 为什么不用 `node:readline`：subject.jsonlines 有 950MB / 60 万行，readline 的逐行
  * 事件开销明显；自己按 '\n' 切块（带跨块残行）能快一倍以上，且内存恒定
@@ -48,16 +49,19 @@ export const TAG_LIMIT = 8
  * `raw: true` 时不解析 JSON，直接把原始行交给回调：调用方可以用
  * `leadingId()` / 一段正则先筛掉 99% 不关心的行，只对命中的那几百行做 JSON.parse。
  *
+ * 跨块的**多字节字符**用 StringDecoder 兜住（zip 流给的是 Buffer，直接 toString 会把
+ * 一个汉字的两个字节切开 → 出现 `\uFFFD`；这个坑在文件名里会直接变成乱码）。
+ *
  * 回调是**同步**的（这里是文件解析，不是 IO 编排）—— 要写库就在回调里同步写，
  * 批量攒够再开事务。返回 `{ lines, bad, bytes }`，`bad` 是解析失败的行数（dump 偶有截断行）。
  *
- * @param {string} file
+ * @param {import('node:stream').Readable} stream
  * @param {(row: any) => void} onRow `raw: true` 时收到字符串，否则收到解析后的对象
- * @param {{ raw?: boolean, chunkBytes?: number }} [options]
- * @returns {Promise<{ lines: number, bad: number, bytes: number }>}
+ * @param {{ raw?: boolean }} [options]
  */
-export async function readJsonLines(file, onRow, { raw = false, chunkBytes = 1 << 22 } = {}) {
+export async function readJsonLinesFrom(stream, onRow, { raw = false } = {}) {
   const stats = { lines: 0, bad: 0, bytes: 0 }
+  const decoder = new StringDecoder('utf8')
   let rest = ''
 
   const emit = (line) => {
@@ -73,22 +77,35 @@ export async function readJsonLines(file, onRow, { raw = false, chunkBytes = 1 <
     onRow(row)
   }
 
-  const stream = createReadStream(file, { encoding: 'utf8', highWaterMark: chunkBytes })
   for await (const chunk of stream) {
-    stats.bytes += chunk.length
-    const text = rest + chunk
+    const text = typeof chunk === 'string' ? chunk : decoder.write(chunk)
+    stats.bytes += Buffer.byteLength(text)
+    const combined = rest + text
     let start = 0
-    let at = text.indexOf('\n')
+    let at = combined.indexOf('\n')
     while (at !== -1) {
-      const line = text.slice(start, at)
+      const line = combined.slice(start, at)
       start = at + 1
       if (line.trim()) emit(line)
-      at = text.indexOf('\n', start)
+      at = combined.indexOf('\n', start)
     }
-    rest = start ? text.slice(start) : text
+    rest = start ? combined.slice(start) : combined
   }
-  if (rest.trim()) emit(rest)
+  const tail = rest + decoder.end()
+  if (tail.trim()) emit(tail)
   return stats
+}
+
+/**
+ * 流式读 jsonlines 文件（薄包装，保持原来的调用方式）
+ * @param {string} file
+ * @param {(row: any) => void} onRow
+ * @param {{ raw?: boolean, chunkBytes?: number }} [options]
+ */
+export async function readJsonLines(file, onRow, { raw = false, chunkBytes = 1 << 22 } = {}) {
+  return readJsonLinesFrom(createReadStream(file, { encoding: 'utf8', highWaterMark: chunkBytes }), onRow, {
+    raw,
+  })
 }
 
 /**

@@ -9,11 +9,15 @@
  *   · 只补库里已有的 bgm_id（dump 里多出来的条目不建行）
  *   · --only-missing 不动已有值；默认模式覆盖
  *   · bgm_checked_at 的两种行为（默认刷新 / --no-checked 不动）
- *   · 目录不存在 → 明确报错（BAD_DUMP）；给 zip 路径 → 自动找同名解压目录
+ *   · **从 zip 直接导入**（.zip 里 store + deflate 两种条目各一条；不解压）
+ *   · 自动更新：索引多源 / digest 相同不下载 / Range 续传 / sha256 不符拒绝 / 镜像失败换下一个
+ *   · 目录不存在 → 明确报错（BAD_DUMP）
  */
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { crc32, deflateRawSync } from 'node:zlib'
 
 let failed = 0
 const check = (ok, msg, detail = '') => {
@@ -21,12 +25,66 @@ const check = (ok, msg, detail = '') => {
   console.log(`${ok ? '✓' : '✗'} ${msg}${detail ? ` → ${detail}` : ''}`)
 }
 
+/**
+ * 造一个最小 zip（只够本项目读：store / deflate 两种条目）
+ * ---------------------------------------------------------------------------
+ * 验收脚本也要零依赖 —— 我们只需要"能读回自己写的东西"，所以自己按
+ * 本地头 + 中央目录 + EOCD 拼一个。CRC 用 `zlib.crc32`（Node 22+ 有），
+ * 没有就写 0（我们的读取器不校验 CRC，真实 dump 的完整性由 sha256 兜）。
+ */
+function makeZip(entries) {
+  const locals = []
+  const centrals = []
+  let offset = 0
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, 'utf8')
+    const raw = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(entry.data, 'utf8')
+    const method = entry.method === 'store' ? 0 : 8
+    const body = method === 8 ? deflateRawSync(raw) : raw
+    const sum = typeof crc32 === 'function' ? crc32(raw) : 0
+
+    const local = Buffer.alloc(30)
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(20, 4)
+    local.writeUInt16LE(0x0800, 6) // UTF-8 文件名
+    local.writeUInt16LE(method, 8)
+    local.writeUInt32LE(sum, 14)
+    local.writeUInt32LE(body.length, 18)
+    local.writeUInt32LE(raw.length, 22)
+    local.writeUInt16LE(name.length, 26)
+    locals.push(local, name, body)
+
+    const cen = Buffer.alloc(46)
+    cen.writeUInt32LE(0x02014b50, 0)
+    cen.writeUInt16LE(20, 4)
+    cen.writeUInt16LE(20, 6)
+    cen.writeUInt16LE(0x0800, 8)
+    cen.writeUInt16LE(method, 10)
+    cen.writeUInt32LE(sum, 16)
+    cen.writeUInt32LE(body.length, 20)
+    cen.writeUInt32LE(raw.length, 24)
+    cen.writeUInt16LE(name.length, 28)
+    cen.writeUInt32LE(offset, 42)
+    centrals.push(cen, name)
+
+    offset += local.length + name.length + body.length
+  }
+  const central = Buffer.concat(centrals)
+  const eocd = Buffer.alloc(22)
+  eocd.writeUInt32LE(0x06054b50, 0)
+  eocd.writeUInt16LE(entries.length, 8)
+  eocd.writeUInt16LE(entries.length, 10)
+  eocd.writeUInt32LE(central.length, 12)
+  eocd.writeUInt32LE(offset, 16)
+  return Buffer.concat([...locals, central, eocd])
+}
+
 /* 独立库：必须在 import db 之前设定（config.js 在模块求值时读 DB_FILE） */
 const DB_FILE = `data/tmp-verify-archive-${process.pid}.db`
 process.env.DB_FILE = DB_FILE
 
 const { db } = await import('../src/db/index.js')
-const { runArchiveImport, resolveDumpDir } = await import('../src/jobs/import-archive.js')
+const { runArchiveImport, resolveDumpSource } = await import('../src/jobs/import-archive.js')
 const { archivePatch, archiveTags, leadingId, ratingTotalOf } = await import('../src/lib/bgm-archive.js')
 
 const silent = { info() {}, warn() {}, error() {} }
@@ -168,15 +226,128 @@ db.prepare('UPDATE anime SET bgm_checked_at = NULL WHERE bgm_id = ?').run('2')
 await runArchiveImport({ dir: dumpDir, markChecked: false, log: silent })
 check(rowOf('2').bgm_checked_at == null, '--no-checked 不动 bgm_checked_at')
 
+console.log('\n— 从 zip 直接导入（不落盘解压）')
 const zipPath = join(dumpDir, '..', `bgm-dump-${process.pid}.zip`)
-mkdirSync(join(zipPath.replace(/\.zip$/, '')), { recursive: true })
-copyFileSync(join(dumpDir, 'subject.jsonlines'), join(zipPath.replace(/\.zip$/, ''), 'subject.jsonlines'))
-copyFileSync(join(dumpDir, 'episode.jsonlines'), join(zipPath.replace(/\.zip$/, ''), 'episode.jsonlines'))
-writeFileSync(zipPath, '')
+const zipBuf = makeZip([
+  // 故意两种压缩方式各来一条：真实 dump 是 deflate，但也要能干 store
+  { name: 'subject.jsonlines', data: `${subjectLines.map((row) => JSON.stringify(row)).join('\n')}\n`, method: 'deflate' },
+  { name: 'episode.jsonlines', data: `${episodeLines.map((row) => JSON.stringify(row)).join('\n')}\n`, method: 'store' },
+])
+writeFileSync(zipPath, zipBuf)
+const zipSource = resolveDumpSource(zipPath)
+check(zipSource?.kind === 'zip', '给 .zip 路径 → 识别成 zip 源（不需要同名解压目录）', String(zipSource?.kind))
+
+db.prepare('UPDATE anime SET score = NULL, tags = NULL, summary = NULL, total_episodes = NULL').run()
+const fromZip = await runArchiveImport({ dir: zipPath, log: silent })
+check(fromZip.matched === 3 && fromZip.patched === 3, '从 zip 里读出两个条目并导入', `matched=${fromZip.matched} patched=${fromZip.patched}`)
 check(
-  resolveDumpDir(zipPath) === resolve(zipPath.replace(/\.zip$/, '')),
-  '给 zip 路径 → 自动找到同名的解压目录',
+  rowOf('1').score === 8.4 && rowOf('1').total_episodes === 3,
+  'store 条目（episode.jsonlines）也读对了',
+  `${rowOf('1').score} / ${rowOf('1').total_episodes}`,
 )
+check(rowOf('2').tags === '["恋爱","校园"]', 'deflate 条目（subject.jsonlines）也读对了', rowOf('2').tags)
+
+console.log('\n— 自动更新（索引多源 / digest 跳过 / Range 续传 / sha256）')
+const { config } = await import('../src/config.js')
+const { fetchDumpIndex, downloadDump } = await import('../src/api/sources/bgm-dump.js')
+const { checkDump } = await import('../src/jobs/dump-update.js')
+const { saveDumpState } = await import('../src/db/dump.js')
+
+const digest = createHash('sha256').update(zipBuf).digest('hex')
+const dlDir = mkdtempSync(join(tmpdir(), 'bgm-dl-'))
+config.sources.pickFastest = false // 顺序确定，便于断言
+config.bgm.dumpDir = dlDir
+config.bgm.dumpMirrors = ['{url}', 'https://mirror.test/{url}']
+config.bgm.dumpIndex = ['https://idx.bad/latest.json', 'https://idx.test/latest.json']
+
+const asset = {
+  name: 'dump-test.zip',
+  size: zipBuf.length,
+  digest,
+  url: 'https://dl.test/dump-test.zip',
+  createdAt: '2026-11-03T21:04:03Z',
+}
+const calls = []
+let indexFails = 1
+let mirrorBroken = false
+const realFetch = globalThis.fetch
+globalThis.fetch = async (url, init = {}) => {
+  const target = String(url)
+  const range = init.headers?.Range || null
+  calls.push({ url: target, range })
+  if (target.includes('latest.json')) {
+    if (target.includes('idx.bad') && indexFails-- > 0) return new Response('boom', { status: 500 })
+    // 索引的真实格式：browser_download_url（fetchDumpIndex 会归一成 url）
+    return new Response(
+      JSON.stringify({
+        name: asset.name,
+        size: asset.size,
+        digest: `sha256:${asset.digest}`,
+        browser_download_url: asset.url,
+        created_at: asset.createdAt,
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )
+  }
+  if (target.includes('mirror.test') && mirrorBroken) return new Response('nope', { status: 502 })
+  if (range) {
+    const start = Number(/bytes=(\d+)-/.exec(range)?.[1] || 0)
+    if (start >= zipBuf.length) return new Response('', { status: 416 })
+    return new Response(zipBuf.subarray(start), {
+      status: 206,
+      headers: { 'content-range': `bytes ${start}-${zipBuf.length - 1}/${zipBuf.length}` },
+    })
+  }
+  return new Response(zipBuf, { status: 200 })
+}
+
+try {
+  const index = await fetchDumpIndex({ log: silent })
+  check(index.name === 'dump-test.zip' && index.digest === digest, '索引第一个地址 500 → 自动换下一个', index.indexUrl)
+  check(index.digest === digest, '索引里的 sha256: 前缀被剥掉了', index.digest.slice(0, 12))
+
+  const first = await checkDump({ log: silent })
+  check(first.hasNew === true, '从没导入过 → 认为有新版')
+  saveDumpState({ digest, name: asset.name, imported_at: Date.now() })
+  const before = calls.filter((call) => call.url.includes('dl.test')).length
+  const again = await checkDump({ log: silent })
+  const after = calls.filter((call) => call.url.includes('dl.test')).length
+  check(again.hasNew === false && after === before, 'digest 相同 → 不下载（省 450MB）', `download calls ${after - before}`)
+
+  // 续传：先在 .part 里放前 100 字节，再下
+  const partFile = join(dlDir, `${asset.name}.part`)
+  writeFileSync(partFile, zipBuf.subarray(0, 100))
+  const resumed = await downloadDump({ asset: { ...asset, digest }, dir: dlDir, log: silent })
+  const resumeCall = calls.filter((call) => call.url.includes('dl.test')).at(-1)
+  check(resumeCall?.range === 'bytes=100-', '已有 .part → 发 Range 从断点续传', String(resumeCall?.range))
+  check(
+    statSync(resumed.file).size === zipBuf.length && !existsSync(partFile),
+    '续传后文件完整，.part 改名成正式文件',
+    `${statSync(resumed.file).size}/${zipBuf.length}`,
+  )
+  check(
+    createHash('sha256').update(readFileSync(resumed.file)).digest('hex') === digest,
+    '续传后的内容与源文件 sha256 一致',
+  )
+
+  // sha256 不符 → 拒绝，且不留下坏文件
+  rmSync(resumed.file, { force: true })
+  let digestError = ''
+  try {
+    await downloadDump({ asset: { ...asset, digest: 'deadbeef'.repeat(8) }, dir: dlDir, log: silent })
+  } catch (err) {
+    digestError = err.message
+  }
+  check(/sha256 不符/.test(digestError) && !existsSync(partFile) && !existsSync(resumed.file), 'sha256 不符 → 报错并删除文件', digestError)
+
+  // 镜像失败 → 换下一个
+  mirrorBroken = true
+  const fallback = await downloadDump({ asset: { ...asset, digest }, dir: dlDir, log: silent })
+  check(fallback.url.includes('dl.test') && !fallback.url.includes('mirror.test'), '镜像 502 → 换下一个镜像成功', fallback.url)
+} finally {
+  globalThis.fetch = realFetch
+  rmSync(dlDir, { recursive: true, force: true })
+}
 
 let badCode = ''
 try {
@@ -188,7 +359,6 @@ check(badCode === 'BAD_DUMP', '目录里没有那两个文件 → BAD_DUMP（不
 
 /* ── 清理 ────────────────────────────────────────────────────────────── */
 rmSync(dumpDir, { recursive: true, force: true })
-rmSync(zipPath.replace(/\.zip$/, ''), { recursive: true, force: true })
 rmSync(zipPath, { force: true })
 db.close()
 for (const suffix of ['', '-wal', '-shm']) {

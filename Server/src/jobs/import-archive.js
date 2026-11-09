@@ -19,11 +19,13 @@
  * 只给 zip 路径也行：Windows「全部解压缩」默认解到同名文件夹，脚本会自己找过去。
  */
 import { existsSync, statSync } from 'node:fs'
+import { createReadStream } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { applyArchiveBatch, listBgmTargets, stats } from '../db/anime.js'
-import { DUMP_FILES, archivePatch, leadingId, readJsonLines } from '../lib/bgm-archive.js'
+import { DUMP_FILES, archivePatch, leadingId, readJsonLinesFrom } from '../lib/bgm-archive.js'
 import { logger } from '../lib/logger.js'
+import { listZipEntries, openZipEntry } from '../lib/unzip.js'
 
 /** 一个事务写多少行（几百条足够摊平事务开销，也不会长时间占着写锁） */
 const BATCH_SIZE = 500
@@ -31,21 +33,38 @@ const BATCH_SIZE = 500
 const hasDumpFiles = (dir) => Object.values(DUMP_FILES).every((file) => existsSync(join(dir, file)))
 
 /**
- * 把 --dir 归一成「装着 jsonlines 的目录」
+ * 把 `--dir` / `--zip` 归一成「一个能取到两个 jsonlines 的来源」
  * ---------------------------------------------------------------------------
- * 接受两种写法：解压后的目录，或者 zip 本身（同名目录存在就用它）。
- * 都没有就返回 null，由调用方给出可操作的提示 —— 不在这里自己解压：
- * 解压 1.3GB 是用户机器上的一次性动作，脚本静默替用户解压只会把磁盘搞乱。
+ * 三种写法都认：
+ *   · 解压后的目录（里面直接就是 subject.jsonlines / episode.jsonlines）
+ *   · 目录名再套一层（解压工具有时会造一层同名文件夹）
+ *   · zip 本身 —— **不用解压**，直接从中央目录取两个条目流式读（省 1.3GB 磁盘）
+ * @param {string} input
+ * @returns {{ kind: 'dir', dir: string } | { kind: 'zip', file: string, entries: Array<object> } | null}
  */
-export function resolveDumpDir(input) {
+export function resolveDumpSource(input) {
   if (!input) return null
   const path = resolve(input)
   if (!existsSync(path)) return null
-  if (statSync(path).isDirectory()) return hasDumpFiles(path) ? path : null
-  const sibling = path.replace(/\.(zip|7z)$/i, '')
-  if (existsSync(sibling) && statSync(sibling).isDirectory() && hasDumpFiles(sibling)) return sibling
-  return null
+
+  if (statSync(path).isDirectory()) return hasDumpFiles(path) ? { kind: 'dir', dir: path } : null
+
+  // zip：先看条目齐不齐（3ms），齐就直接用，不要求旁边有解压目录
+  try {
+    const entries = listZipEntries(path)
+    const names = entries.map((entry) => entry.name)
+    const ok = Object.values(DUMP_FILES).every((file) => names.some((name) => name === file || name.endsWith(`/${file}`)))
+    return ok ? { kind: 'zip', file: path, entries } : null
+  } catch {
+    return null
+  }
 }
+
+/** 取一个条目的可读流（目录 → 文件流；zip → inflate 流） */
+const openEntry = (source, name) =>
+  source.kind === 'zip'
+    ? openZipEntry(source.file, name, source.entries)
+    : createReadStream(join(source.dir, name), { encoding: 'utf8' })
 
 const emptyResult = (before) => ({
   before,
@@ -76,12 +95,12 @@ export async function runArchiveImport({
   log = logger,
 } = {}) {
   const startedAt = Date.now()
-  const dumpDir = resolveDumpDir(dir)
-  if (!dumpDir) {
+  const source = resolveDumpSource(dir)
+  if (!source) {
     const err = new Error(
-      `没找到 dump：${dir || '(未给 --dir)'}\n` +
-        '  解压后的目录里应该同时有 subject.jsonlines 和 episode.jsonlines；\n' +
-        '  也可以直接把 .zip 路径给进来（要求同名的解压文件夹已经在旁边）。',
+      `没找到 dump：${dir || '(未给 --dir / --zip)'}\n` +
+        '  可以给：解压后的目录（含 subject.jsonlines + episode.jsonlines），\n' +
+        '  或者直接给 .zip（脚本自己流式解压，不需要先解压出来）。',
     )
     err.code = 'BAD_DUMP'
     throw err
@@ -96,14 +115,13 @@ export async function runArchiveImport({
     if (Number.isFinite(id)) wantedIds.add(id)
   }
 
-  log.info({ dir: dumpDir, targets: targets.size, onlyMissing, dryRun }, 'archive.start')
-  if (!targets.size) return { ...emptyResult(before), dir: dumpDir, ms: Date.now() - startedAt }
+  log.info({ source: source.kind === 'zip' ? source.file : source.dir, targets: targets.size, onlyMissing, dryRun }, 'archive.start')
+  if (!targets.size) return { ...emptyResult(before), dir: dir, ms: Date.now() - startedAt }
 
   /* ① 章节数：type 0 = 正篇（特别篇 / OP / ED 不算），数出来就是总集数 */
   const episodeCounts = new Map()
-  const epFile = join(dumpDir, DUMP_FILES.episode)
-  const epStats = await readJsonLines(
-    epFile,
+  const epStats = await readJsonLinesFrom(
+    openEntry(source, DUMP_FILES.episode),
     (line) => {
       const match = /"subject_id":(\d+)/.exec(line)
       if (!match) return
@@ -117,8 +135,7 @@ export async function runArchiveImport({
   )
 
   /* ② 档案字段：先按行首 id 筛，命中的才 JSON.parse（60 万行里只有几千行要解析） */
-  const subjectFile = join(dumpDir, DUMP_FILES.subject)
-  const result = { ...emptyResult(before), dir: dumpDir }
+  const result = { ...emptyResult(before), dir }
   let batch = []
   const flush = () => {
     if (!batch.length) return
@@ -127,8 +144,8 @@ export async function runArchiveImport({
     batch = []
   }
 
-  const subStats = await readJsonLines(
-    subjectFile,
+  const subStats = await readJsonLinesFrom(
+    openEntry(source, DUMP_FILES.subject),
     (line) => {
       let id = leadingId(line)
       let subject = null
@@ -167,7 +184,7 @@ export async function runArchiveImport({
 
   log.info(
     {
-      dir: dumpDir,
+      source: source.kind === 'zip' ? source.file : source.dir,
       matched: result.matched,
       patched: result.patched,
       skipped: result.skipped,
@@ -180,7 +197,7 @@ export async function runArchiveImport({
     dryRun ? 'archive.dry-run' : 'archive.done',
   )
   if (result.episodes === 0) {
-    log.warn({ file: epFile }, 'archive.no-episodes 没数到任何正篇 —— 检查 dump 版本/文件名')
+    log.warn({ source: source.kind === 'zip' ? source.file : source.dir }, 'archive.no-episodes 没数到任何正篇 —— 检查 dump 版本/文件名')
   }
   return result
 }
@@ -198,12 +215,18 @@ if (isCli) {
       .replace(/^"+|"+$/g, '')
   const flag = (name) => process.argv.includes(`--${name}`)
   try {
-    await runArchiveImport({
-      dir: arg('dir'),
-      onlyMissing: flag('only-missing'),
-      dryRun: flag('dry-run'),
-      markChecked: !flag('no-checked'),
-    })
+    if (flag('latest')) {
+      // 自动模式：查索引 → 有新版才下载 → 流式解压导入（见 jobs/dump-update.js）
+      const { updateDump } = await import('./dump-update.js')
+      await updateDump({ force: flag('force'), keepZip: flag('keep-zip'), dryRun: flag('dry-run') })
+    } else {
+      await runArchiveImport({
+        dir: arg('dir') || arg('zip'),
+        onlyMissing: flag('only-missing'),
+        dryRun: flag('dry-run'),
+        markChecked: !flag('no-checked'),
+      })
+    }
   } catch (err) {
     logger.error({ err: err.message }, 'archive.fail')
     process.exitCode = 1

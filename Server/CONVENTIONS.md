@@ -365,6 +365,21 @@ year 为空 → 按 age = 2（3 天）：它们刚灌进来、还没档案，该
   `rating_total` = `score_details` 各档之和）—— 两处算得不一样，前端题材行就会跳。
 - 验收在 `scripts/verify-archive.mjs`（迷你 fixture，不依赖真 dump）。
 
+**10.7 自动更新的边界（`npm run dump`）**
+
+- **只认 sha256**：索引 `digest` 与 `dump_state.digest` 一样就跳过下载；下载后校验不符**删文件、换镜像**，
+  绝不把坏包交给导入。
+- **镜像用模板**（`{url}` 占位），"直连"写成 `{url}`；`template: true` 的列表字段在保存时校验占位符
+  （缺了就 400 并指出第几条），不是 http(s) 校验。
+- **下载走 `.part` + `Range`**：断在哪个字节就从哪续（换镜像也按字节续）；服务器回 200（忽略 Range）
+  时必须清空重下，否则拼出坏文件。
+- **不解压到磁盘**：`lib/unzip.js` 只读中央目录 + `zlib.createInflateRaw`，条目流直接交给
+  `readJsonLinesFrom`。zip64 / 加密 / 分卷一律明确报错（别猜）。
+- **调度不阻塞队列**：worker 到点后"发射后不管"，状态进 `workerState.dump`（`/api/health` 可见）；
+  失败退避 10min → 1h → 6h，且检查失败也写 `checked_at`（否则 30 秒一轮会疯狂重试）。
+- **半在线必须有回全在线的兜底**：`bgm.useDump` 只是"优先用 dump"；档案缺失或 `synced_at` 超过
+  `bgm.dumpMaxAgeDays` 仍现查 API。
+
 ---
 
 ## 11. 提交前自检清单
