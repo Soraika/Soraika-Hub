@@ -36,6 +36,51 @@ export const DUMP_FILES = Object.freeze({
   episode: 'episode.jsonlines',
 })
 
+/** 关系表（可选：老版本 dump 没有；有它就完全不用为了走链打上游） */
+export const RELATION_FILE = 'subject-relations.jsonlines'
+
+/**
+ * dump 的 `relation_type` → 关系名
+ * ---------------------------------------------------------------------------
+ * 这些数字**不是猜的**：拿库里已知系列（蜡笔小新剧场版 34 部 / 链锯人 / 黑子的篮球 /
+ * 少女乐队的呐喊）的同一批 id，把 dump 的行和 API `subjects/{id}/subjects` 返回的
+ * 中文关系名逐条对照出来的（见 docs/ARCHITECTURE 决策 56）。
+ * 只收系列链用得到的：正传 2/3，番外类 4/5/6，其余（音乐 / 书籍 / 三次元 / 联动）一律不进表。
+ */
+export const RELATION_NAMES = Object.freeze({
+  1: '改编',
+  2: '前传',
+  3: '续集',
+  4: '总集篇',
+  5: '全集',
+  6: '番外篇',
+  12: '主线故事',
+  14: '联动',
+  3001: '原声集',
+  3003: '片头曲',
+  3004: '片尾曲',
+  3005: '插入歌',
+  3099: '其他',
+})
+
+/** 只有这些关系会进 `bgm_relation`（走链只需要正传边 + 番外白名单） */
+export const RELATION_TYPES_KEPT = Object.freeze([2, 3, 4, 5, 6, 12])
+
+/**
+ * 逆关系：dump 通常两个方向都写（(A,3,B) + (B,2,A)），但实测有只写一边的，
+ * 这时靠这张表补出「B 看 A 是什么关系」。
+ */
+export const INVERSE_RELATION = Object.freeze({ 2: 3, 3: 2, 4: 5, 5: 4, 6: 12, 12: 6, 14: 14 })
+
+/** `relation_type` → 中文关系名（不认识的返回空串，调用方据此跳过） */
+export const relationNameOf = (type) => RELATION_NAMES[Number(type)] || ''
+
+/** 反向关系的名字（例：A 的「续集」= B 的「前传」） */
+export function inverseRelationNameOf(type) {
+  const inverse = INVERSE_RELATION[Number(type)]
+  return inverse ? relationNameOf(inverse) : ''
+}
+
 /** 标签最多留几个 —— 与 `lib/format.js#bgmToRow` 保持一致，别一边 8 个一边全量 */
 export const TAG_LIMIT = 8
 

@@ -23,8 +23,16 @@ import { createReadStream } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { applyArchiveBatch, listBgmTargets, stats } from '../db/anime.js'
+import { clearRelations, insertRelations, insertStubs } from '../db/relation.js'
 import { upsertSubjects } from '../db/subject.js'
-import { DUMP_FILES, archivePatch, leadingId, readJsonLinesFrom } from '../lib/bgm-archive.js'
+import {
+  DUMP_FILES,
+  RELATION_FILE,
+  RELATION_TYPES_KEPT,
+  archivePatch,
+  leadingId,
+  readJsonLinesFrom,
+} from '../lib/bgm-archive.js'
 import { logger } from '../lib/logger.js'
 import { listZipEntries, openZipEntry } from '../lib/unzip.js'
 
@@ -74,6 +82,10 @@ const emptyResult = (before) => ({
   patched: 0,
   skipped: 0,
   episodes: 0,
+  /** 写进 bgm_relation 的关系行数（只留系列链用得着的类型） */
+  relations: 0,
+  /** 写进 bgm_stub 的「链上条目」数（名字 / 类型 / 日期） */
+  stubs: 0,
   badLines: 0,
   missingInDump: 0,
   ms: 0,
@@ -119,7 +131,52 @@ export async function runArchiveImport({
   log.info({ source: source.kind === 'zip' ? source.file : source.dir, targets: targets.size, onlyMissing, dryRun }, 'archive.start')
   if (!targets.size) return { ...emptyResult(before), dir: dir, ms: Date.now() - startedAt }
 
-  /* ① 章节数：type 0 = 正篇（特别篇 / OP / ED 不算），数出来就是总集数 */
+  /** 统计收口（关系 / 章节 / 档案三趟都写它） */
+  const result = { ...emptyResult(before), dir }
+
+  /* ① 关系表（可选文件）：只留「和库里的 bgm_id 有关」且类型在系列链白名单里的行。
+     整表 72MB 是全站关系，与本项目无关；顺手把「链上还没入库」的 id 收进 stubIds，
+     下一步扫 subject 时把它们的名字/类型/日期一起存下来（建骨架行、排剧场版季位要用）。 */
+  const relationFileAvailable =
+    source.kind === 'zip'
+      ? source.entries.some((entry) => entry.name === RELATION_FILE || entry.name.endsWith(`/${RELATION_FILE}`))
+      : existsSync(join(source.dir, RELATION_FILE))
+  const stubIds = new Set()
+  if (relationFileAvailable) {
+    if (!dryRun) clearRelations()
+    const keptTypes = new Set(RELATION_TYPES_KEPT)
+    let relBatch = []
+    const flushRel = () => {
+      if (!relBatch.length) return
+      if (!dryRun) insertRelations(relBatch)
+      result.relations += relBatch.length
+      relBatch = []
+    }
+    const relStats = await readJsonLinesFrom(
+      openEntry(source, RELATION_FILE),
+      (line) => {
+        const sid = Number(/"subject_id":(\d+)/.exec(line)?.[1])
+        const type = Number(/"relation_type":(\d+)/.exec(line)?.[1])
+        const rid = Number(/"related_subject_id":(\d+)/.exec(line)?.[1])
+        if (!Number.isFinite(sid) || !Number.isFinite(rid)) return
+        if (!keptTypes.has(type)) return
+        if (!wantedIds.has(sid) && !wantedIds.has(rid)) return
+        const ord = Number(/"order":(\d+)/.exec(line)?.[1]) || 0
+        relBatch.push([sid, type, rid, ord])
+        stubIds.add(sid)
+        stubIds.add(rid)
+        if (relBatch.length >= BATCH_SIZE) flushRel()
+      },
+      { raw: true },
+    )
+    flushRel()
+    result.badLines += relStats.bad
+    log.info({ relations: result.relations, stubs: stubIds.size }, 'archive.relations')
+  } else {
+    log.info({ file: RELATION_FILE }, 'archive.relations skip（dump 里没有这张表，走链仍打上游）')
+  }
+
+  /* ② 章节数：type 0 = 正篇（特别篇 / OP / ED 不算），数出来就是总集数 */
   const episodeCounts = new Map()
   const epStats = await readJsonLinesFrom(
     openEntry(source, DUMP_FILES.episode),
@@ -135,12 +192,20 @@ export async function runArchiveImport({
     { raw: true },
   )
 
-  /* ② 档案字段：先按行首 id 筛，命中的才 JSON.parse（60 万行里只有几千行要解析） */
-  const result = { ...emptyResult(before), dir }
+  /* ③ 档案字段：先按行首 id 筛，命中的才 JSON.parse（60 万行里只有几千行要解析） */
   let batch = []
   /** 同一批也写进 `bgm_subject`（档案表）：anime 留给排期/展示，档案可整表重灌 */
   let subjectBatch = []
+  /** 链上「还没入库」的条目：名字/类型/日期，建骨架行与排剧场版季位要用 */
+  let stubBatch = []
+  const flushStubs = () => {
+    if (!stubBatch.length) return
+    if (!dryRun) insertStubs(stubBatch)
+    result.stubs += stubBatch.length
+    stubBatch = []
+  }
   const flush = () => {
+    flushStubs()
     if (!batch.length) return
     if (!dryRun) {
       applyArchiveBatch(batch, { checkedAt: markChecked ? Date.now() : null })
@@ -169,6 +234,30 @@ export async function runArchiveImport({
       }
       if (!Number.isFinite(id)) return
       const target = targets.get(String(id))
+      const isStub = stubIds.has(id)
+      if (!target && !isStub) return
+
+      /* 链上的条目（可能不在库里）：只取名字 / 类型 / 日期，给系列链用 */
+      if (isStub) {
+        if (!subject) {
+          try {
+            subject = JSON.parse(line)
+          } catch {
+            result.badLines++
+            subject = null
+          }
+        }
+        if (subject) {
+          stubBatch.push({
+            bgmId: String(id),
+            type: Number(subject.type) || null,
+            name: subject.name || null,
+            nameCn: subject.name_cn || null,
+            date: subject.date || null,
+          })
+          if (stubBatch.length >= BATCH_SIZE) flushStubs()
+        }
+      }
       if (!target) return
       result.matched++
 
@@ -213,6 +302,8 @@ export async function runArchiveImport({
       skipped: result.skipped,
       missingInDump: result.missingInDump,
       withEpisodes: result.episodes,
+      relations: result.relations,
+      stubs: result.stubs,
       needArchive: `${before.needArchive} → ${result.after.needArchive}`,
       withScore: `${before.withScore} → ${result.after.withScore}`,
       ms: result.ms,

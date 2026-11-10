@@ -6,6 +6,7 @@ import { Router } from 'express'
 import { countAll, countSubgroupDict, stats } from '../db/anime.js'
 import { dbFile } from '../db/index.js'
 import { countGaveUp, countMissingBgm } from '../db/queue.js'
+import { countRelations, countStubs } from '../db/relation.js'
 import { getWorkerState } from '../jobs/worker.js'
 import { SETTINGS_GROUPS } from '../lib/settings.js'
 import { aiCacheStats } from '../api/pages/ai.js'
@@ -37,6 +38,9 @@ apiRouter.get('/health', (req, res) => {
         gaveUp: countGaveUp(),
         /** 字幕组名字字典的条目数（随补齐/打开面板增长；用来确认"顺手抓字幕组"在工作） */
         subgroupDict: countSubgroupDict(),
+        /** dump 关系表 / 链上条目：> 0 就说明系列链可以完全离线走（0 次上游请求） */
+        relations: countRelations(),
+        stubs: countStubs(),
       },
       /** 后台守护进程状态快照（未启动时 running=false） */
       worker: getWorkerState(),

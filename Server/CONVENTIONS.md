@@ -241,6 +241,13 @@ AI 是**可选功能**：没配 `AI_API_KEY` 也照常跑 —— 相关接口回
 - **只用镜像 API**：`GET {config.bgm.bases[i]}/v0/subjects/{id}/subjects`（1 跳；`bases` 是**有序候选**，见 §7 多源）。
   `bgm.tv/subject/{id}/relations/graph` 里虽然有现成的 `SUBJECT_SERIES_GRAPH`（一次给全、带 year/auxiliary），
   但**它要梯子**，不作依赖；只在有梯子时拿来交叉校验链序。
+- **关系优先读离线 dump**：`subject-relations.jsonlines` 是全站关系表（zip 里 6.1MB 压缩 / 72MB 解压），
+  导入时只留「和库里的 bgm_id 有关 + 类型在 `{2,3,4,5,6,12}`」的行写进 `bgm_relation`，
+  链上条目的名字/类型/日期写进 `bgm_stub`（建骨架行、排剧场版季位都用得上）。
+  `loadRelated` 因此变成两次索引查询（`bgm_relation` + `bgm_stub`），**一条链 0 次上游请求**；
+  数字含义是拿 API 逐条对照出来的：`2 前传 / 3 续集 / 4 总集篇 / 5 全集 / 6 番外篇 / 12 主线故事`
+  （dump 通常两个方向都写，只有单边时用逆关系补）。设置页关掉「离线数据」或关系表为空时，
+  仍然退回上面的镜像 API —— 两条路给 `walkSeries` 的是同一个回调契约。
 - **BFS 展开规则**：只沿 `relation ∈ {续集, 前传}` 且 `type === 2`（动画）的边扩展；
   **番外只收白名单**（`EXTRA_RELATIONS = 番外篇 / 总集篇 / 剧场版`），白名单外的关系**连收都不收**。
   为什么必须白名单：实测《异世界四重奏》↔《OVERLORD》互为 **「角色出演」**（交叉作品，各自还有自己的

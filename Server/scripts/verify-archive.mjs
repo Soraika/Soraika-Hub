@@ -86,6 +86,8 @@ process.env.DB_FILE = DB_FILE
 const { db } = await import('../src/db/index.js')
 const { runArchiveImport, resolveDumpSource } = await import('../src/jobs/import-archive.js')
 const { archivePatch, archiveTags, leadingId, ratingTotalOf } = await import('../src/lib/bgm-archive.js')
+const { countRelations, relatedOf, stubOf } = await import('../src/db/relation.js')
+const { walkSeries } = await import('../src/lib/series.js')
 
 const silent = { info() {}, warn() {}, error() {} }
 
@@ -125,6 +127,10 @@ const subjectLines = [
   { id: 4, type: 2, name: '无人评分', name_cn: '无人评分', summary: '简介丁', tags: [], meta_tags: [], score: 0, favorite: { doing: 0 }, date: '' },
   // 库里记着 5 集、dump 里有 8 集 → 总集数应当跟到 8（只增不减的另一半）
   { id: 5, type: 2, name: '长了三集', name_cn: '长了三集', summary: '简介戊', tags: [{ name: '奇幻', count: 2 }], meta_tags: [], score: 7, favorite: { doing: 3 }, date: '2024-01-07' },
+  // 关系表用到的三个「链上条目」：20 番外动画 / 21 音乐（片头曲）/ 22 书籍（改编）
+  { id: 20, type: 2, name: 'Extra Anime', name_cn: '番外篇甲', summary: '', tags: [], meta_tags: [], score: 0, favorite: {}, date: '2022-01-01' },
+  { id: 21, type: 3, name: 'Test OP', name_cn: '片头曲甲', summary: '', tags: [], meta_tags: [], score: 0, favorite: {}, date: '' },
+  { id: 22, type: 1, name: 'Test Book', name_cn: '原作小说', summary: '', tags: [], meta_tags: [], score: 0, favorite: {}, date: '' },
 ]
 writeFileSync(join(dumpDir, 'subject.jsonlines'), subjectLines.map((row) => JSON.stringify(row)).join('\n') + '\n')
 
@@ -151,6 +157,21 @@ const episodeLines = [
   ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => episode(500 + n, 5, 0)),
 ]
 writeFileSync(join(dumpDir, 'episode.jsonlines'), episodeLines.map((row) => JSON.stringify(row)).join('\n') + '\n')
+
+/* ── 关系表（可选文件）：3 续集 / 2 前传 / 6 番外篇；音乐与书籍的关系也要写进来，
+      用来证明「按 related type 过滤」确实生效 ─────────────────────────────── */
+const relationLines = [
+  { subject_id: 1, relation_type: 3, related_subject_id: 3, order: 0 }, // 1 → 3 续集
+  { subject_id: 3, relation_type: 2, related_subject_id: 1, order: 0 }, // 3 → 1 前传
+  { subject_id: 1, relation_type: 6, related_subject_id: 20, order: 0 }, // 1 → 20 番外篇
+  { subject_id: 1, relation_type: 3003, related_subject_id: 21, order: 0 }, // 片头曲：不进表
+  { subject_id: 1, relation_type: 6, related_subject_id: 22, order: 0 }, // 书是番外？读的时候按 type 挡掉
+  { subject_id: 9, relation_type: 3, related_subject_id: 10, order: 0 }, // 与库里无关：不存
+]
+writeFileSync(
+  join(dumpDir, 'subject-relations.jsonlines'),
+  relationLines.map((row) => JSON.stringify(row)).join('\n') + '\n',
+)
 
 /* ── 纯函数：字段口径 ──────────────────────────────────────────────────── */
 console.log('\n— 字段映射口径')
@@ -226,6 +247,31 @@ check(rowOf('999').bgm_checked_at == null, 'dump 里没有的条目一行都没�
 check(rowOf('5').total_episodes === 8, '总集数变多就跟上（5 → 8）', String(rowOf('5').total_episodes))
 check(needArchive() === 1, '补完之后只差 dump 里没有的那条', String(needArchive()))
 
+/* ── 关系表：系列链从此 0 次上游请求 ─────────────────────────────────────── */
+console.log('\n— 关系表（系列链的数据源）')
+check(first.relations === 4, '只存「和库里有关 + 类型在白名单」的行', `relations=${first.relations}`)
+check(countRelations() === 4, '整表重灌（每次导入先清空再灌）', `rows=${countRelations()}`)
+const rel1 = relatedOf('1')
+check(rel1.some((r) => r.id === '3' && r.relation === '续集'), '3 = 续集（数字含义是拿 API 对照出来的）', JSON.stringify(rel1))
+check(rel1.some((r) => r.id === '20' && r.relation === '番外篇'), '6 = 番外篇')
+check(!rel1.some((r) => r.id === '21'), '片头曲（3003）不进关系表')
+check(!rel1.some((r) => r.id === '22'), '书籍（type=1）即使是番外关系也不进系列链（只认动画）')
+check(
+  relatedOf('3').some((r) => r.id === '1' && r.relation === '前传'),
+  '反向也能读：3 看 1 是「前传」（单边关系用逆关系补）',
+)
+check(stubOf('20')?.name_cn === '番外篇甲' && stubOf('20')?.type === 2, '链上条目的名字/类型存下来了（骨架行要用）', JSON.stringify(stubOf('20')))
+const walkedFromDump = await walkSeries({ startBgmId: '1', loadRelated: relatedOf })
+check(
+  walkedFromDump.chain.map((n) => n.id).join(',') === '1,3',
+  '用 dump 关系走链：正传 1 → 3（walkSeries 零改动）',
+  walkedFromDump.chain.map((n) => n.id).join(','),
+)
+check(
+  walkedFromDump.extras.some((e) => e.id === '20' && e.relation === '番外篇'),
+  '番外一并收集（同一次遍历，无额外请求）',
+)
+
 console.log('\n— 默认模式（覆盖已有值）')
 const second = await runArchiveImport({ dir: dumpDir, log: silent })
 check(second.patched === 3, '三条都写', `patched=${second.patched}`)
@@ -256,6 +302,7 @@ check(zipSource?.kind === 'zip', '给 .zip 路径 → 识别成 zip 源（不需
 db.prepare('UPDATE bgm_subject SET score = NULL, tags = NULL, summary = NULL, total_episodes = NULL').run()
 const fromZip = await runArchiveImport({ dir: zipPath, log: silent })
 check(fromZip.matched === 3 && fromZip.patched === 3, '从 zip 里读出两个条目并导入', `matched=${fromZip.matched} patched=${fromZip.patched}`)
+check(countRelations() === 4, 'zip 里没有关系表时不删已有关系（老 dump 兼容）', `rows=${countRelations()}`)
 check(
   rowOf('1').score === 8.4 && rowOf('1').total_episodes === 3,
   'store 条目（episode.jsonlines）也读对了',

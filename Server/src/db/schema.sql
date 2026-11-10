@@ -168,6 +168,37 @@ CREATE TABLE IF NOT EXISTS bgm_subject (
 CREATE INDEX IF NOT EXISTS idx_subject_score ON bgm_subject(score);
 
 -- ============================================================================
+-- 离线 dump 的「关系」与「链上还没入库的条目」（系列链的数据源）
+-- ----------------------------------------------------------------------------
+-- dump 里的 subject-relations.jsonlines 是**全站关系表**（72MB / 几十万行），
+-- 有了它就不再为了走一条链打 8~12 次上游（BGM 的 subjects/{id}/subjects）。
+-- 两条约束：
+--   · 只存「和库里的 bgm_id 有关」的行（两边任一在库里）—— 全站关系与本项目无关，
+--     实测 3750 个 id 只牵出几万行；整表重灌每周一次，和 bgm_subject 同节奏。
+--   · 关系是**双向**的：dump 同时存 (A,3,B) 和 (B,2,A)；读取时按需要取一侧，
+--     只有单边时也能用「逆关系」（3↔2、6↔6、7↔7）补出来。
+-- bgm_stub 存链上「库里还没有」的条目（名字 / 类型 / 上映日）：建骨架行要用名字，
+-- 判断「是不是动画」要用 type（1 书籍 / 2 动画 / 3 音乐 / 4 游戏 / 6 三次元）。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS bgm_relation (
+  subject_id         INTEGER NOT NULL,   -- 关系起点（bgm_id）
+  relation_type      INTEGER NOT NULL,   -- BGM 的关系码（2 前传 / 3 续集 / 6 番外篇 / 12 主线故事 / 3003 片头曲…）
+  related_subject_id INTEGER NOT NULL,   -- 关系终点（bgm_id）
+  ord                INTEGER,            -- 上游给的排序（通常 0）
+  PRIMARY KEY (subject_id, relation_type, related_subject_id)
+);
+CREATE INDEX IF NOT EXISTS idx_relation_related ON bgm_relation(related_subject_id);
+
+CREATE TABLE IF NOT EXISTS bgm_stub (
+  bgm_id   TEXT PRIMARY KEY,
+  type     INTEGER,      -- 1 书籍 / 2 动画 / 3 音乐 / 4 游戏 / 6 三次元（只要 2 进系列链）
+  name     TEXT,         -- 原名（骨架行的标题兜底）
+  name_cn  TEXT,
+  date     TEXT,         -- 首播/上映日（剧场版系列按它排季位）
+  source   TEXT          -- 'dump'（将来也可能有 'api'）
+);
+
+-- ============================================================================
 -- 映射扫描水位（单行表）
 -- ----------------------------------------------------------------------------
 -- Mikan 的动画 id 是**递增**的，新番只会在尾部出现；老 id 大量是 404。

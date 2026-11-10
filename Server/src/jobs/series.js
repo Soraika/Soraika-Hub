@@ -25,6 +25,7 @@ import { loadStoredSettings } from '../api/pages/settings.js'
 import { fetchRelatedSubjects, fetchSubject } from '../api/sources/bgm.js'
 import { config } from '../config.js'
 import { db, val } from '../db/index.js'
+import { hasRelations, relatedOf, stubOf } from '../db/relation.js'
 import {
   ensureBgmStub,
   findByBgmIds,
@@ -121,8 +122,12 @@ async function fillMissingDates(seriesId, { log = logger } = {}) {
   let filled = 0
   for (const row of missing) {
     try {
-      const subject = await fetchSubject(row.bgm_id)
-      const date = subject?.date || subject?.air_date || null
+      // 先看 dump 的轻量档案（链上条目都存了 date）—— 有就不打上游
+      let date = stubOf(row.bgm_id)?.date || null
+      if (!date) {
+        const subject = await fetchSubject(row.bgm_id)
+        date = subject?.date || subject?.air_date || null
+      }
       if (!date) continue
       updateAirDate(row.id, date) // extra.year 没传 → 不会覆盖排期归属，只写 air_date
       filled++
@@ -171,6 +176,18 @@ export async function renumberMovieSeries(seriesId, { log = logger } = {}) {
 }
 
 /**
+ * 走链的数据源：dump 里有关系表就用它（0 次上游请求），否则退回 BGM API
+ * ---------------------------------------------------------------------------
+ * 每次调用都判断（不在启动时缓存）：dump 导入跑完，下一次走链立刻就用新数据。
+ * 仍然尊重设置页的「离线数据」开关（`bgm.useDump`）：关掉 = 保持原来的在线行为。
+ */
+const dumpRelationsReady = () => Boolean(config.bgm?.useDump) && hasRelations()
+
+function loadRelatedFor(bgmId) {
+  return dumpRelationsReady() ? Promise.resolve(relatedOf(bgmId)) : fetchRelatedSubjects(bgmId)
+}
+
+/**
  * 给一条作品补齐系列信息
  * ---------------------------------------------------------------------------
  * **任何异常都不许抛出去**：worker 的调度循环靠这里返回 `'skipped'` 来决定"放回队列、下轮再来"。
@@ -200,7 +217,7 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
   /* ① 走链：正传链 + 番外（一遍遍历，番外零额外请求） */
   const { chain, extras, orphans, truncated } = await walkSeries({
     startBgmId: startId,
-    loadRelated: fetchRelatedSubjects,
+    loadRelated: loadRelatedFor,
     log,
   })
   if (!chain.length || truncated) {
