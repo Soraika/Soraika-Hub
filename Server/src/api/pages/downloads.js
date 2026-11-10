@@ -105,17 +105,19 @@ function cardOf(row, torrents) {
   const seasons = [...new Set(items.map((it) => it.season))].sort((a, b) => a - b)
   const totalEpisodes = Number(row.total_episodes) || 0
 
-  /* 缺哪集：已下的集号（合集按区间展开）对着库里的总集数数一遍。
-     文案在这里定稿（前端不拼数字）：卡片上就是「已下 8 / 共 12」+「缺 03 07」。 */
-  const { have, missing: missingEps, parsed } = missingEpisodesOf(items.map((it) => it.episode), totalEpisodes)
+  /* 缺哪集：断号（真漏了下）与尾部（还没下）分开算 —— 文案在这里定稿：
+     卡片上就是「已下 12 / 共 25」+「缺 03 07」或「后 13 集未下」。 */
+  const { have, missing: missingEps, tail, parsed } = missingEpisodesOf(items.map((it) => it.episode), totalEpisodes)
   const progressText = totalEpisodes && parsed ? `已下 ${have} / 共 ${totalEpisodes}` : ''
   const missingText = !progressText
     ? ''
-    : !missingEps.length
+    : !missingEps.length && !tail
       ? '已齐'
       : missingEps.length > 12
         ? `缺 ${missingEps.length} 集`
-        : `缺 ${missingEps.map((n) => String(n).padStart(2, '0')).join(' ')}`
+        : missingEps.length
+          ? `缺 ${missingEps.map((n) => String(n).padStart(2, '0')).join(' ')}`
+          : `后 ${tail} 集未下`
 
   /** 一张卡只能有一个状态：还在下 → 下载中；有丢失 → 文件丢失；否则已完成 */
   const state = downloading.length ? 'downloading' : missing.length ? 'missing' : 'done'
@@ -135,6 +137,8 @@ function cardOf(row, torrents) {
     haveEpisodes: have,
     missingCount: missingEps.length,
     missingEpisodes: missingEps.slice(0, 12),
+    /** 比已下最大集更靠后的集数（还没下，不是漏了） */
+    tailCount: tail,
     progressText,
     missingText,
     episodes: items.map((it) => it.episode).filter(Boolean),

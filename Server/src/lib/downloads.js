@@ -251,9 +251,13 @@ export function episodesOf(episode, limit = 2000) {
 }
 
 /**
- * 已下的集号 vs 总集数 → 缺哪几集（下载页卡片上那句「缺 03 07」）
+ * 已下的集号 vs 总集数 → 断号（真缺）+ 尾部（还没下）
  * ---------------------------------------------------------------------------
- * 三条刻意的规则：
+ * 「缺」只指断号：1..已下最大集 之间漏掉的（下了 01 03 05 → 缺 02 04）。
+ * 比最大集还大的都是「后面还没下」（连载中 / 只下了一部分），单独算作 tail，
+ * 否则下载了 01-12、库里登记 25 话时会报「缺 13 集」—— 那是误导。
+ *
+ * 另外三条刻意的规则：
  *   · 总集数未知（剧场版 / BGM 没登记）→ 不判缺集（返回空数组，不是"全缺"）
  *   · 一条集号都解析不出来 → parsed=0，调用方据此不显示「已下 0 / 共 13」
  *     （文件在盘上、只是名字里没有集号，说"全缺"是假警报）
@@ -262,15 +266,16 @@ export function episodesOf(episode, limit = 2000) {
  *     否则会误报「一集都没下」
  * @param {string[]} episodes 已下载条目的集号（`episodeOf` 的产物）
  * @param {number} totalEpisodes 库里登记的总集数
- * @returns {{ have: number, missing: number[], parsed: number }}
+ * @returns {{ have: number, missing: number[], tail: number, parsed: number }}
+ *   missing = 断号（真缺）；tail = 比已下最大集更靠后的集数（还没下）
  */
 export function missingEpisodesOf(episodes, totalEpisodes) {
   const total = Number(totalEpisodes) || 0
-  if (!total) return { have: 0, missing: [], parsed: 0 }
+  if (!total) return { have: 0, missing: [], tail: 0, parsed: 0 }
 
   const numbers = []
   for (const episode of episodes || []) numbers.push(...episodesOf(episode))
-  if (!numbers.length) return { have: 0, missing: [], parsed: 0 }
+  if (!numbers.length) return { have: 0, missing: [], tail: 0, parsed: 0 }
 
   /** 累积集号 → 平移到 1 起（只在这一季的文件全都超出总集数时才平移，避免误伤单集漏号） */
   const offset = numbers.every((n) => n > total) ? Math.min(...numbers) - 1 : 0
@@ -280,11 +285,15 @@ export function missingEpisodesOf(episodes, totalEpisodes) {
     const value = n - offset
     if (value >= 1 && value <= total) have.add(value)
   }
+  // 一集都没对上（集号全在范围外）→ 当作"没解析出来"，不显示「已下 0」
+  if (!have.size) return { have: 0, missing: [], tail: 0, parsed: numbers.length }
+
+  const latest = Math.max(...have)
   const missing = []
-  for (let n = 1; n <= total; n++) {
+  for (let n = 1; n <= latest; n++) {
     if (!have.has(n)) missing.push(n)
   }
-  return { have: have.size, missing, parsed: numbers.length }
+  return { have: have.size, missing, tail: Math.max(0, total - latest), parsed: numbers.length }
 }
 
 /**

@@ -175,11 +175,14 @@ function metaOf(item) {
   return parts.join(' · ')
 }
 
-/** 缺集那一行的悬停说明：列出前几个集号（后端只带 12 个，够看） */
+/** 缺集那一行的悬停说明：断号列集号，纯尾部则说「还没下载」 */
 function missingTitle(item) {
-  if (!item.missingCount) return ''
-  const list = (item.missingEpisodes || []).map((n) => String(n).padStart(2, '0')).join(' ')
-  return item.missingCount > (item.missingEpisodes || []).length ? `缺 ${item.missingCount} 集：${list} …` : `缺：${list}`
+  if (item.missingCount) {
+    const list = (item.missingEpisodes || []).map((n) => String(n).padStart(2, '0')).join(' ')
+    return item.missingCount > (item.missingEpisodes || []).length ? `缺 ${item.missingCount} 集：${list} …` : `缺：${list}`
+  }
+  if (item.tailCount) return `后面 ${item.tailCount} 集还没下载（连载中 / 还没收录）`
+  return ''
 }
 
 /** 速度：qB 给的是字节/秒 → `1.2 MB/s`；0 就写「0」 */

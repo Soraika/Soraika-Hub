@@ -72,12 +72,14 @@ check(episodeOf('[Nekomoe kissaten][Yuru Camp][01-12END][1080p]') === '01-12', '
 check(episodeOrder('01-12') === 12, `合集按区间右端排序 → ${episodeOrder('01-12')}`)
 check(episodeOrder('04') === 4 && episodeOrder('') === 0, '单集按数字排序，认不出排最后')
 
-/* 缺哪集：已下集号（合集按区间展开）对着总集数数一遍 —— 下载页卡片上那句「缺 03 07」 */
+/* 缺哪集：断号是真缺（列集号），尾部只是还没下（说「后 N 集未下」） */
 check(episodesOf('04').join() === '4' && episodesOf('01-03').join() === '1,2,3', '集号 → 集数集合（合集按区间展开）')
 check(episodesOf('').length === 0 && episodesOf('特典').length === 0, '认不出集号 → 空集合（不瞎算）')
-const gap = missingEpisodesOf(['01', '03', '01-05'], 6)
-check(gap.have === 5 && gap.missing.join() === '6', `已下 5 / 共 6 → 缺 ${gap.missing.join()}`)
-check(missingEpisodesOf(['01-12'], 12).missing.length === 0, '整季合集 → 不缺（卡片写「已齐」）')
+const gap = missingEpisodesOf(['01', '03-05'], 6)
+check(gap.have === 4 && gap.missing.join() === '2' && gap.tail === 1, `下了 01 03-05 / 共 6 → 缺 ${gap.missing.join()}、后 ${gap.tail} 集未下`)
+const partial = missingEpisodesOf(['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'], 25)
+check(partial.have === 12 && partial.missing.length === 0 && partial.tail === 13, '下了 01-12 / 共 25 → 不缺（只写「后 13 集未下」）')
+check(missingEpisodesOf(['01-12'], 12).missing.length === 0 && missingEpisodesOf(['01-12'], 12).tail === 0, '整季下完 → 已齐（无断号、无尾部）')
 check(missingEpisodesOf([], 0).missing.length === 0, '总集数未知 → 不判缺集（剧场版不该显示「缺 1 集」）')
 check(missingEpisodesOf(['01-13'], 12).have === 12, '合集比总集数长 → 多出来的不算错')
 check(missingEpisodesOf(['14', '15', '16'], 3).have === 3, '累积集号（S02 的 14~16 对一季 3 话）→ 平移到 1 起，不误报全缺')
