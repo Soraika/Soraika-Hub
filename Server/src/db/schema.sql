@@ -195,7 +195,10 @@ CREATE TABLE IF NOT EXISTS bgm_stub (
   name     TEXT,         -- 原名（骨架行的标题兜底）
   name_cn  TEXT,
   date     TEXT,         -- 首播/上映日（剧场版系列按它排季位）
-  source   TEXT          -- 'dump'（将来也可能有 'api'）
+  source   TEXT,         -- 'dump'（将来也可能有 'api'）
+  -- 这条 id 的「1 跳关系」是否已经问过（dump 导入或在线补过）：
+  -- 有它就不必再打上游 —— 包括「确实没有关系」这种情况（否则每条没关系的作品会反复打）
+  relations_checked_at INTEGER
 );
 
 -- ============================================================================

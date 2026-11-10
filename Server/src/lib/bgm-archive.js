@@ -75,6 +75,12 @@ export const INVERSE_RELATION = Object.freeze({ 2: 3, 3: 2, 4: 5, 5: 4, 6: 12, 1
 /** `relation_type` → 中文关系名（不认识的返回空串，调用方据此跳过） */
 export const relationNameOf = (type) => RELATION_NAMES[Number(type)] || ''
 
+/** 反向：中文关系名 → `relation_type`（在线补关系时把 API 的字符串写回成数字码） */
+export const RELATION_CODES = Object.freeze(
+  Object.fromEntries(Object.entries(RELATION_NAMES).map(([code, name]) => [name, Number(code)])),
+)
+export const relationCodeOf = (name) => RELATION_CODES[String(name || '').trim()] ?? 0
+
 /** 反向关系的名字（例：A 的「续集」= B 的「前传」） */
 export function inverseRelationNameOf(type) {
   const inverse = INVERSE_RELATION[Number(type)]

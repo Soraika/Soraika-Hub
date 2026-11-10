@@ -129,6 +129,8 @@ const MIGRATIONS = {
     // 否则后续走链因为「根名已有」跳过 AI，会把这个判据丢掉 → 番外又被清零。
     { column: 'series_all_movies', ddl: 'INTEGER' },
   ],
+  // 关系表 v2：每条 id 的「1 跳关系问过没有」—— 决定走链时要不要为它打一次上游
+  bgm_stub: [{ column: 'relations_checked_at', ddl: 'INTEGER' }],
 }
 
 function ensureColumns() {

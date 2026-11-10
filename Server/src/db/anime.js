@@ -217,24 +217,82 @@ export const maxUpdatedAt = (year, season) => stmt.maxUpdatedAt.get(val(year), v
 export const countAll = () => stmt.countAll.get().n
 
 /**
+ * 关键词归一化：全角 ASCII → 半角、全角空格 → 空格、压空白、转小写
+ * ---------------------------------------------------------------------------
+ * 中文输入法很容易带全角括号 / 空格（`ＥＶＡ（２０２４）`），而库里的标题是半角；
+ * 不做归一化的话「看着一样却搜不到」。
+ */
+export function normalizeKeyword(text) {
+  return String(text || '')
+    .replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .replace(/[\u3000\u00a0]/g, ' ')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** 把一句话切成检索词（空格 / 中英文标点都算分隔），最多 5 个 —— 再多基本是「搜不到」而不是「搜得准」 */
+export function splitTerms(keyword) {
+  const text = normalizeKeyword(keyword)
+  if (!text) return []
+  const parts = text
+    .split(/[\s,，、/|·・:：;；!?！？()（）[\]【】"'“”‘’_-]+/)
+    .map((term) => term.replace(/[%_\\]/g, '')) // LIKE 通配符没意义，去掉免得变成「全表命中」
+    .filter(Boolean)
+  return [...new Set(parts)].slice(0, 5)
+}
+
+/**
+ * 相关度打分（越高越靠前）
+ * 完全同名 > 前缀命中 > 包含 > 只是分词命中；分词命中的位置越靠前分越高。
+ */
+function scoreOf(row, text, terms) {
+  const titles = [row.title_bgm, row.title_mikan, row.title_bgm_origin].map(normalizeKeyword).filter(Boolean)
+  let best = 0
+  for (const title of titles) {
+    if (title === text) best = Math.max(best, 100)
+    else if (title.startsWith(text)) best = Math.max(best, 70)
+    else if (title.includes(text)) best = Math.max(best, 50)
+    for (const term of terms) {
+      const at = title.indexOf(term)
+      if (at >= 0) best = Math.max(best, 20 + Math.max(0, 8 - at))
+    }
+  }
+  return best
+}
+
+/**
  * 按关键词搜作品（搜索页用）
  * ---------------------------------------------------------------------------
- * 只搜标题（BGM 中文名 / Mikan 标题 / BGM 原名），不搜简介 —— 用户输入的是名字片段。
- * 排序：有评分在前、评分高的在前，同分按最近更新（比按 id 更贴近"最近在看"）。
- * 上限 30：搜索是给人挑的，不是导出；多了既慢又没人翻。
+ * 支持「模糊」的三层：
+ *   · 空格分词：`进击 巨人` / `巨人 进击` 都能命中（词序无关，AND 连接）；
+ *   · 归一化：全角/大小写/多余空白都不影响（`ＥＶＡ` = `eva`）；
+ *   · 相关度排序：完全同名 > 前缀 > 包含 > 分词命中，再按评分兜底。
+ * 数据量是几千行，LIKE 足够快（不引 FTS5：中文分词反而更差，还多一张要同步的表）。
+ * 上限 30：搜索是给人挑的，不是导出；取 200 条候选再排序，够用且稳定。
  */
 export function searchByKeyword(keyword, limit = 30) {
-  const text = String(keyword || '').trim()
-  if (!text) return []
-  const like = `%${text}%`
-  return db
-    .prepare(
-      `SELECT * FROM v_anime
-        WHERE title_bgm LIKE ? OR title_mikan LIKE ? OR title_bgm_origin LIKE ?
-        ORDER BY score IS NULL, score DESC, updated_at DESC
-        LIMIT ?`,
+  const text = normalizeKeyword(keyword)
+  const terms = splitTerms(keyword)
+  if (!text || !terms.length) return []
+
+  const where = terms.map(() => '(title_bgm LIKE ? OR title_mikan LIKE ? OR title_bgm_origin LIKE ?)').join(' AND ')
+  const params = terms.flatMap((term) => {
+    const like = `%${term}%`
+    return [like, like, like]
+  })
+  const rows = db.prepare(`SELECT * FROM v_anime WHERE ${where} LIMIT 200`).all(...params)
+
+  return rows
+    .map((row) => ({ row, score: scoreOf(row, text, terms) }))
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        (Number(b.row.score) || -1) - (Number(a.row.score) || -1) ||
+        Number(b.row.id) - Number(a.row.id),
     )
-    .all(like, like, like, Number(limit) || 30)
+    .slice(0, Number(limit) || 30)
+    .map((hit) => hit.row)
 }
 
 export const findByMikanId = (mikanId) => stmt.byMikanId.get(val(mikanId)) ?? null

@@ -272,6 +272,27 @@ check(
   '番外一并收集（同一次遍历，无额外请求）',
 )
 
+/* ── 在线补关系（dump 覆盖不到的新番）：写回一次，之后不再打上游 ─────────── */
+console.log('\n— 在线补关系（逐条回退）')
+const { isRelationsKnown, saveRelationsFromApi } = await import('../src/db/relation.js')
+check(isRelationsKnown('1') === true, 'dump 里出现过的 id 标记为「关系问过」')
+check(isRelationsKnown('777') === false, '没见过的 id → 需要打一次上游')
+saveRelationsFromApi('777', [
+  { id: '1', relation: '续集', type: 2, name: 'Test Anime', nameCn: '测试番甲' },
+  { id: '888', relation: '片头曲', type: 3, name: 'Test OP 2', nameCn: '' },
+])
+check(isRelationsKnown('777') === true, '写回后标记「问过」（下次走链直接命中本地）')
+check(
+  relatedOf('1').some((r) => r.id === '777' && r.relation === '前传'),
+  'API 给的关系写回后，反向也能读（1 看 777 是前传）',
+)
+check(!relatedOf('777').some((r) => r.id === '888'), '白名单外的关系（片头曲）不会被写回')
+saveRelationsFromApi('999', [])
+check(
+  isRelationsKnown('999') === true && relatedOf('999').length === 0,
+  '确实没有关系也要标记（否则每轮白打一次上游）',
+)
+
 console.log('\n— 默认模式（覆盖已有值）')
 const second = await runArchiveImport({ dir: dumpDir, log: silent })
 check(second.patched === 3, '三条都写', `patched=${second.patched}`)
@@ -300,9 +321,14 @@ const zipSource = resolveDumpSource(zipPath)
 check(zipSource?.kind === 'zip', '给 .zip 路径 → 识别成 zip 源（不需要同名解压目录）', String(zipSource?.kind))
 
 db.prepare('UPDATE bgm_subject SET score = NULL, tags = NULL, summary = NULL, total_episodes = NULL').run()
+const relationsBeforeZip = countRelations()
 const fromZip = await runArchiveImport({ dir: zipPath, log: silent })
 check(fromZip.matched === 3 && fromZip.patched === 3, '从 zip 里读出两个条目并导入', `matched=${fromZip.matched} patched=${fromZip.patched}`)
-check(countRelations() === 4, 'zip 里没有关系表时不删已有关系（老 dump 兼容）', `rows=${countRelations()}`)
+check(
+  countRelations() === relationsBeforeZip,
+  'zip 里没有关系表时不删已有关系（老 dump 兼容）',
+  `rows=${countRelations()}`,
+)
 check(
   rowOf('1').score === 8.4 && rowOf('1').total_episodes === 3,
   'store 条目（episode.jsonlines）也读对了',

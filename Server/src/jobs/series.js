@@ -25,7 +25,7 @@ import { loadStoredSettings } from '../api/pages/settings.js'
 import { fetchRelatedSubjects, fetchSubject } from '../api/sources/bgm.js'
 import { config } from '../config.js'
 import { db, val } from '../db/index.js'
-import { hasRelations, relatedOf, stubOf } from '../db/relation.js'
+import { hasRelations, isRelationsKnown, relatedOf, saveRelationsFromApi, stubOf } from '../db/relation.js'
 import {
   ensureBgmStub,
   findByBgmIds,
@@ -176,15 +176,27 @@ export async function renumberMovieSeries(seriesId, { log = logger } = {}) {
 }
 
 /**
- * 走链的数据源：dump 里有关系表就用它（0 次上游请求），否则退回 BGM API
+ * 走链的取数 —— 逐条回退：dump 覆盖不到的那一条才打上游
  * ---------------------------------------------------------------------------
- * 每次调用都判断（不在启动时缓存）：dump 导入跑完，下一次走链立刻就用新数据。
- * 仍然尊重设置页的「离线数据」开关（`bgm.useDump`）：关掉 = 保持原来的在线行为。
+ * 三种情况（对应设置页「离线数据」打开 + 关系表已灌）：
+ *   ① 本地有关系行 → 直接用（绝大多数；一条链 0 次请求）
+ *   ② 本地没有行、但标记过「问过」→ 它确实没有关系，返回空（不再打上游）
+ *   ③ 本地没有行也没问过（新番 / dump 之前入库）→ 打一次上游，把结果写回关系表，
+ *      下次走链就命中 ①。写回只保留白名单关系，音乐 / 书籍 / 联动不进链。
+ *
+ * 关掉「离线数据」或关系表还是空的 → 整体退回镜像 API（与改造前完全一致）。
+ * 每次调用都判断（不在启动时缓存）：dump 导入跑完立刻生效，不用重启。
  */
 const dumpRelationsReady = () => Boolean(config.bgm?.useDump) && hasRelations()
 
-function loadRelatedFor(bgmId) {
-  return dumpRelationsReady() ? Promise.resolve(relatedOf(bgmId)) : fetchRelatedSubjects(bgmId)
+async function loadRelatedFor(bgmId) {
+  const id = String(bgmId)
+  if (!dumpRelationsReady()) return fetchRelatedSubjects(id)
+  const local = relatedOf(id)
+  if (local.length || isRelationsKnown(id)) return local
+  const list = await fetchRelatedSubjects(id)
+  saveRelationsFromApi(id, list)
+  return relatedOf(id)
 }
 
 /**

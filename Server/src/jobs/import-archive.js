@@ -23,7 +23,7 @@ import { createReadStream } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { applyArchiveBatch, listBgmTargets, stats } from '../db/anime.js'
-import { clearRelations, insertRelations, insertStubs } from '../db/relation.js'
+import { clearRelations, insertRelations, insertStubs, markStubRelationsChecked } from '../db/relation.js'
 import { upsertSubjects } from '../db/subject.js'
 import {
   DUMP_FILES,
@@ -200,7 +200,11 @@ export async function runArchiveImport({
   let stubBatch = []
   const flushStubs = () => {
     if (!stubBatch.length) return
-    if (!dryRun) insertStubs(stubBatch)
+    if (!dryRun) {
+      insertStubs(stubBatch)
+      // 这批 id 的关系已经由「全站关系表」给出答案（哪怕一行都没有）→ 以后不再打上游
+      markStubRelationsChecked(stubBatch.map((row) => row.bgmId))
+    }
     result.stubs += stubBatch.length
     stubBatch = []
   }

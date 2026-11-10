@@ -7,7 +7,7 @@
         <SearchBox
           :model-value="keyword"
           class="search-box"
-          placeholder="番名片段，例如：巨人 / 进击"
+          placeholder="番名片段，空格可分词（如：进击 巨人）"
           @update:model-value="$emit('input', $event)"
           @submit="$emit('submit', $event)"
         />
@@ -16,7 +16,7 @@
 
     <div class="search-body">
       <!-- 初始态：还没输入，给一句提示（不算"没有找到"） -->
-      <StateBlock v-if="uiState === 'idle'" state="empty" text="输入番名开始搜索（中文名、原名都行）" />
+      <StateBlock v-if="uiState === 'idle'" state="empty" text="输入番名开始搜索（中文名、原名都行，空格可分词）" />
       <StateBlock v-else-if="uiState === 'loading'" state="loading" text="正在搜索…" />
       <StateBlock
         v-else-if="uiState === 'error'"

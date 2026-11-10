@@ -138,6 +138,21 @@ try {
   const longQ = await get(`/api/anime?q=${encodeURIComponent('あ'.repeat(81))}`)
   check(longQ.res.status === 400, '搜索：q 超 80 字 → 400')
 
+  /* ── 模糊搜索：空格分词（词序无关）/ 全角归一 / LIKE 通配符不被放大 ─────── */
+  const { normalizeKeyword, splitTerms } = await import('../src/db/anime.js')
+  check(normalizeKeyword('  ＥＶＡ　(２０２４)  ') === 'eva (2024)', '归一化：全角转半角 + 压缩空白 + 小写', normalizeKeyword('  ＥＶＡ　(２０２４)  '))
+  check(splitTerms('名侦探,柯南、剧场版').join('|') === '名侦探|柯南|剧场版', '分词：中英文标点都算分隔', splitTerms('名侦探,柯南、剧场版').join('|'))
+  check(splitTerms('%_').length === 0, 'LIKE 通配符被去掉（不会变成全表命中）')
+  const words = String(card.title).split(/\s+/).filter(Boolean)
+  const reordered = words.length > 1 ? [...words].reverse().join(' ') : `${card.title} 番`
+  const fuzzy = await get(`/api/anime?q=${encodeURIComponent(words.length > 1 ? reordered : card.title)}`)
+  check(
+    fuzzy.body?.data?.items?.some((it) => it.id === card.id),
+    `多词 / 换词序也能命中 → 「${words.length > 1 ? reordered : card.title}」`,
+  )
+  const fuzzyCount = fuzzy.body?.data?.items?.length ?? 0
+  check(fuzzyCount > 0 && fuzzyCount <= 30, `模糊结果同样有上限 → ${fuzzyCount} 条`)
+
   /* ── 系列（面板标题旁那个 chip）：没算过就现场跑一遍（用户看了啥、库里没有就补一遍）
    * 两种结论都合法：① 现算出系列（items ≥ 2）② 这部确实没有同系列其它成员（null）。
    * 不允许的只有两件事：500 / 返回只有它自己的单成员系列。 */
