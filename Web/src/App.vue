@@ -31,6 +31,7 @@
       @retry="retryAnime"
       @open="openAnime"
       @downloaded="onDownloaded"
+      @go-season="onGoSeason"
     />
   </div>
 </template>
@@ -150,6 +151,19 @@ const panelSource = ref('mikan')
 function onDownloaded(payload) {
   if (!payload?.added?.length) return
   downloads.load({ fresh: true })
+}
+
+/**
+ * 系列弹层里点「2026 秋」→ 收起面板、回首页、请求那一季
+ * ---------------------------------------------------------------------------
+ * 顺序是先关面板再切页：面板是首页卡片的延伸，跳季就该看排期而不是还挂着上一部作品；
+ * 请求交给 useSchedule（它自己会记住这次选择，刷新后回到同一季）。
+ */
+function onGoSeason({ year, season } = {}) {
+  if (!year || !season) return
+  closeAnime()
+  activeNav.value = 'home'
+  schedule.selectSeason(year, season)
 }
 
 // 数据还没到时，季选先显示：① 上次选过的季（localStorage）② 本机算的当前季

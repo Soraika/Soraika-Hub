@@ -317,8 +317,14 @@ export async function addDownloads({ animeId, subgroup = '', season = 1, items =
     const meta = metaOfText(item.title)
     const tags = [baseTags, ...metaTagsOf(meta)].filter(Boolean).join(',')
     try {
-      await qbAddTorrent({ url, savePath, tags, category: config.qb?.category })
-      added.push({ title: item.title, episode: item.episode || episodeOf(item.title), tags })
+      const result = await qbAddTorrent({ url, savePath, tags, category: config.qb?.category })
+      added.push({
+        title: item.title,
+        episode: item.episode || episodeOf(item.title),
+        tags,
+        /** 本来就在列表里（qB 409）—— 前端据此说「已存在」而不是「刚加入」 */
+        existed: Boolean(result?.existed),
+      })
     } catch (err) {
       failed.push({ title: item.title, reason: err.message })
     }

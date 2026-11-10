@@ -262,12 +262,79 @@ function scoreOf(row, text, terms) {
 }
 
 /**
+ * 编辑距离（Levenshtein），超过上限立刻放弃
+ * ---------------------------------------------------------------------------
+ * 只为一件事：**用户记错/打错一个字**也能搜到（「上伊娜」「上依娜」→「上伊那」）。
+ * 提前退出很关键：几千条标题逐个比也不会慢（大部分在前几行就超限）。
+ */
+export function editDistance(a, b, limit = 2) {
+  const s = String(a || '')
+  const t = String(b || '')
+  if (s === t) return 0
+  if (Math.abs(s.length - t.length) > limit) return limit + 1
+  let prev = Array.from({ length: t.length + 1 }, (_, i) => i)
+  for (let i = 1; i <= s.length; i++) {
+    const cur = [i]
+    let rowMin = i
+    for (let j = 1; j <= t.length; j++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+      if (cur[j] < rowMin) rowMin = cur[j]
+    }
+    if (rowMin > limit) return limit + 1
+    prev = cur
+  }
+  return prev[t.length]
+}
+
+/**
+ * 错字兜底：整句搜不到时，按「长度相近的窗口」算编辑距离
+ * ---------------------------------------------------------------------------
+ * 只在精确/分词搜索 **0 结果**时跑，所以正常搜索一点不慢。
+ * 窗口比较是为了「记忆里只有名字的一部分」：`上伊娜` 对 `上伊那牡丹，酒醉…` 整体算距离很大，
+ * 但对前 3 个字的窗口只差 1。
+ */
+function typoSearch(text, limit = 30) {
+  const query = text.replace(/\s+/g, '')
+  if (query.length < 2) return []
+  // 短词只容 1 个错（3 个字容 2 个错就什么都像了），长词容 2 个
+  const maxDistance = query.length >= 5 ? 2 : 1
+  const rows = db.prepare('SELECT * FROM v_anime').all()
+  const hits = []
+  for (const row of rows) {
+    const titles = [row.title_bgm, row.title_mikan, row.title_bgm_origin].map(normalizeKeyword).filter(Boolean)
+    let best = maxDistance + 1
+    for (const title of titles) {
+      const flat = title.replace(/\s+/g, '')
+      best = Math.min(best, editDistance(query, flat, maxDistance))
+      if (best === 0) break
+      // 标题比查询长：只比长度相近的窗口
+      for (let i = 0; i + query.length <= flat.length && best > 0; i++) {
+        best = Math.min(best, editDistance(query, flat.slice(i, i + query.length), maxDistance))
+      }
+      if (best === 0) break
+    }
+    if (best <= maxDistance) hits.push({ row, distance: best })
+  }
+  return hits
+    .sort(
+      (a, b) =>
+        a.distance - b.distance ||
+        (Number(b.row.score) || -1) - (Number(a.row.score) || -1) ||
+        Number(b.row.id) - Number(a.row.id),
+    )
+    .slice(0, Number(limit) || 30)
+    .map((hit) => hit.row)
+}
+
+/**
  * 按关键词搜作品（搜索页用）
  * ---------------------------------------------------------------------------
- * 支持「模糊」的三层：
+ * 支持「模糊」的四层：
  *   · 空格分词：`进击 巨人` / `巨人 进击` 都能命中（词序无关，AND 连接）；
  *   · 归一化：全角/大小写/多余空白都不影响（`ＥＶＡ` = `eva`）；
- *   · 相关度排序：完全同名 > 前缀 > 包含 > 分词命中，再按评分兜底。
+ *   · 相关度排序：完全同名 > 前缀 > 包含 > 分词命中，再按评分兜底；
+ *   · 整句 0 结果时按编辑距离兜底（打错一个字、只记得大概）。
  * 数据量是几千行，LIKE 足够快（不引 FTS5：中文分词反而更差，还多一张要同步的表）。
  * 上限 30：搜索是给人挑的，不是导出；取 200 条候选再排序，够用且稳定。
  */
@@ -283,7 +350,7 @@ export function searchByKeyword(keyword, limit = 30) {
   })
   const rows = db.prepare(`SELECT * FROM v_anime WHERE ${where} LIMIT 200`).all(...params)
 
-  return rows
+  const ranked = rows
     .map((row) => ({ row, score: scoreOf(row, text, terms) }))
     .sort(
       (a, b) =>
@@ -293,6 +360,8 @@ export function searchByKeyword(keyword, limit = 30) {
     )
     .slice(0, Number(limit) || 30)
     .map((hit) => hit.row)
+
+  return ranked.length ? ranked : typoSearch(text, limit)
 }
 
 export const findByMikanId = (mikanId) => stmt.byMikanId.get(val(mikanId)) ?? null

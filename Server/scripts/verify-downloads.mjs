@@ -85,6 +85,16 @@ check(missingEpisodesOf(['01-13'], 12).have === 12, '合集比总集数长 → �
 check(missingEpisodesOf(['14', '15', '16'], 3).have === 3, '累积集号（S02 的 14~16 对一季 3 话）→ 平移到 1 起，不误报全缺')
 check(missingEpisodesOf(['特典'], 12).parsed === 0, '一个集号都解析不出 → parsed=0（卡片不显示「已下 0」）')
 
+/* ── 加种应答：qB 5.x 对「重复种子」回 HTTP 409 —— 那不是失败（实测）───────── */
+const { classifyAddResult } = await import('../src/api/sources/qb.js')
+check(classifyAddResult({ status: 200, text: 'Ok.' }).ok === true, 'Ok. = 成功')
+const dup = classifyAddResult({ status: 409, text: '' })
+check(dup.ok === true && dup.existed === true, 'HTTP 409 = 已在列表里（不报失败）', JSON.stringify(dup))
+check(classifyAddResult({ status: 200, text: 'Fails.' }).ok === false, 'Fails. = 真失败')
+check(!classifyAddResult({ status: 500, text: { error: 'boom' } }).reason.includes('[object'), '错误文案不会出现 [object Object]')
+check(classifyAddResult({ status: 0, text: '' }).reason.includes('没有应答'), '空应答也有可读文案（不是 undefined）')
+check(classifyAddResult({ status: 409, text: '' }).reason.length > 0, '「已存在」也带一句人能看懂的说明')
+
 /* 目录与状态 */
 const split = splitSavePath('/downloads/anime/碧蓝之海/SE03')
 check(split.title === '碧蓝之海' && split.seasonDir === 'SE03', `归档路径拆番名/季目录 → ${split.title} / ${split.seasonDir}`)

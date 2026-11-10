@@ -174,6 +174,10 @@ export async function getAnimeSeries(id, { log = logger } = {}) {
       index: m.series_index,
       relation: m.series_relation,
       current: m.id === row.id,
+      /** 排期归属（只有 Mikan 能写）：弹层里「前往该季度」要用，seasonText 是成品字符串 */
+      year: m.year ?? null,
+      season: m.season || '',
+      seasonText: m.year && m.season ? `${m.year} ${m.season}` : '',
     })),
   }
 }

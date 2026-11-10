@@ -76,18 +76,32 @@
               @close="seriesOpen = false"
             >
               <p class="series-head">{{ series.rootTitle || '同系列' }} · {{ series.items.length }} 部</p>
-              <button
+              <!-- 一行两个动作：点名字换作品；点右侧季度回首页看那一季的排期 -->
+              <div
                 v-for="item in series.items"
                 :key="item.animeId"
                 class="series-item"
                 :class="{ on: item.current }"
-                type="button"
-                :disabled="item.current"
-                @click="pickSeries(item)"
               >
-                <span class="series-tag">{{ seriesTagOf(item) }}</span>
-                <span class="series-name">{{ item.title }}</span>
-              </button>
+                <button
+                  class="series-main"
+                  type="button"
+                  :disabled="item.current"
+                  @click="pickSeries(item)"
+                >
+                  <span class="series-tag">{{ seriesTagOf(item) }}</span>
+                  <span class="series-name">{{ item.title }}</span>
+                </button>
+                <button
+                  v-if="item.seasonText"
+                  class="series-season"
+                  type="button"
+                  :title="`前往 ${item.seasonText} 的排期`"
+                  @click="goSeason(item)"
+                >
+                  {{ item.seasonText }}
+                </button>
+              </div>
             </PopoverPanel>
           </header>
 
@@ -255,7 +269,7 @@ const props = defineProps({
   /** qB 通道是否可用（容器查一次 `/api/qb/status` 后传下来；false 时下载按钮只给说明） */
   downloadReady: { type: Boolean, default: false },
 })
-const emit = defineEmits(['close', 'retry', 'open', 'downloaded'])
+const emit = defineEmits(['close', 'retry', 'open', 'downloaded', 'go-season'])
 
 const isDownloads = computed(() => props.source === 'downloads')
 
@@ -332,6 +346,15 @@ const seriesTagOf = (item) => (item.index ? `S${String(item.index).padStart(2, '
 function pickSeries(item) {
   seriesOpen.value = false
   if (!item.current) emit('open', item.animeId)
+}
+
+/**
+ * 点系列里的季度胶囊：回首页看那一季的排期
+ * 只上抛（页面不碰导航/请求）；容器负责收起面板、切页面、请求那一季。
+ */
+function goSeason(item) {
+  seriesOpen.value = false
+  if (item?.year && item?.season) emit('go-season', { year: item.year, season: item.season })
 }
 
 /**
@@ -461,13 +484,18 @@ async function onDownload(items) {
       })),
     })
     downloadFailed.value = res.failed.length > 0
-    const head = res.added.length
-      ? `已加入 ${res.added.length} 个下载 → ${res.savePath}`
-      : '没有加进任何下载'
-    const tail = res.failed.length
-      ? `；${res.failed.length} 条失败（${res.failed[0].title}：${res.failed[0].reason}）`
-      : ''
-    downloadMsg.value = head + tail
+    // 「已在列表里」不算失败（qB 5.x 对重复种子回 409）：分开说，免得以为没加上
+    const existed = res.added.filter((it) => it.existed).length
+    const fresh = res.added.length - existed
+    const head = fresh
+      ? `已加入 ${fresh} 个下载 → ${res.savePath}`
+      : existed
+        ? `已在下载列表中 ${existed} 个（没有重复添加）`
+        : '没有加进任何下载'
+    const notes = []
+    if (existed && fresh) notes.push(`其中 ${existed} 个已存在`)
+    if (res.failed.length) notes.push(`${res.failed.length} 条失败（${res.failed[0].title}：${res.failed[0].reason}）`)
+    downloadMsg.value = head + (notes.length ? `；${notes.join('；')}` : '')
     // 让容器知道「下载列表变了」——它会重取一次，下载页不用手动刷新
     emit('downloaded', res)
   } catch (err) {
@@ -782,30 +810,57 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   font-size: 0.68rem;
   line-height: 1.4;
 }
+/* 一行两个动作：左边「换作品」，右边「去那一季」 */
 .series-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  padding: 5px 6px;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  font-size: 0.76rem;
-  text-align: left;
   transition: background var(--dur-fast), color var(--dur-fast);
 }
-.series-item:hover:not(:disabled) {
+.series-item:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+.series-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  color: inherit;
+  font-size: 0.76rem;
+  text-align: left;
 }
 /* 当前这一部：只强调、不可点（点它等于什么都不做） */
 .series-item.on {
   color: var(--accent-strong);
   font-weight: 600;
 }
-.series-item.on:disabled {
+.series-main:disabled {
   opacity: 1;
   cursor: default;
+}
+/* 季度胶囊：一排右侧的小按钮，点了回首页看那一季 */
+.series-season {
+  flex-shrink: 0;
+  margin-right: 4px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-tertiary);
+  font-size: 0.64rem;
+  line-height: 1.6;
+  white-space: nowrap;
+  transition: border-color var(--dur-fast), color var(--dur-fast), background var(--dur-fast);
+}
+.series-season:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 .series-tag {
   flex-shrink: 0;

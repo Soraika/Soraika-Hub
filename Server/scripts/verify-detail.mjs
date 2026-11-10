@@ -139,7 +139,7 @@ try {
   check(longQ.res.status === 400, '搜索：q 超 80 字 → 400')
 
   /* ── 模糊搜索：空格分词（词序无关）/ 全角归一 / LIKE 通配符不被放大 ─────── */
-  const { normalizeKeyword, splitTerms } = await import('../src/db/anime.js')
+  const { normalizeKeyword, splitTerms, editDistance } = await import('../src/db/anime.js')
   check(normalizeKeyword('  ＥＶＡ　(２０２４)  ') === 'eva (2024)', '归一化：全角转半角 + 压缩空白 + 小写', normalizeKeyword('  ＥＶＡ　(２０２４)  '))
   check(splitTerms('名侦探,柯南、剧场版').join('|') === '名侦探|柯南|剧场版', '分词：中英文标点都算分隔', splitTerms('名侦探,柯南、剧场版').join('|'))
   check(splitTerms('%_').length === 0, 'LIKE 通配符被去掉（不会变成全表命中）')
@@ -152,6 +152,18 @@ try {
   )
   const fuzzyCount = fuzzy.body?.data?.items?.length ?? 0
   check(fuzzyCount > 0 && fuzzyCount <= 30, `模糊结果同样有上限 → ${fuzzyCount} 条`)
+
+  /* 打错字兜底：整句搜不到时按编辑距离找（用户实际会遇到：上伊娜 / 上依娜） */
+  check(editDistance('上伊娜牡丹', '上伊那牡丹') === 1, '编辑距离：上伊娜 / 上伊那 = 1')
+  check(editDistance('进击的巨人', '进击的巨人') === 0 && editDistance('abc', 'xyz', 1) > 1, '编辑距离：相同为 0，超限早退')
+  const typoTitle = String(card.title).length >= 4 ? `${String(card.title).slice(0, 2)}摊${String(card.title).slice(3)}` : ''
+  if (typoTitle) {
+    const typo = await get(`/api/anime?q=${encodeURIComponent(typoTitle)}`)
+    check(
+      typo.body?.data?.items?.some((it) => it.id === card.id),
+      `打错一个字也能命中 → 「${typoTitle}」`,
+    )
+  }
 
   /* ── 系列（面板标题旁那个 chip）：没算过就现场跑一遍（用户看了啥、库里没有就补一遍）
    * 两种结论都合法：① 现算出系列（items ≥ 2）② 这部确实没有同系列其它成员（null）。

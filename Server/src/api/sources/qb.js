@@ -12,7 +12,7 @@
  * 所以这里沿用 `clients/Qb.js` 的 Bearer 写法 —— 两处保持一致，别一边改一边忘。
  */
 import { config } from '../../config.js'
-import { getQbGlobalTransferInfo, getQbTorrentList, getQbVersion, postQbAddTorrent } from '../../clients/Qb.js'
+import { fetchQbPost, getQbGlobalTransferInfo, getQbTorrentList, getQbVersion } from '../../clients/Qb.js'
 import { fail } from '../../lib/errors.js'
 import { logger } from '../../lib/logger.js'
 
@@ -81,30 +81,83 @@ export async function qbTorrents({ fresh = false } = {}) {
 }
 
 /**
+ * qB 加种应答 → 结论（纯函数，验收直接喂数据）
+ * ---------------------------------------------------------------------------
+ * qB 5.x 的三种真实应答，实测出来的：
+ *   · 成功 → 200 + 纯文本 `Ok.`
+ *   · **重复种子 → HTTP 409**（不是 `Fails.`）——「已经在列表里」不是失败，
+ *     用户点两次/批量里勾了同一个种子都会走到这里
+ *   · 其它拒绝 → `Fails.` 或错误体
+ * @param {{ status?: number, text?: string }} params
+ * @returns {{ ok: boolean, existed: boolean, reason: string }}
+ */
+export function classifyAddResult({ status = 0, text = '' } = {}) {
+  // 对象/空值一律收敛成可读文本 —— 直接模板拼接会得到 [object Object]
+  const body = typeof text === 'string' ? text.trim() : text == null ? '' : JSON.stringify(text).slice(0, 120)
+  if (/^ok/i.test(body)) return { ok: true, existed: false, reason: '' }
+  if (Number(status) === 409) return { ok: true, existed: true, reason: '种子已经在下载列表里' }
+  if (/^fails?\.?$/i.test(body)) return { ok: false, existed: false, reason: 'qBittorrent 拒绝了这次加种（Fails.）' }
+  const hint = body ? body.slice(0, 120) : Number(status) ? `HTTP ${status}` : '没有应答'
+  return { ok: false, existed: false, reason: `qBittorrent 拒绝了这次加种（${hint}）` }
+}
+
+/** 磁力里的 btih（用于「说失败但其实加进去了」的复核） */
+const torrentHashOf = (url) => /urn:btih:([0-9a-z]{32,40})/i.exec(String(url || ''))?.[1]?.toLowerCase() || ''
+
+/**
  * 加种
  * @param {{ url: string, savePath: string, tags: string, category?: string, paused?: boolean }} params
- * @returns {Promise<{ ok: boolean, raw: string }>}
+ * @returns {Promise<{ ok: boolean, existed: boolean, raw: string }>} existed = 本来就在列表里
  */
 export async function qbAddTorrent({ url, savePath, tags = '', category, paused = false }) {
   ensureConfigured()
   if (!url) throw fail('BAD_REQUEST', '缺少下载地址（磁力或种子链接）')
 
-  const raw = await postQbAddTorrent(
-    config.qb.base,
-    config.qb.apiKey,
-    {
-      urls: url,
-      savepath: savePath,
-      ...(category ? { category } : {}),
-      ...(tags ? { tags } : {}),
-      ...(paused ? { paused: 'true' } : {}),
-    },
-    0,
+  let status = 0
+  let text = ''
+  try {
+    text = await fetchQbPost(
+      config.qb.base,
+      config.qb.apiKey,
+      {
+        urls: url,
+        savepath: savePath,
+        ...(category ? { category } : {}),
+        ...(tags ? { tags } : {}),
+        ...(paused ? { paused: 'true' } : {}),
+      },
+      'QbAddTorrent',
+      1,
+    )
+    status = 200
+  } catch (err) {
+    // 4xx 会立刻抛（不重试），把状态码与响应体带出来判断；网络错误仍然算失败
+    status = Number(err?.status) || 0
+    text = String(err?.bodyText || '')
+  }
+
+  let verdict = classifyAddResult({ status, text })
+
+  /* 兜底复核：「说失败但其实已经在列表里」—— 用磁力 hash 查一次（torrent 文件没有 hash 就跳过） */
+  if (!verdict.ok && !verdict.existed) {
+    const hash = torrentHashOf(url)
+    if (hash) {
+      try {
+        const list = await getQbTorrentList(config.qb.base, config.qb.apiKey, { hashes: hash }, 0)
+        if (Array.isArray(list) && list.some((t) => String(t.hash || '').toLowerCase() === hash)) {
+          verdict = { ok: true, existed: true, reason: '种子已经在下载列表里' }
+        }
+      } catch {
+        /* 复核失败不改变结论，按原错误报 */
+      }
+    }
+  }
+
+  logger.info(
+    { savePath, category, ok: verdict.ok, existed: verdict.existed, status, raw: String(text).slice(0, 40) },
+    'qb.add done',
   )
-  // qB 的成功应答是纯文本 Ok.；失败是 Fails.
-  const text = String(raw ?? '').trim()
-  logger.info({ savePath, category, ok: /^ok/i.test(text), raw: text.slice(0, 40) }, 'qb.add done')
-  if (!/^ok/i.test(text)) throw fail('UPSTREAM', `qBittorrent 拒绝了这次加种（${text || '没有应答'}）`)
+  if (!verdict.ok) throw fail('UPSTREAM', verdict.reason)
   torrentCache.at = 0 // 新种子立刻要能看到 → 让缓存失效
-  return { ok: true, raw: text }
+  return { ok: true, existed: verdict.existed, raw: String(text ?? '') }
 }

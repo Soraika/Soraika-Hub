@@ -44,8 +44,14 @@ async function fetchQbGet(baseUrl, apiUrl, params = {}, apiKey, tip, retries = 2
         });
 
         if (!response.ok) {
-            logger.warn({ tip, method: 'GET', url: finalUrl.href, status: response.status }, 'qb.fetch fail');
-            throw new Error(`HTTP ${response.status}`);
+            // 把响应体一起带出来：qB 失败时会说明原因（重复种子是 409），
+            // 只留 `HTTP 409` 的话排错时什么都看不出来（也避免把对象拼成 [object Object]）。
+            const body = await response.text().catch(() => '')
+            logger.warn({ tip, method: 'GET', url: finalUrl.href, status: response.status }, 'qb.fetch fail')
+            const err = new Error(`HTTP ${response.status}${body ? ` ${body.slice(0, 120)}` : ''}`)
+            err.status = response.status
+            err.bodyText = body
+            throw err
         }
 
         const text = await response.text();
@@ -56,7 +62,10 @@ async function fetchQbGet(baseUrl, apiUrl, params = {}, apiKey, tip, retries = 2
         );
         return text;
     } catch (error) {
-        if (retries > 0) {
+        // 4xx 是「请求本身有问题」（409 = 种子已存在），重试毫无意义、还会白等 10 秒；
+        // 只有 5xx / 网络错误才重试。
+        const retriable = !error.status || error.status >= 500;
+        if (retries > 0 && retriable) {
             logger.warn(
                 { tip, method: 'GET', url: finalUrl.href, retriesLeft: retries - 1, err: error.message },
                 'qb.fetch retry',
@@ -68,7 +77,10 @@ async function fetchQbGet(baseUrl, apiUrl, params = {}, apiKey, tip, retries = 2
             { tip, method: 'GET', url: finalUrl.href, err: error.message, ms: Date.now() - startedAt },
             'qb.fetch abort',
         );
-        throw new Error(`获取 ${tip} 失败：${error.message}`);
+        const wrapped = new Error(`获取 ${tip} 失败：${error.message}`);
+        wrapped.status = error.status;
+        wrapped.bodyText = error.bodyText;
+        throw wrapped;
     }
 }
 
@@ -116,8 +128,12 @@ async function fetchQbPost(baseUrl, apiUrl, params = {}, apiKey, tip, retries = 
         });
 
         if (!response.ok) {
-            logger.warn({ tip, method: 'POST', url: finalUrl.href, status: response.status }, 'qb.fetch fail');
-            throw new Error(`HTTP ${response.status}`);
+            const body = await response.text().catch(() => '')
+            logger.warn({ tip, method: 'POST', url: finalUrl.href, status: response.status }, 'qb.fetch fail')
+            const err = new Error(`HTTP ${response.status}${body ? ` ${body.slice(0, 120)}` : ''}`)
+            err.status = response.status
+            err.bodyText = body
+            throw err
         }
 
         const text = await response.text();
@@ -128,7 +144,9 @@ async function fetchQbPost(baseUrl, apiUrl, params = {}, apiKey, tip, retries = 
         );
         return text;
     } catch (error) {
-        if (retries > 0) {
+        // 同 GET：4xx 不重试（重复加种是 409，重试只会白等）
+        const retriable = !error.status || error.status >= 500;
+        if (retries > 0 && retriable) {
             logger.warn(
                 { tip, method: 'POST', url: finalUrl.href, retriesLeft: retries - 1, err: error.message },
                 'qb.fetch retry',
@@ -140,7 +158,10 @@ async function fetchQbPost(baseUrl, apiUrl, params = {}, apiKey, tip, retries = 
             { tip, method: 'POST', url: finalUrl.href, err: error.message, ms: Date.now() - startedAt },
             'qb.fetch abort',
         );
-        throw new Error(`获取 ${tip} 失败：${error.message}`);
+        const wrapped = new Error(`获取 ${tip} 失败：${error.message}`);
+        wrapped.status = error.status;
+        wrapped.bodyText = error.bodyText;
+        throw wrapped;
     }
 }
 

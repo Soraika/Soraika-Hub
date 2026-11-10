@@ -231,6 +231,19 @@ try {
     readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8').includes('@open="openAnime"'),
     '容器把面板的 open 事件接到 openAnime（全站一个面板，切换 = 改 activeAnimeId）',
   )
+  /* 系列弹层里「前往该季度」：面板只上抛，容器负责回首页 + 请求那一季 */
+  const appVueSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+  check(
+    panelSource.includes("emit('go-season'") &&
+      panelSource.includes('class="series-season"') &&
+      appVueSource.includes('@go-season="onGoSeason"') &&
+      appVueSource.includes('schedule.selectSeason(year, season)'),
+    '系列弹层每部都有「前往该季度」按钮（面板 emit → 容器切季并回首页）',
+  )
+  check(
+    panelSource.includes('it.existed') && panelSource.includes('已在下载列表中'),
+    '加种汇总区分「刚加入」与「已存在」（qB 对重复种子回 409，不再报失败）',
+  )
   /* 换成骨架屏之后：loading/error 不再需要 key（没有分支之间的过渡了），
      详情仍带 :key 让"换作品"重新挂载；整块过渡样式已删除，动效只剩骨架扫光。 */
   check(
