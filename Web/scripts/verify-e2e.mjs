@@ -117,6 +117,28 @@ try {
   )
   check(/class="[^"]*poster-card[^"]*selected[^"]*"/.test(selectedHome), '面板里那部作品的卡片带 selected 选中态')
 
+  /* ── ③c 搜索页：三态 + 结果卡片（走代理拿真数据）──────────────────── */
+  const searchProxied = await (await fetch(`${DEV}/api/anime?q=${encodeURIComponent(firstItem.title)}`)).json()
+  check(
+    searchProxied?.ok === true && searchProxied.data.items.some((it) => it.id === firstItem.id),
+    `代理下的搜索接口可用 → ${searchProxied?.data?.total} 条`,
+  )
+  const { default: SearchPage } = await vite.ssrLoadModule('/src/pages/SearchPage.vue')
+  const idleSearch = await renderToString(
+    createSSRApp({ render: () => h(SearchPage, { keyword: '', uiState: 'idle' }) }),
+  )
+  check(idleSearch.includes('输入番名开始搜索'), '搜索页 idle：给提示，而不是"没有找到"')
+  const searchItems = searchProxied.data.items
+  const hitSearch = await renderToString(
+    createSSRApp({ render: () => h(SearchPage, { keyword: firstItem.title, items: searchItems, uiState: 'ready' }) }),
+  )
+  check(hitSearch.includes(firstItem.title), `搜索页结果渲染真卡片 → 「${firstItem.title}」`)
+  check(hitSearch.includes(`${searchItems.length} 部作品`), `搜索页显示结果条数 → ${searchItems.length}`)
+  const emptySearch = await renderToString(
+    createSSRApp({ render: () => h(SearchPage, { keyword: 'zzz', items: [], uiState: 'empty' }) }),
+  )
+  check(emptySearch.includes('没有找到「zzz」'), '搜索页 empty：空态带上关键词')
+
   /* ── ④ 详情接口（同样经代理）+ 面板 SSR ────────────────────────────── */
   const detailRes = await (await fetch(`${DEV}/api/anime/${firstItem.id}`)).json()
   const detail = detailRes?.data
@@ -1287,6 +1309,48 @@ try {
   check(
     downloadsPageSource.includes('versions') && downloadsPageSource.includes('WebAPI'),
     '下载页顶部同时显示 qB 应用版本与 WebAPI 版本（连到的是哪个 qB 一目了然）',
+  )
+  /* 缺哪集：卡片底部那一行。文案由后端定稿（progressText / missingText），前端只摆 */
+  check(
+    downloadsPageSource.includes('progressText') && downloadsPageSource.includes('missingText') && downloadsPageSource.includes('#footer'),
+    '卡片底部走 footer 槽显示「已下 x / 共 y」与缺的集号（不在信息行里挤）',
+  )
+  const { default: DownloadsPageCard } = await vite.ssrLoadModule('/src/pages/DownloadsPage.vue')
+  const dlCardHtml = await renderToString(
+    createSSRApp({
+      render: () =>
+        h(DownloadsPageCard, {
+          uiState: 'ready',
+          data: {
+            configured: true,
+            counts: { anime: 1, total: 1, sizeText: '1.0 GB' },
+            versions: null,
+            transfer: null,
+            unmatched: [],
+            items: [
+              {
+                id: 1,
+                title: '测试番',
+                poster: '',
+                state: 'done',
+                count: 2,
+                progress: 100,
+                sizeText: '1.0 GB',
+                latestEpisode: 2,
+                totalEpisodes: 12,
+                progressText: '已下 2 / 共 12',
+                missingCount: 10,
+                missingEpisodes: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+                missingText: '缺 03 04 05 06 07 08 09 10 11 12',
+              },
+            ],
+          },
+        }),
+    }),
+  )
+  check(
+    dlCardHtml.includes('已下 2 / 共 12') && dlCardHtml.includes('缺 03'),
+    '下载页卡片真的渲染出「已下 2 / 共 12」+「缺 03 …」',
   )
   check(
     /sections\s*=\s*computed/.test(downloadsPageSource) &&

@@ -231,7 +231,64 @@ export function episodeOrder(episode) {
 }
 
 /**
- * 归档目录（**新下载用这一套**，命名规范见 docs/ARCHITECTURE.md §7 决策 38）
+ * 集号 → 覆盖的集数（`'04'` → [4]；`'01-12'` → 1..12；认不出 → []）
+ * 上限兜底：长篇合集（`01-1200`）不该把数组撑爆，超出就截断。
+ */
+export function episodesOf(episode, limit = 2000) {
+  const text = String(episode || '').trim()
+  if (!text) return []
+  const range = text.match(/^(\d+)-(\d+)$/)
+  if (range) {
+    const from = Number(range[1])
+    const to = Number(range[2])
+    if (!from || to < from) return []
+    const out = []
+    for (let n = from; n <= to && out.length < limit; n++) out.push(n)
+    return out
+  }
+  const single = text.match(/^(\d+)$/)
+  return single ? [Number(single[1])] : []
+}
+
+/**
+ * 已下的集号 vs 总集数 → 缺哪几集（下载页卡片上那句「缺 03 07」）
+ * ---------------------------------------------------------------------------
+ * 三条刻意的规则：
+ *   · 总集数未知（剧场版 / BGM 没登记）→ 不判缺集（返回空数组，不是"全缺"）
+ *   · 一条集号都解析不出来 → parsed=0，调用方据此不显示「已下 0 / 共 13」
+ *     （文件在盘上、只是名字里没有集号，说"全缺"是假警报）
+ *   · 累积集号的季度：文件写 S02 的 14~25，而库里这一季登记 13 话 ——
+ *     全部集号都大于总集数时按最小值整体平移到 1 起（14~25 → 1~12），
+ *     否则会误报「一集都没下」
+ * @param {string[]} episodes 已下载条目的集号（`episodeOf` 的产物）
+ * @param {number} totalEpisodes 库里登记的总集数
+ * @returns {{ have: number, missing: number[], parsed: number }}
+ */
+export function missingEpisodesOf(episodes, totalEpisodes) {
+  const total = Number(totalEpisodes) || 0
+  if (!total) return { have: 0, missing: [], parsed: 0 }
+
+  const numbers = []
+  for (const episode of episodes || []) numbers.push(...episodesOf(episode))
+  if (!numbers.length) return { have: 0, missing: [], parsed: 0 }
+
+  /** 累积集号 → 平移到 1 起（只在这一季的文件全都超出总集数时才平移，避免误伤单集漏号） */
+  const offset = numbers.every((n) => n > total) ? Math.min(...numbers) - 1 : 0
+
+  const have = new Set()
+  for (const n of numbers) {
+    const value = n - offset
+    if (value >= 1 && value <= total) have.add(value)
+  }
+  const missing = []
+  for (let n = 1; n <= total; n++) {
+    if (!have.has(n)) missing.push(n)
+  }
+  return { have: have.size, missing, parsed: numbers.length }
+}
+
+/**
+ * 归档目录（新下载用这一套，命名规范见 docs/ARCHITECTURE.md §7 决策 38）
  * ---------------------------------------------------------------------------
  * `{root}/{番名}/Season 01`（旧写法是 `SE01`，批量迁移以后再补）
  * 剧场版 / 认不出集数（season=0）：不建季目录，直接落在 `{番名}` 下

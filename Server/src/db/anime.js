@@ -216,6 +216,27 @@ export const maxUpdatedAt = (year, season) => stmt.maxUpdatedAt.get(val(year), v
 /** 全库条目数（排错/统计用） */
 export const countAll = () => stmt.countAll.get().n
 
+/**
+ * 按关键词搜作品（搜索页用）
+ * ---------------------------------------------------------------------------
+ * 只搜标题（BGM 中文名 / Mikan 标题 / BGM 原名），不搜简介 —— 用户输入的是名字片段。
+ * 排序：有评分在前、评分高的在前，同分按最近更新（比按 id 更贴近"最近在看"）。
+ * 上限 30：搜索是给人挑的，不是导出；多了既慢又没人翻。
+ */
+export function searchByKeyword(keyword, limit = 30) {
+  const text = String(keyword || '').trim()
+  if (!text) return []
+  const like = `%${text}%`
+  return db
+    .prepare(
+      `SELECT * FROM v_anime
+        WHERE title_bgm LIKE ? OR title_mikan LIKE ? OR title_bgm_origin LIKE ?
+        ORDER BY score IS NULL, score DESC, updated_at DESC
+        LIMIT ?`,
+    )
+    .all(like, like, like, Number(limit) || 30)
+}
+
 export const findByMikanId = (mikanId) => stmt.byMikanId.get(val(mikanId)) ?? null
 export const findByBgmId = (bgmId) => stmt.byBgmId.get(val(bgmId)) ?? null
 /** 按番名（中文名或原名，完全相等）找 —— 下载页把老种子认回作品用 */

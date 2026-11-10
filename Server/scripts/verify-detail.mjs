@@ -123,7 +123,22 @@ try {
   const again = (await get(`/api/anime/${card.id}`)).body?.data
   check(JSON.stringify(again) === JSON.stringify(detail), '重复请求结果一致（纯读库，不触发上游）')
 
-  /* ── 系列（面板标题旁那个 chip）：**没算过就现场跑一遍**（用户看了啥、库里没有就补一遍）
+  /* ── 搜索（搜索页的数据源）：按标题片段搜，返回与首页同构的卡片 ─────── */
+  const found = await get(`/api/anime?q=${encodeURIComponent(card.title)}`)
+  const foundItems = found.body?.data?.items || []
+  check(found.res.ok && found.body?.data?.q === card.title, `搜索接口可用 → q=${card.title}`)
+  check(foundItems.some((it) => it.id === card.id), '用完整标题能搜到它自己')
+  check(foundItems.length > 0 && foundItems.length <= 30, `结果有上限（≤ 30 条）→ ${foundItems.length} 条`)
+  check(
+    foundItems.every((it) => 'id' in it && 'title' in it && 'poster' in it && 'metaText' in it),
+    '搜索结果与首页卡片同构（id / title / poster / metaText）',
+  )
+  const emptyQ = await get('/api/anime?q=')
+  check(emptyQ.res.status === 400 && emptyQ.body?.error?.code === 'BAD_REQUEST', '搜索：空 q → 400 / BAD_REQUEST')
+  const longQ = await get(`/api/anime?q=${encodeURIComponent('あ'.repeat(81))}`)
+  check(longQ.res.status === 400, '搜索：q 超 80 字 → 400')
+
+  /* ── 系列（面板标题旁那个 chip）：没算过就现场跑一遍（用户看了啥、库里没有就补一遍）
    * 两种结论都合法：① 现算出系列（items ≥ 2）② 这部确实没有同系列其它成员（null）。
    * 不允许的只有两件事：500 / 返回只有它自己的单成员系列。 */
   const seriesRes = await get(`/api/anime/${card.id}/series`)

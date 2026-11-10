@@ -1,7 +1,7 @@
 /**
  * 下载（qBittorrent）聚合层 —— 下载页要的数据全部在这里拼
  * ---------------------------------------------------------------------------
- * **qB 是事实来源**：库里的 `anime` 只用来补「这是哪部番 / 海报 / 总集数」，
+ * qB 是事实来源：库里的 `anime` 只用来补「这是哪部番 / 海报 / 总集数」，
  * 不存下载状态（存了就必然和 qB 打架，还要写同步任务）。
  *
  * 三条接口对得上页面的两层结构：
@@ -18,6 +18,7 @@ import {
   episodeOrder,
   kindOf,
   mikanIdOf,
+  missingEpisodesOf,
   percentOf,
   seasonIndexOf,
   sizeText,
@@ -102,6 +103,19 @@ function cardOf(row, torrents) {
   const latest = items.map((it) => episodeOrder(it.episode)).filter(Boolean).sort((a, b) => b - a)[0] || 0
   const sizeBytes = items.reduce((n, it) => n + it.sizeBytes, 0)
   const seasons = [...new Set(items.map((it) => it.season))].sort((a, b) => a - b)
+  const totalEpisodes = Number(row.total_episodes) || 0
+
+  /* 缺哪集：已下的集号（合集按区间展开）对着库里的总集数数一遍。
+     文案在这里定稿（前端不拼数字）：卡片上就是「已下 8 / 共 12」+「缺 03 07」。 */
+  const { have, missing: missingEps, parsed } = missingEpisodesOf(items.map((it) => it.episode), totalEpisodes)
+  const progressText = totalEpisodes && parsed ? `已下 ${have} / 共 ${totalEpisodes}` : ''
+  const missingText = !progressText
+    ? ''
+    : !missingEps.length
+      ? '已齐'
+      : missingEps.length > 12
+        ? `缺 ${missingEps.length} 集`
+        : `缺 ${missingEps.map((n) => String(n).padStart(2, '0')).join(' ')}`
 
   /** 一张卡只能有一个状态：还在下 → 下载中；有丢失 → 文件丢失；否则已完成 */
   const state = downloading.length ? 'downloading' : missing.length ? 'missing' : 'done'
@@ -116,7 +130,13 @@ function cardOf(row, torrents) {
     downloadingCount: downloading.length,
     missingCount: missing.length,
     latestEpisode: latest,
-    totalEpisodes: Number(row.total_episodes) || 0,
+    totalEpisodes,
+    /** 已下的集数（去重、只算 1..总集数）与缺的集号（前 12 个，够界面列） */
+    haveEpisodes: have,
+    missingCount: missingEps.length,
+    missingEpisodes: missingEps.slice(0, 12),
+    progressText,
+    missingText,
     episodes: items.map((it) => it.episode).filter(Boolean),
     seasons,
     season: seasons[0] ?? 0,

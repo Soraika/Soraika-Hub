@@ -67,7 +67,15 @@
                 :meta-text="metaOf(item)"
                 :selected="item.id === activeAnimeId"
                 @click="$emit('open-anime', item)"
-              />
+              >
+                <!-- 缺哪集：库里有总集数才给（剧场版 / 没登记的不瞎猜） -->
+                <template v-if="item.progressText" #footer>
+                  <div class="ep-progress" :class="{ complete: !item.missingCount }">
+                    <span class="ep-count">{{ item.progressText }}</span>
+                    <span class="ep-missing" :title="missingTitle(item)">{{ item.missingText }}</span>
+                  </div>
+                </template>
+              </PosterCard>
             </template>
           </CardGrid>
         </section>
@@ -106,7 +114,7 @@ import BackToTop from '@/components/ui/BackToTop.vue'
  * 下载页 —— 与首页同构：顶部栏 + 卡片墙，点海报在右侧面板看详情
  * ---------------------------------------------------------------------------
  * 与首页唯一的差别是「点开后面板显示什么」：那边是 Mikan 的资源列表，
- * 这边是**已下载的文件**（按字幕组分组）。所以本页只上抛 `open-anime`，
+ * 这边是已下载的文件（按字幕组分组）。所以本页只上抛 `open-anime`，
  * 由容器决定面板用哪个数据源（见 App.vue 的 panelSource）。
  *
  * 数据全部来自 props（容器调 useDownloads 取），页面只负责分组与文案。
@@ -158,13 +166,20 @@ function badgeOf(item) {
 /** 配色只用三种（下载中=热、已完成=中性、异常=提示），别一张卡一个颜色 */
 const badgeToneOf = (item) => (item.state === 'downloading' ? 'hot' : item.state === 'missing' ? 'try' : 'neutral')
 
-/** 卡片底下那行：最新第几集 · 体积 · 总集数（有就写） */
+/** 卡片底下那行：最新第几集 · 体积（总集数/缺集在 footer 那一行，信息行不塞太多） */
 function metaOf(item) {
   const parts = []
   if (item.latestEpisode) parts.push(`最新 ${item.latestEpisode}`)
   if (item.sizeText) parts.push(item.sizeText)
-  if (item.totalEpisodes) parts.push(`共 ${item.totalEpisodes} 话`)
+  if (item.totalEpisodes && !item.progressText) parts.push(`共 ${item.totalEpisodes} 话`)
   return parts.join(' · ')
+}
+
+/** 缺集那一行的悬停说明：列出前几个集号（后端只带 12 个，够看） */
+function missingTitle(item) {
+  if (!item.missingCount) return ''
+  const list = (item.missingEpisodes || []).map((n) => String(n).padStart(2, '0')).join(' ')
+  return item.missingCount > (item.missingEpisodes || []).length ? `缺 ${item.missingCount} 集：${list} …` : `缺：${list}`
 }
 
 /** 速度：qB 给的是字节/秒 → `1.2 MB/s`；0 就写「0」 */
@@ -351,6 +366,33 @@ function speedText(bytes) {
   font-size: 0.72rem;
   font-weight: 400;
 }
+
+/* 缺哪集：卡片底部一行 —— 左边「已下 x / 共 y」，右边缺的集号（已齐时变中性色） */
+.ep-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+.ep-count {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.ep-missing {
+  min-width: 0;
+  color: var(--accent-strong);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ep-progress.complete .ep-missing {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
 
 /* 未识别：一行一个目录，长名字省略（完整名看 title） */
 .unmatched {

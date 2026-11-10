@@ -17,8 +17,10 @@ import {
   buildTags,
   episodeOf,
   episodeOrder,
+  episodesOf,
   kindOf,
   mikanIdOf,
+  missingEpisodesOf,
   seasonIndexOf,
   sizeText,
   splitSavePath,
@@ -69,6 +71,17 @@ check(episodeOf('相反的你和我 S02E23.mkv') === '23', `SxxEyy → ${episode
 check(episodeOf('[Nekomoe kissaten][Yuru Camp][01-12END][1080p]') === '01-12', '合集范围 → 01-12')
 check(episodeOrder('01-12') === 12, `合集按区间右端排序 → ${episodeOrder('01-12')}`)
 check(episodeOrder('04') === 4 && episodeOrder('') === 0, '单集按数字排序，认不出排最后')
+
+/* 缺哪集：已下集号（合集按区间展开）对着总集数数一遍 —— 下载页卡片上那句「缺 03 07」 */
+check(episodesOf('04').join() === '4' && episodesOf('01-03').join() === '1,2,3', '集号 → 集数集合（合集按区间展开）')
+check(episodesOf('').length === 0 && episodesOf('特典').length === 0, '认不出集号 → 空集合（不瞎算）')
+const gap = missingEpisodesOf(['01', '03', '01-05'], 6)
+check(gap.have === 5 && gap.missing.join() === '6', `已下 5 / 共 6 → 缺 ${gap.missing.join()}`)
+check(missingEpisodesOf(['01-12'], 12).missing.length === 0, '整季合集 → 不缺（卡片写「已齐」）')
+check(missingEpisodesOf([], 0).missing.length === 0, '总集数未知 → 不判缺集（剧场版不该显示「缺 1 集」）')
+check(missingEpisodesOf(['01-13'], 12).have === 12, '合集比总集数长 → 多出来的不算错')
+check(missingEpisodesOf(['14', '15', '16'], 3).have === 3, '累积集号（S02 的 14~16 对一季 3 话）→ 平移到 1 起，不误报全缺')
+check(missingEpisodesOf(['特典'], 12).parsed === 0, '一个集号都解析不出 → parsed=0（卡片不显示「已下 0」）')
 
 /* 目录与状态 */
 const split = splitSavePath('/downloads/anime/碧蓝之海/SE03')
@@ -174,7 +187,7 @@ try {
   console.log(configured ? '  （qB 已配置，跑真数据断言）' : '  （qB 未配置：只验空结构）')
   if (configured) {
     const v = status.body.data.versions || {}
-    check(Boolean(v.app && v.api), `**两个版本都回**（应用 ${v.app} / WebAPI ${v.api}）`)
+    check(Boolean(v.app && v.api), `两个版本都回（应用 ${v.app} / WebAPI ${v.api}）`)
     check(/^v?\d+\.\d+/.test(v.app), `应用版本是版本号形状 → ${v.app}`)
   }
 

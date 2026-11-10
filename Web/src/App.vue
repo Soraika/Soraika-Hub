@@ -50,10 +50,12 @@ import AppSideNav from '@/components/layout/AppSideNav.vue'
 import AnimeDetailPanel from '@/components/detail/AnimeDetailPanel.vue'
 import HomePage from '@/pages/HomePage.vue'
 import DiscoverPage from '@/pages/DiscoverPage.vue'
+import SearchPage from '@/pages/SearchPage.vue'
 import DownloadsPage from '@/pages/DownloadsPage.vue'
 import SettingsPage from '@/pages/SettingsPage.vue'
 import StateBlock from '@/components/ui/StateBlock.vue'
 import { useSchedule } from '@/composables/useSchedule'
+import { useSearch } from '@/composables/useSearch'
 import { useAnimeDetail } from '@/composables/useAnimeDetail'
 import { useDownloads } from '@/composables/useDownloads'
 import { fetchQbStatus } from '@/api/downloads'
@@ -67,11 +69,16 @@ const activeNav = ref('home')
 const PAGES = {
   home: { component: HomePage },
   discover: { component: DiscoverPage },
+  search: { component: SearchPage },
   downloads: { component: DownloadsPage },
   settings: { component: SettingsPage },
 }
 
 const page = computed(() => PAGES[activeNav.value] || null)
+
+// ── 搜索页数据（词 → 卡片；防抖与乱序保护都在 useSearch 里）──────────────
+// 放在容器而不是页面里：首页顶栏搜完跳过来时，词和结果都已经在，页面一挂载就是"已有结果"
+const search = useSearch()
 
 // ── 首页排期数据（库里优先，后端负责抓取与落库） ──────────────────────────
 const schedule = useSchedule()
@@ -166,12 +173,35 @@ const pageProps = computed(() => {
       activeAnimeId: activeAnimeId.value,
       onSelectSeason: (year, season) => schedule.selectSeason(year, season),
       onReload: () => schedule.reload(),
-      // 首页点海报 → 面板读**没下载的资源**（Mikan 现取）
+      // 首页点海报 → 面板读没下载的资源（Mikan 现取）
       onOpenAnime: (item) => {
         panelSource.value = 'mikan'
         openAnime(item.id)
       },
-      // TODO(搜索页)：落地后在这里接上跳转（不在前端打 console）
+      // 顶栏搜索：跳到搜索页并把词带过去（页面一挂载就是结果，不用再敲一次）
+      onSearch: (value) => {
+        activeNav.value = 'search'
+        search.apply(value)
+      },
+    }
+  }
+
+  if (activeNav.value === 'search') {
+    return {
+      keyword: search.keyword.value,
+      items: search.items.value,
+      uiState: search.uiState.value,
+      errorText: search.error.value?.message || '',
+      activeAnimeId: activeAnimeId.value,
+      onInput: (value) => search.onInput(value),
+      // 回车 / 点按钮：立刻搜（不等防抖）
+      onSubmit: (value) => search.submit(value),
+      onRetry: () => search.retry(),
+      // 结果点海报：和首页一致，读没下载的资源
+      onOpenAnime: (item) => {
+        panelSource.value = 'mikan'
+        openAnime(item.id)
+      },
     }
   }
 
@@ -182,7 +212,7 @@ const pageProps = computed(() => {
       refreshing: downloads.refreshing.value,
       polling: downloads.polling.value,
       activeAnimeId: activeAnimeId.value,
-      // 下载页点海报 → 面板读**已经下载的文件**（同一个面板，换数据源）
+      // 下载页点海报 → 面板读已经下载的文件（同一个面板，换数据源）
       onOpenAnime: (item) => {
         panelSource.value = 'downloads'
         openAnime(item.id)

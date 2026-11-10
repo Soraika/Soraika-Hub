@@ -4,6 +4,8 @@
  */
 import { Router } from 'express'
 import { getAnimeDetail, getAnimeSeries, getAnimeSubgroups, getSubgroupReleases } from '../api/pages/anime.js'
+import { searchByKeyword } from '../db/anime.js'
+import { toCardItem } from '../api/mappers/home.js'
 import { fail } from '../lib/errors.js'
 
 export const animeRouter = Router()
@@ -14,6 +16,25 @@ function animeIdOf(req) {
   if (!Number.isInteger(id) || id <= 0) throw fail('BAD_REQUEST', 'id 需要是正整数')
   return id
 }
+
+/**
+ * GET /api/anime?q=关键词 —— 搜索页用
+ * ---------------------------------------------------------------------------
+ * 只搜标题（BGM 中文名 / Mikan 标题 / BGM 原名），返回卡片 DTO（与首页同一个映射），
+ * 前端拿到的形状和首页卡片一致 —— 搜索页不用写第二套渲染。
+ * 空 q → 400：不做"返回全部"，那是另一个接口，别让搜索页变成全量导出。
+ */
+animeRouter.get('/anime', (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim()
+    if (!q) throw fail('BAD_REQUEST', 'q 不能为空')
+    if (q.length > 80) throw fail('BAD_REQUEST', 'q 太长（上限 80 字）')
+    const rows = searchByKeyword(q, 30)
+    res.json({ ok: true, data: { q, total: rows.length, items: rows.map(toCardItem) } })
+  } catch (err) {
+    next(err)
+  }
+})
 
 /**
  * GET /api/anime/:id

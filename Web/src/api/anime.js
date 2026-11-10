@@ -55,3 +55,13 @@ export function fetchSubgroupReleases(id, subgroupId) {
     timeout: 20000,
   })
 }
+
+/**
+ * 搜索作品（搜索页用）
+ * 只搜标题（BGM 中文名 / Mikan 标题 / BGM 原名）；返回的 item 与首页卡片是同一个 DTO
+ * @param {string} q 关键词
+ * @returns {Promise<{ q:string, total:number, items:Array<object> }>}
+ */
+export function searchAnime(q) {
+  return apiGet('/api/anime', { params: { q }, timeout: 10000 })
+}
