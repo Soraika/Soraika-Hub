@@ -134,6 +134,15 @@ try {
   )
   check(hitSearch.includes(firstItem.title), `搜索页结果渲染真卡片 → 「${firstItem.title}」`)
   check(hitSearch.includes(`${searchItems.length} 部作品`), `搜索页显示结果条数 → ${searchItems.length}`)
+  const searchPageSource = readFileSync(new URL('../src/pages/SearchPage.vue', import.meta.url), 'utf8')
+  check(
+    searchPageSource.includes('ai-toggle') && searchPageSource.includes('intentChips') && searchPageSource.includes('toggle-ai'),
+    '搜索页有 AI 开关 + 「AI 理解」说明（可解释，不是黑盒）',
+  )
+  check(
+    readFileSync(new URL('../src/api/anime.js', import.meta.url), 'utf8').includes('/api/anime/ai-search'),
+    'AI 搜索走独立接口（AI 只解析意图，结果仍由确定性搜索给出）',
+  )
   const emptySearch = await renderToString(
     createSSRApp({ render: () => h(SearchPage, { keyword: 'zzz', items: [], uiState: 'empty' }) }),
   )

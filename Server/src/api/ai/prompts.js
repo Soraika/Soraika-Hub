@@ -24,8 +24,8 @@ export const DEFAULT_FILE = fileURLToPath(new URL('./prompts.json', import.meta.
 /** 用户覆盖（不进 git；存在即生效） */
 export const OVERRIDE_FILE = fileURLToPath(new URL('../../../data/prompts.json', import.meta.url))
 
-/** 四个能力各自的键（顺序 = 设置页/文档里的展示顺序） */
-export const PROMPT_KEYS = ['bundle', 'series', 'format', 'groupTags']
+/** 五个能力各自的键（顺序 = 设置页/文档里的展示顺序） */
+export const PROMPT_KEYS = ['bundle', 'series', 'format', 'groupTags', 'search']
 
 const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'))
 

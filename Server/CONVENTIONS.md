@@ -215,6 +215,11 @@ AI 是**可选功能**：没配 `AI_API_KEY` 也照常跑 —— 相关接口回
   标签 30 分钟 / 集数 24 小时；**标签与集数合并成一次调用**（一次返回 `{ tags, episodes }`，省一半请求），
   批次按输出体量定（120 条时输出很长、必要时降到 60），输出被截断的表现是 `PARSE`
 - **prompt 与结果解析留在能力层**；`extractJson` 抠不出 JSON 归 `PARSE`（重试没用，要改 prompt）
+- **自然语言搜索只翻译意图**：`POST /api/anime/ai-search`（也是 MCP 工具 `anime_search`）让模型输出
+  `{ keyword, year, season, weekday, minScore, tags, picks, reason }`，结果仍由确定性搜索给出。
+  三条硬规则：① `picks` **只能从服务端给的候选池里挑**（`db/anime.js#searchCandidates`），编造的 id 一律丢；
+  ② 关键词取自候选标题（`exactTitle`）时忽略模型给的筛选条件（实测它会顺手塞一个没人要的 `weekday=0`）；
+  ③ 没配 AI → 501，前端退回关键词搜索，不把「未配置」当失败。
 - **对外协议**：`GET /api/ai/tools`（MCP `tools/list` 形状）、`POST /api/ai/call`（`tools/call` 形状），
   包 MCP server 的完整做法见 `docs/MCP.md`
 - **key 不外泄**：`/api/health` 与 `/api/ai/tools` 只给 `enabled` / `model`，没启用时连 baseUrl 都不给

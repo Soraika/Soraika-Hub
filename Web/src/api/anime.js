@@ -65,3 +65,16 @@ export function fetchSubgroupReleases(id, subgroupId) {
 export function searchAnime(q) {
   return apiGet('/api/anime', { params: { q }, timeout: 10000 })
 }
+/**
+ * AI 搜索（自然语言 → 关键词/筛选条件 → 确定性搜索）
+ * AI 只做意图翻译；返回的 items 与普通搜索同构，额外带 `intent`（AI 的理解，给界面解释用）。
+ * 没配 AI → 501 AI_DISABLED，前端应退回普通搜索。
+ * @param {string} q 用户原话
+ * @returns {Promise<{ q:string, intent:{ keyword:string, year:number|null, season:string|null,
+ *   weekday:number|null, minScore:number|null, tags:string[], picks:number[], reason:string,
+ *   model:string, cached:boolean }, items:Array<object>, total:number }>}
+ */
+export function aiSearchAnime(q) {
+  return apiGet('/api/anime/ai-search', { params: { q }, timeout: 20000 })
+}
+

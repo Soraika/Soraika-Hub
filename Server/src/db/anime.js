@@ -328,6 +328,126 @@ function typoSearch(text, limit = 30) {
 }
 
 /**
+ * AI 搜索的候选池（**AI 只能从这里面挑**，防止它编造不存在的番）
+ * ---------------------------------------------------------------------------
+ * 打分：分词命中（重要）+ 单字重合（容忍错字/只记得大概）；
+ * 一个都没命中（典型：「推荐几部百合」）时补一组高评分番，否则 AI 手里没有可挑的东西。
+ * 只给 AI 需要的最小字段（id / 标题 / 年季 / 评分），不带简介 —— 省 token。
+ * @param {string} keyword
+ * @param {number} [limit]
+ */
+export function searchCandidates(keyword, limit = 40) {
+  const text = normalizeKeyword(keyword)
+  if (!text) return []
+  const terms = splitTerms(keyword)
+  const chars = [...new Set(text.replace(/\s+/g, ''))].filter((ch) => /[\u3400-\u9fff\u3040-\u30ffa-z0-9]/i.test(ch))
+  const picked = []
+  const seen = new Set()
+
+  /* 先放「普通搜索（含分词 / 编辑距离兜底）已经认出来的」—— 打错一个字的情况直接排最前 */
+  for (const row of searchByKeyword(keyword, Math.min(12, limit))) {
+    if (seen.has(row.id)) continue
+    seen.add(row.id)
+    picked.push({ row, score: 0 })
+  }
+
+  const rows = db.prepare('SELECT * FROM v_anime').all()
+  const queryFlat = text.replace(/\s+/g, '')
+  const scored = []
+  for (const row of rows) {
+    if (seen.has(row.id)) continue
+    const title = normalizeKeyword(row.title_bgm || row.title_mikan || row.title_bgm_origin || '')
+    if (!title) continue
+    let termHit = 0
+    for (const term of terms) if (title.includes(term)) termHit++
+    let charHit = 0
+    for (const ch of chars) if (title.includes(ch)) charHit++
+    // 开头重合的字权更高：「上伊那牡丹」与「上依娜」开头就对上，比标题里恰巧有个「娜」的更相关
+    let prefix = 0
+    while (prefix < queryFlat.length && prefix < title.length && queryFlat[prefix] === title[prefix]) prefix++
+    const score = termHit * 10 + charHit + prefix * 2
+    if (score > 0) scored.push({ row, score })
+  }
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      (Number(b.row.score) || -1) - (Number(a.row.score) || -1) ||
+      Number(b.row.id) - Number(a.row.id),
+  )
+  for (const item of scored) {
+    if (picked.length >= limit) break
+    if (seen.has(item.row.id)) continue
+    seen.add(item.row.id)
+    picked.push(item)
+  }
+
+  /* 还是太少（典型：「推荐几部百合」）→ 补一组高评分番，否则 AI 手里没有可挑的东西 */
+  if (picked.length < 10) {
+    const top = db
+      .prepare(
+        `SELECT * FROM v_anime WHERE score IS NOT NULL
+          ORDER BY score DESC, updated_at DESC LIMIT ?`,
+      )
+      .all(Math.max(10, limit - picked.length))
+    for (const row of top) {
+      if (seen.has(row.id)) continue
+      seen.add(row.id)
+      picked.push({ row, score: 0 })
+    }
+  }
+  return picked.slice(0, limit).map(({ row }) => ({
+    id: row.id,
+    title: row.title_bgm || row.title_mikan || row.title_bgm_origin || '',
+    year: row.year ?? null,
+    season: row.season || '',
+    score: row.score ?? null,
+    tags: parseJsonTags(row.tags),
+  }))
+}
+
+/** `tags` 列是 JSON 数组字符串 → 数组（坏数据当空） */
+function parseJsonTags(value) {
+  try {
+    const list = JSON.parse(String(value || '[]'))
+    return Array.isArray(list) ? list.slice(0, 4).map(String) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 按筛选条件列一批（AI 搜索在「关键词搜不到但用户给了年/季/评分/题材」时用它兜底）
+ * @param {{ year?: number|null, season?: string|null, weekday?: number|null, minScore?: number|null, tags?: string[] }} filters
+ */
+export function listByFilters(filters = {}, limit = 60) {
+  const where = []
+  const params = []
+  if (filters.year) {
+    where.push('year = ?')
+    params.push(Number(filters.year))
+  }
+  if (filters.season) {
+    where.push('season = ?')
+    params.push(String(filters.season))
+  }
+  if (filters.weekday != null) {
+    where.push('weekday = ?')
+    params.push(Number(filters.weekday))
+  }
+  if (filters.minScore != null) {
+    where.push('score >= ?')
+    params.push(Number(filters.minScore))
+  }
+  for (const tag of (filters.tags || []).slice(0, 3)) {
+    where.push('tags LIKE ?')
+    params.push(`%${tag}%`)
+  }
+  const sql = `SELECT * FROM v_anime ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+                ORDER BY score IS NULL, score DESC, updated_at DESC LIMIT ?`
+  return db.prepare(sql).all(...params, Number(limit) || 60)
+}
+
+/**
  * 按关键词搜作品（搜索页用）
  * ---------------------------------------------------------------------------
  * 支持「模糊」的四层：
@@ -338,7 +458,7 @@ function typoSearch(text, limit = 30) {
  * 数据量是几千行，LIKE 足够快（不引 FTS5：中文分词反而更差，还多一张要同步的表）。
  * 上限 30：搜索是给人挑的，不是导出；取 200 条候选再排序，够用且稳定。
  */
-export function searchByKeyword(keyword, limit = 30) {
+export function searchByKeyword(keyword, limit = 30, { fuzzy = true } = {}) {
   const text = normalizeKeyword(keyword)
   const terms = splitTerms(keyword)
   if (!text || !terms.length) return []
@@ -361,7 +481,7 @@ export function searchByKeyword(keyword, limit = 30) {
     .slice(0, Number(limit) || 30)
     .map((hit) => hit.row)
 
-  return ranked.length ? ranked : typoSearch(text, limit)
+  return ranked.length || !fuzzy ? ranked : typoSearch(text, limit)
 }
 
 export const findByMikanId = (mikanId) => stmt.byMikanId.get(val(mikanId)) ?? null

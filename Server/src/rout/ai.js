@@ -115,6 +115,8 @@ const PROMPT_CONTRACT = {
   series: ['namingStyle', 'rootTitle', 'extras'],
   format: ['prefix', 'literals'],
   groupTags: ['{{NAMES}}'],
+  // 搜索意图：只要求「关键词 / 推荐 id / 理由」三项，其余筛选项都是可选的
+  search: ['"keyword"', '"picks"', '"reason"'],
 }
 
 /** 返回缺失的字段名（空数组 = 结构说明还在） */

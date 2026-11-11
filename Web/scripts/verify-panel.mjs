@@ -190,10 +190,11 @@ const PROMPT_TEXT = {
   series: '你在给一个动画系列做归档命名。输出 { "namingStyle": "", "rootTitle": "", "extras": [] }',
   format: '你在看一批来自同一个字幕组的资源文件名。输出 { "prefix": "", "literals": [] }',
   groupTags: '把组标记对应到库里的组名（只能从下面的列表里选）。{{NAMES}}',
+  search: '把用户的一句话翻译成查询意图。输出 { "keyword": "", "picks": [], "reason": "" }',
 }
 const PROMPTS = {
   source: 'override',
-  keys: ['bundle', 'series', 'format', 'groupTags'],
+  keys: ['bundle', 'series', 'format', 'groupTags', 'search'],
   customized: ['bundle', 'series'],
   prompts: Object.fromEntries(
     Object.entries(PROMPT_TEXT).map(([key, system]) => {
@@ -414,8 +415,8 @@ console.log('\n— 设置页：提示词（只编辑用户补充）')
   check(!realErrors(errors).length, '渲染期没有异常', realErrors(errors)[0] || 'ok')
   check(!text.includes('正在读提示词'), '不在加载态', text.includes('正在读提示词') ? '卡在加载 ✗' : 'ok')
   check(
-    ['标签 + 集数', '系列归一', '格式特征', '组标记 → 组名'].every((t) => text.includes(t)),
-    '四个页签都在',
+    ['标签 + 集数', '系列归一', '格式特征', '组标记 → 组名', '搜索意图'].every((t) => text.includes(t)),
+    '五个页签都在',
   )
   check(text.includes('有改动（用着你的版本）'), '顶部胶囊显示「有改动」（source=override）')
 

@@ -8,7 +8,7 @@
  *   · 空关键词不算"空结果"：输入框清空时回到 idle（提示语），不要显示「没有找到」
  */
 import { computed, ref } from 'vue'
-import { searchAnime } from '@/api/anime'
+import { aiSearchAnime, searchAnime } from '@/api/anime'
 
 export function useSearch({ debounceMs = 300 } = {}) {
   const keyword = ref('')
@@ -20,6 +20,12 @@ export function useSearch({ debounceMs = 300 } = {}) {
   const searched = ref(false)
   /** 上一次真正发出去的关键词（空输入时用它清空结果） */
   const lastQuery = ref('')
+  /** AI 模式：开着时先让 AI 把话翻译成关键词/筛选条件 */
+  const aiMode = ref(false)
+  /** AI 的理解（keyword / 筛选 / 推荐来源 / reason）；普通搜索时为 null */
+  const intent = ref(null)
+  /** AI 没接上（未配置 / 跑偏）时的说明 —— 界面据此告诉用户「已退回关键词搜索」 */
+  const aiNote = ref('')
 
   let seq = 0
   let timer = 0
@@ -30,6 +36,15 @@ export function useSearch({ debounceMs = 300 } = {}) {
     if (!searched.value) return 'idle'
     return items.value.length ? 'ready' : 'empty'
   })
+
+  /** 开关 AI 模式：关掉时把「AI 的理解」一并清掉，免得界面留着上一轮的说明 */
+  function setAiMode(value) {
+    aiMode.value = Boolean(value)
+    if (!aiMode.value) {
+      intent.value = null
+      aiNote.value = ''
+    }
+  }
 
   async function run(text = keyword.value) {
     const q = String(text || '').trim()
@@ -42,15 +57,38 @@ export function useSearch({ debounceMs = 300 } = {}) {
       error.value = null
       loading.value = false
       lastQuery.value = ''
+      intent.value = null
+      aiNote.value = ''
       return
     }
     const mine = ++seq
     loading.value = true
     error.value = null
     try {
-      const res = await searchAnime(q)
-      if (mine !== seq) return // 已经有更新的搜索了
-      items.value = res.items ?? []
+      if (aiMode.value) {
+        try {
+          const res = await aiSearchAnime(q)
+          if (mine !== seq) return
+          items.value = res.items ?? []
+          intent.value = res.intent ?? null
+          aiNote.value = ''
+        } catch (err) {
+          if (mine !== seq) return
+          // AI 没配 / 跑偏 → 退回普通搜索：用户要的是「搜到东西」，不是看错误
+          aiNote.value =
+            err?.code === 'AI_DISABLED' ? 'AI 未配置，已按关键词搜索' : 'AI 没理解这次请求，已按关键词搜索'
+          intent.value = null
+          const res = await searchAnime(q)
+          if (mine !== seq) return
+          items.value = res.items ?? []
+        }
+      } else {
+        const res = await searchAnime(q)
+        if (mine !== seq) return // 已经有更新的搜索了
+        items.value = res.items ?? []
+        intent.value = null
+        aiNote.value = ''
+      }
       lastQuery.value = q
       searched.value = true
     } catch (err) {
@@ -86,5 +124,19 @@ export function useSearch({ debounceMs = 300 } = {}) {
     return run(keyword.value || lastQuery.value)
   }
 
-  return { keyword, items, loading, error, uiState, onInput, submit, apply, retry }
+  return {
+    keyword,
+    items,
+    loading,
+    error,
+    uiState,
+    aiMode,
+    intent,
+    aiNote,
+    setAiMode,
+    onInput,
+    submit,
+    apply,
+    retry,
+  }
 }

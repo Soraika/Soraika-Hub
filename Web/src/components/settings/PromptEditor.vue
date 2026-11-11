@@ -65,7 +65,7 @@
           class="prompt-link"
           type="button"
           :disabled="saving"
-          title="四段全部恢复出厂默认（删除 data/prompts.json）"
+          title="全部段落恢复出厂默认（删除 data/prompts.json）"
           @click="askRestore('*')"
         >
           <IconRestore :size="13" /> 全部恢复默认
@@ -122,6 +122,12 @@ const TABS = [
     hint: '把文件名开头的组标记对应到库里的组名；系统段里的 {{NAMES}} 是字典占位符。',
     example: '例如：库里没有的组一律给 null，不要新造名字。',
   },
+  {
+    key: 'search',
+    label: '搜索意图',
+    hint: '把用户的一句话翻译成关键词与筛选条件（年 / 季 / 评分 / 题材 / 推荐 id）；候选池由本地先缩小。',
+    example: '例如：用户打错字时按候选里最像的那部来；推荐时优先高分、有中文名的。',
+  },
 ]
 
 const {
@@ -152,7 +158,7 @@ const onSave = () => save()
 
 /** 恢复默认会真的写盘，所以确认一次 */
 function askRestore(which) {
-  const label = which === '*' ? '四段提示词' : `「${TABS.find((t) => t.key === which)?.label}」这段的补充要求`
+  const label = which === '*' ? '全部提示词' : `「${TABS.find((t) => t.key === which)?.label}」这段的补充要求`
   if (!window.confirm(`把${label}恢复成出厂默认？\n你写的补充会被删除。`)) return
   if (which === '*') restoreAll()
   else restoreOne(which)

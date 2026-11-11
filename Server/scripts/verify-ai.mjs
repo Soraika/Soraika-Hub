@@ -85,6 +85,11 @@ try {
   )
   check(tools.tools.some((t) => t.name === 'anime_release_tags'), '清单里有 anime_release_tags')
   check(tools.tools.some((t) => t.name === 'anime_episode_meta'), '清单里有 anime_episode_meta')
+  check(tools.tools.some((t) => t.name === 'anime_search'), '清单里有 anime_search（自然语言搜索 / 推荐）')
+  check(
+    tools.tools.find((t) => t.name === 'anime_search')?.inputSchema?.required?.includes('query'),
+    'anime_search 的入参是 query（MCP 调用方直接传人话）',
+  )
 
   /* ── 入参校验（与有没有 key 无关，先失败先说清）──────────────────────── */
   const noTitles = await call('POST', '/api/ai/classify/tags', {})
@@ -299,9 +304,10 @@ try {
   /* ── 提示词接口：提示词是**数据**，读得到、写得进、能恢复 ──────────────── */
   const prompts0 = (await call('GET', '/api/ai/prompts')).body?.data
   check(
-    prompts0?.keys?.length === 4 && Boolean(prompts0.prompts?.bundle?.hash),
-    `GET /api/ai/prompts → 4 段 + 每段内容 hash（source=${prompts0?.source}）`,
+    prompts0?.keys?.length === 5 && Boolean(prompts0.prompts?.bundle?.hash),
+    `GET /api/ai/prompts → 5 段 + 每段内容 hash（source=${prompts0?.source}）`,
   )
+  check(prompts0?.keys?.includes('search'), '提示词里有一段 search（自然语言搜索 / 推荐）')
   check(
     Object.values(prompts0?.prompts || {}).every((p) => typeof p.system === 'string' && p.system.length > 100),
     '接口能读到完整提示词正文（不用翻源码）',

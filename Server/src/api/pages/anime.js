@@ -13,14 +13,15 @@
  *   4. 系列：没算过就现场跑一遍走链（用户看了啥、库里没有就补一遍）
  */
 import { warmPoster } from '../../cache/poster.js'
-import { findById, listSeriesMembers, listSubgroupDict, rememberSubgroups } from '../../db/anime.js'
+import { findById, listByFilters, listSeriesMembers, listSubgroupDict, rememberSubgroups, searchByKeyword } from '../../db/anime.js'
 import { claimBySignature, groupTagsOf, isLikelyGroupTag, labelByGroupTag, signatureFromSamples } from '../../lib/release-match.js'
-import { classifyGroupTags, classifyReleaseFormat } from './ai.js'
+import { classifyGroupTags, classifyReleaseFormat, resolveSearchIntent } from './ai.js'
 import { enrichOne } from '../../jobs/enrich.js'
 import { fillSeriesFor } from '../../jobs/series.js'
 import { fail } from '../../lib/errors.js'
 import { logger } from '../../lib/logger.js'
 import { toAnimeDetail, toSubgroupItem } from '../mappers/anime.js'
+import { toCardItem } from '../mappers/home.js'
 import { fetchAnimeProfile, fetchSubgroupReleases } from '../sources/mikan.js'
 
 /** 现场补档的防抖窗口：同一条作品 5 分钟内只补一次（连点 / 来回切换不重复打上游） */
@@ -180,6 +181,69 @@ export async function getAnimeSeries(id, { log = logger } = {}) {
       seasonText: m.year && m.season ? `${m.year} ${m.season}` : '',
     })),
   }
+}
+
+/**
+ * AI 搜索：自然语言 → 查询意图 → 确定性搜索
+ * ---------------------------------------------------------------------------
+ * 用户的两种真实场景：① 打错字/只记得大概（「上依娜」「那个喝酒的百合番」）；
+ * ② 想让人推荐（「本季评分高的推理」）。两者都先由 AI 翻译成「关键词 + 筛选条件」，
+ * 再由本地搜索执行 —— 结果可解释（intent.reason）、可回退（AI 挂了就用原词搜）。
+ * picks（AI 从候选里挑的推荐）排在最前，但**只能来自库里**（候选池由 searchCandidates 给）。
+ * @param {string} query 用户原话
+ * @returns {Promise<{ q:string, intent:object, items:Array<object>, total:number }>}
+ */
+export async function aiSearchAnime(query, { log = logger } = {}) {
+  const text = String(query || '').trim()
+  if (!text) throw fail('BAD_REQUEST', 'query 不能为空')
+
+  const intent = await resolveSearchIntent(text, { log })
+  const keyword = intent.keyword || text
+  /* AI 报的标题正好是候选里的一部 → 用户就是要找这部：忽略它给的筛选条件
+     （模型常顺手塞一个没人要求的 weekday/评分，把唯一命中的那部筛没）。 */
+  const filters = intent.exactTitle
+    ? { year: null, season: null, weekday: null, minScore: null, tags: [] }
+    : { year: intent.year, season: intent.season, weekday: intent.weekday, minScore: intent.minScore, tags: intent.tags }
+  /* AI 已经把话纠正成候选里的标题了 → 用**严格匹配**（不要编辑距离兜底，
+     否则标题一个都没对上时会塞一屏「有点像」的噪音）；对不上再退回用户原话。 */
+  let rows = searchByKeyword(keyword, 60, { fuzzy: false })
+  if (!rows.length && keyword !== text) rows = searchByKeyword(text, 60)
+  const hasFilters = Boolean(
+    filters.year || filters.season || filters.weekday != null || filters.minScore != null || filters.tags.length,
+  )
+  const match = (row) => {
+    if (filters.year && Number(row.year) !== filters.year) return false
+    if (filters.season && String(row.season || '') !== filters.season) return false
+    if (filters.weekday != null && Number(row.weekday) !== filters.weekday) return false
+    if (filters.minScore != null && !(Number(row.score) >= filters.minScore)) return false
+    if (filters.tags.length) {
+      const tags = String(row.tags || '')
+      if (!filters.tags.some((tag) => tags.includes(tag))) return false
+    }
+    return true
+  }
+
+  let filtered = rows.filter(match)
+  // 关键词已经命中了，就别让筛选条件把它清空（用户搜的是名字，不是在筛表格）
+  if (!filtered.length && rows.length) filtered = rows
+  // 关键词一个都没中、但用户给了明确条件（年/季/评分/题材）→ 按条件列一批，别空手而归
+  if (!filtered.length && hasFilters) filtered = listByFilters(filters, 60)
+
+  /* 推荐结果提到最前；找不到就按主键补一条（候选池来自库，正常情况下都在） */
+  const picked = []
+  for (const id of intent.picks) {
+    if (picked.some((row) => row.id === id)) continue
+    const row = filtered.find((item) => item.id === id) ?? findById(id)
+    if (row) picked.push(row)
+  }
+  const seen = new Set(picked.map((row) => row.id))
+  const items = [...picked, ...filtered.filter((row) => !seen.has(row.id))].slice(0, 30)
+
+  log.info(
+    { query: text, keyword, picks: picked.length, hasFilters, items: items.length, cached: intent.cached },
+    'anime.ai-search ok',
+  )
+  return { q: text, intent, items: items.map(toCardItem), total: items.length }
 }
 
 /**

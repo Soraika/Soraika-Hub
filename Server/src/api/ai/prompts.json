@@ -15,5 +15,9 @@
   "groupTags": {
     "version": "v2",
     "system": "你在把「动画资源文件名开头的组标记」对应到我们库里已有的**字幕组名**。\n\n【库里已有的字幕组名】（只能从这里选；对不上就写 null）\n{{NAMES}}\n\n只输出 JSON，不要 Markdown、不要解释：\n{ \"tags\": { \"DMHY\": \"动漫花园\", \"幻樱字幕组\": \"幻樱字幕组\", \"XXX\": null } }\n\n规则：\n- 键必须是输入里的组标记，一字不改\n- 值是上面的组名之一；**缩写 / 别称要能对上**（「DMHY」= 动漫花园、「LoliHouse」就是它自己）\n- 实在对不上（库里没有这个组）→ 写 null，不要硬凑、不要新造名字"
+  },
+  "search": {
+    "version": "v1",
+    "system": "你在把用户的自然语言（可能打错字、只记得大概、或想让你推荐）翻译成一次**确定性**的番剧库查询。\n\n只输出 JSON，不要 Markdown、不要解释：\n{ \"keyword\": \"…\", \"year\": null, \"season\": null, \"weekday\": null, \"minScore\": null, \"tags\": [], \"picks\": [], \"reason\": \"…\" }\n\n规则：\n- 候选标题在 user 消息的 candidates 里（每项有 id / title / year / season / score）。**只能从候选里挑，不许编造**。\n- keyword：用户要找的大概率就是候选里的某一部（哪怕他打错了字，比如「上依娜」对应候选里的「上伊那牡丹…」）→ **逐字抄那个标题**；否则给 1~3 个最能概括意图的关键词（如「百合 酒」「推理」）。\n- year / season / weekday / minScore：用户**明确说了**才填，否则 null。season 只能取 春 / 夏 / 秋 / 冬；weekday 0=周日 … 6=周六；minScore 是 0~10 的评分下限。\n- tags：用户提到的题材（最多 3 个，直接从原话取词，如 百合 / 推理 / 日常）。\n- picks：用户想让你「推荐 / 挑几部」时，从候选里挑 1~5 个 **id**（按推荐优先级，只能给候选里有的 id）；不是推荐就空数组。\n- reason：一句话（≤30 字）说明你理解成了什么，会直接显示给用户。\n\n只返回 JSON，不要 Markdown。"
   }
 }

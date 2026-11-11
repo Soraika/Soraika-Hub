@@ -10,7 +10,7 @@
  *
  * 约定与边界：
  *   · 结果是成品：标签已按类型排好序（后端排序，前端不排序），集数已归一成数字或范围串
- *   · 提示词是数据：四段 prompt 在 api/ai/prompts.json（可被 data/prompts.json 覆盖，热加载）。
+ *   · 提示词是数据：五段 prompt 在 api/ai/prompts.json（可被 data/prompts.json 覆盖，热加载）。
  *     这个文件只管「怎么调」，不管「说什么」—— 改措辞不用改代码、不用重启
  *   · 缓存 key = 模型 + 提示词内容哈希 + 文件名内容哈希（改 prompt / 换模型都会自然 miss）
  *   · 不落库：AI 结果属可重算的派生数据，进程内缓存够用（要持久化再加表）
@@ -35,6 +35,7 @@ import {
   uniqueTitles,
 } from '../ai/shared.js'
 import { chatJson } from '../sources/ai.js'
+import { searchCandidates, normalizeKeyword } from '../../db/anime.js'
 
 /** 标签 30 分钟 / 集数 24 小时（都可配，**改完立即生效**），都按内容哈希缓存 */
 const tagCache = createMemCache({ ttlMs: () => config.ai.tagCacheTtlMs, max: 200 })
@@ -447,3 +448,88 @@ export const aiCacheStats = () => ({
   formatCache: formatCache.size(),
   groupTagCache: groupTagCache.size(),
 })
+
+
+/* ── ⑥ 自然语言搜索 / 推荐 ────────────────────────────────────────────────
+   分工：AI 只把「一句人话」翻译成查询意图（关键词 / 年季 / 评分 / 题材 / 推荐 id），
+   结果永远由确定性搜索给出 —— 这样可解释（reason）、可回退（AI 挂了就用原词搜）、
+   不会编造库里没有的番（AI 只能从候选池里挑，见 db/anime.js#searchCandidates）。 */
+
+/** 同一句话 10 分钟内不重复问（一次几厘钱，但没必要重复烧） */
+const searchCache = createMemCache({ ttlMs: 10 * 60 * 1000, max: 200 })
+
+/**
+ * 把「用户原话」翻译成查询意图
+ * ---------------------------------------------------------------------------
+ * 候选池由本地先缩小到几十条（分词命中 + 单字重合；一个都没命中就补高评分番），
+ * 这样既能容忍错别字（「上依娜」对「上伊那」），又不会把 3700 部标题全塞进 prompt。
+ * @param {string} query 用户原话
+ * @returns {Promise<{ keyword:string, year:number|null, season:string|null, weekday:number|null,
+ *   minScore:number|null, tags:string[], picks:number[], reason:string, model:string, cached:boolean }>}
+ */
+export async function resolveSearchIntent(query, { log = logger } = {}) {
+  const text = String(query || '').trim()
+  if (!text) throw fail('BAD_REQUEST', 'query 不能为空')
+  if (text.length > 120) throw fail('BAD_REQUEST', 'query 太长（上限 120 字）')
+
+  const candidates = searchCandidates(text, 40)
+  const key = `search:${promptVersion('search')}:${promptHashOf('search')}:${config.ai.model}:${hashOf([text])}`
+  const cached = searchCache.get(key)
+  if (cached) return { ...cached, cached: true }
+
+  const user = JSON.stringify({
+    today: new Date().toISOString().slice(0, 10),
+    query: text,
+    candidates: candidates.map((item) => ({
+      id: item.id,
+      title: item.title,
+      year: item.year,
+      season: item.season,
+      score: item.score,
+    })),
+  })
+  const { parsed, model, ms } = await chatJson({ system: promptText('search'), user, log })
+  const intent = normalizeSearchIntent(parsed, { candidates })
+  /* AI 报的这个关键词**就是候选里的某一部** → 说明用户就是要找这部：
+     后面忽略它给的筛选条件（实测模型会顺手塞一个没人要求的 weekday=0，
+     把唯一命中的那部筛没了）。判据用归一化后的完全相等，不做模糊。 */
+  const keywordFlat = normalizeKeyword(intent.keyword)
+  const exactTitle =
+    Boolean(keywordFlat) &&
+    candidates.some((item) => normalizeKeyword(item.title) === keywordFlat)
+  const out = { ...intent, exactTitle, model, ms, cached: false }
+  searchCache.set(key, out)
+  log.info({ query: text, keyword: intent.keyword, picks: intent.picks.length, ms }, 'ai.search ok')
+  return out
+}
+
+/**
+ * 收敛模型输出（越界的一律当「没说」）
+ * ---------------------------------------------------------------------------
+ * `picks` 只认候选池里的 id —— 模型编出来的 id 直接丢掉（它没有编造权）。
+ */
+export function normalizeSearchIntent(raw, { candidates = [] } = {}) {
+  const allowed = new Set(candidates.map((item) => Number(item.id)))
+  const seasonText = String(raw?.season ?? '').trim()
+  const season = ['春', '夏', '秋', '冬'].includes(seasonText) ? seasonText : null
+  const yearNum = Number(raw?.year)
+  const year = Number.isInteger(yearNum) && yearNum >= 1900 && yearNum <= 2100 ? yearNum : null
+  const weekdayNum = Number(raw?.weekday)
+  const weekday = Number.isInteger(weekdayNum) && weekdayNum >= 0 && weekdayNum <= 6 ? weekdayNum : null
+  const scoreNum = Number(raw?.minScore)
+  const minScore = Number.isFinite(scoreNum) && scoreNum > 0 && scoreNum <= 10 ? scoreNum : null
+  const tags = (Array.isArray(raw?.tags) ? raw.tags : [])
+    .map((tag) => String(tag || '').trim())
+    .filter(Boolean)
+    .slice(0, 3)
+  const picks = (Array.isArray(raw?.picks) ? raw.picks : [])
+    .map((id) => Number(id))
+    .filter((id) => allowed.has(id))
+    .slice(0, 5)
+  const keyword = String(raw?.keyword ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60)
+  const reason = String(raw?.reason ?? '').trim().slice(0, 40)
+  return { keyword, year, season, weekday, minScore, tags, picks, reason }
+}

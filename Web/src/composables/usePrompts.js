@@ -115,7 +115,7 @@ export function usePrompts() {
     }
   }
 
-  /** 四段全部恢复默认（删掉覆盖文件） */
+  /** 各段全部恢复默认（删掉覆盖文件） */
   async function restoreAll() {
     if (saving.value) return
     saving.value = true
@@ -123,7 +123,7 @@ export function usePrompts() {
     try {
       await resetAiPrompts()
       await load()
-      message.value = '四段都已恢复为出厂默认'
+      message.value = '全部段落都已恢复为出厂默认'
     } catch (err) {
       message.value = `恢复失败：${err.message}`
     } finally {

@@ -3,7 +3,7 @@
  * 与 home.js 同构：只做「校验 id + 调聚合层 + 返回信封」
  */
 import { Router } from 'express'
-import { getAnimeDetail, getAnimeSeries, getAnimeSubgroups, getSubgroupReleases } from '../api/pages/anime.js'
+import { aiSearchAnime, getAnimeDetail, getAnimeSeries, getAnimeSubgroups, getSubgroupReleases } from '../api/pages/anime.js'
 import { searchByKeyword } from '../db/anime.js'
 import { toCardItem } from '../api/mappers/home.js'
 import { fail } from '../lib/errors.js'
@@ -31,6 +31,24 @@ animeRouter.get('/anime', (req, res, next) => {
     if (q.length > 80) throw fail('BAD_REQUEST', 'q 太长（上限 80 字）')
     const rows = searchByKeyword(q, 30)
     res.json({ ok: true, data: { q, total: rows.length, items: rows.map(toCardItem) } })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * GET /api/anime/ai-search?q=一句话 —— 搜索页的「AI」模式
+ * ---------------------------------------------------------------------------
+ * AI 只做「自然语言 → 关键词 / 筛选条件 / 推荐 id」的翻译，结果仍由确定性搜索给出
+ * （可解释、可回退、不编造）。没配 AI → 501 AI_DISABLED，前端据此退回普通搜索。
+ * 必须注册在 `/anime/:id` 之前，否则会被当成 id="ai-search"。
+ */
+animeRouter.get('/anime/ai-search', async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim()
+    if (!q) throw fail('BAD_REQUEST', 'q 不能为空')
+    if (q.length > 120) throw fail('BAD_REQUEST', 'q 太长（上限 120 字）')
+    res.json({ ok: true, data: await aiSearchAnime(q, { log: req.log }) })
   } catch (err) {
     next(err)
   }

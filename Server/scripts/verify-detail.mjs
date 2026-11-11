@@ -165,6 +165,15 @@ try {
     )
   }
 
+  /* AI 搜索接口：空 q / 超长 q 必须在调用模型之前拒绝（不花钱） */
+  const aiEmpty = await get('/api/anime/ai-search?q=')
+  check(
+    aiEmpty.res.status === 400 && aiEmpty.body?.error?.code === 'BAD_REQUEST',
+    'AI 搜索：空 q → 400（不触发模型）',
+  )
+  const aiLong = await get(`/api/anime/ai-search?q=${encodeURIComponent('あ'.repeat(121))}`)
+  check(aiLong.res.status === 400, 'AI 搜索：q 超 120 字 → 400')
+
   /* ── 系列（面板标题旁那个 chip）：没算过就现场跑一遍（用户看了啥、库里没有就补一遍）
    * 两种结论都合法：① 现算出系列（items ≥ 2）② 这部确实没有同系列其它成员（null）。
    * 不允许的只有两件事：500 / 返回只有它自己的单成员系列。 */

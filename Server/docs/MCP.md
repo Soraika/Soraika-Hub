@@ -19,6 +19,7 @@
 |---|---|---|
 | `anime_release_tags` | 资源文件名 → 筛选标签（分辨率 / 编码 / 字幕 / 片源），每个标签带 `match[]` 供按字符串匹配 | `{ titles: string[] }` |
 | `anime_episode_meta` | 资源文件名 → 每条资源的集数（合集给 `"1-12"`，认不出给 null）。番名与季不出：番名由调用方传入，季由系列季位决定 | `{ title?: string, titles: string[] }` |
+| `anime_search` | 自然语言 → 搜索/推荐（可容错、可推荐）。AI 只解析意图，结果由确定性搜索给出；返回卡片列表 + `intent`（含 `reason`） | `{ query: string }` |
 
 ## 最小 MCP server 骨架（示意，stdio 传输）
 

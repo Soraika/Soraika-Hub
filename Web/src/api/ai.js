@@ -51,7 +51,7 @@ export function classifyEpisodes(animeTitle, titles, { season = '' } = {}) {
 }
 
 /**
- * 读当前生效的提示词（四段：bundle 标签+集数 / series 系列 / format 格式 / groupTags 组标记）
+ * 读当前生效的提示词（五段：bundle 标签+集数 / series 系列 / format 格式 / groupTags 组标记 / search 搜索意图）
  * 同时给出出厂默认（customized 之外的「恢复默认」要用它）与来源（default / override）。
  * @returns {Promise<{ source:string, keys:string[], customized:string[],
  *   prompts:Record<string,{version:string,hash:string,system:string}>,

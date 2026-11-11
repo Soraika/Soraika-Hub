@@ -211,6 +211,14 @@ const pageProps = computed(() => {
       // 回车 / 点按钮：立刻搜（不等防抖）
       onSubmit: (value) => search.submit(value),
       onRetry: () => search.retry(),
+      // AI 开关：切换后如果已经有词，立刻用新模式重搜一次（否则要再按一次回车）
+      aiMode: search.aiMode.value,
+      intent: search.intent.value,
+      aiNote: search.aiNote.value,
+      onToggleAi: (value) => {
+        search.setAiMode(value)
+        if (search.keyword.value.trim()) search.submit()
+      },
       // 结果点海报：和首页一致，读没下载的资源
       onOpenAnime: (item) => {
         panelSource.value = 'mikan'

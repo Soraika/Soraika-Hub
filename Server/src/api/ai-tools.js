@@ -11,6 +11,7 @@
 import { fail } from '../lib/errors.js'
 import { logger } from '../lib/logger.js'
 import { classifyEpisodes, classifyReleaseTags } from './pages/ai.js'
+import { aiSearchAnime } from './pages/anime.js'
 
 /** 统一的入参收敛：titles 必须是非空字符串数组（对外入口校验一次，能力层就不必重复判断） */
 function normalizeTitles(value) {
@@ -54,6 +55,22 @@ export const AI_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'anime_search',
+    description:
+      '用自然语言在本库搜索或推荐番剧（可容忍错别字 / 只记得大概）。AI 只把这句话翻译成关键词与筛选条件，结果由确定性搜索给出；返回卡片列表与 AI 的理解（intent.reason）',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: '自然语言，例如「上依娜」「今年夏天 7.5 分以上的推理番」「推荐几部百合」',
+        },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
 ]
 
 /**
@@ -80,6 +97,11 @@ export async function callAiTool(name, args = {}, { log = logger } = {}) {
         log,
         season: args.season ?? '',
       })
+    case 'anime_search': {
+      const query = String(args.query ?? '').trim()
+      if (!query) throw fail('BAD_REQUEST', 'query 不能为空')
+      return aiSearchAnime(query, { log })
+    }
     default:
       // 清单加了但忘了接实现时，错误要指出来是哪一条
       throw fail('INTERNAL', `工具 ${name} 还没有接上实现`)
