@@ -528,6 +528,8 @@ const subgroupStmt = {
   countEntities: db.prepare('SELECT COUNT(*) AS n FROM subgroup'),
   /** 全部组名（去重字典）—— 详情页 404 时给 AI 一份「可选组名」清单 */
   listDict: db.prepare('SELECT name FROM subgroup ORDER BY name'),
+  /** 组名 → 最近见到的 rss id（重命名任务名用） */
+  rssIdByName: db.prepare('SELECT rss_id FROM subgroup WHERE name = ? ORDER BY updated_at DESC LIMIT 1'),
 }
 
 /**
@@ -564,6 +566,13 @@ export const countSubgroupDict = () => subgroupStmt.countEntities.get()?.n ?? 0
 
 /** 字典里的全部组名（去重）—— 详情页 404 时交给 AI 当「可选组名」清单 */
 export const listSubgroupDict = () => subgroupStmt.listDict.all().map((r) => r.name)
+
+/**
+ * 组名 → 该组在字典里最后见到的 rss id
+ * 只用于**重命名任务名**（旧格式 `[..][..][..][..][rssId][组名]`）；
+ * 同一个组在不同作品下 rss id 不同，这里拿的是字典里的最近值，够用且不用再打 Mikan。
+ */
+export const rssIdOfSubgroup = (name) => subgroupStmt.rssIdByName.get(val(String(name || '').trim()))?.rss_id || ''
 
 // ── 系列链（后台走 BGM 关系算出来的产物；下载归档目录要用）──────────────────
 //

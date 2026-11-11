@@ -197,6 +197,7 @@
               :batch-filter="aiBatchFilter"
               :download-ready="downloadReady"
               :downloading="downloading"
+              :downloaded-episodes="downloadedEpisodes"
               @retry="retryReleases"
               @clear-filter="clearAiTags"
               @more="ensureParsed"
@@ -208,7 +209,10 @@
               :items="releaseItems"
               :state="releaseState"
               :size-text="downloadSizeText"
+              :renaming="renaming"
+              :rename-message="renameMsg"
               @retry="retryReleases"
+              @rename="onRename"
             />
           </section>
 
@@ -235,7 +239,7 @@ import AiSlot from './AiSlot.vue'
 import PopoverPanel from '@/components/ui/PopoverPanel.vue'
 import { useReleases } from '@/composables/useReleases'
 import { useDownloadedReleases } from '@/composables/useDownloadedReleases'
-import { addDownloads } from '@/api/downloads'
+import { addDownloads, fetchAnimeDownloads, renameDownloads } from '@/api/downloads'
 import { useAiTags } from '@/composables/useAiTags'
 import { useEpisodes } from '@/composables/useEpisodes'
 import { useSeries } from '@/composables/useSeries'
@@ -506,6 +510,63 @@ async function onDownload(items) {
   }
 }
 
+/* ── 重命名：先 dry-run 预览，确认后才改（任务名 + 文件名都统一）───────── */
+const renaming = ref(false)
+const renameMsg = ref('')
+
+async function onRename() {
+  const id = props.data?.id
+  if (!id || renaming.value) return
+  renaming.value = true
+  renameMsg.value = ''
+  try {
+    const plan = await renameDownloads(id, { dryRun: true })
+    if (!plan.plan.length) {
+      renameMsg.value = plan.skipped.length ? `没有需要改名的（${plan.skipped[0].reason}）` : '没有需要改名的'
+      return
+    }
+    const sample = plan.plan.slice(0, 3).map((item) => item.newFileName).join('\n')
+    const more = plan.plan.length > 3 ? `\n…共 ${plan.plan.length} 条` : ''
+    if (!window.confirm(`将重命名 ${plan.plan.length} 条：\n${sample}${more}\n\n任务名保持旧格式，文件名为「番名 S01E01」。继续？`)) {
+      return
+    }
+    const res = await renameDownloads(id, { dryRun: false })
+    const failed = res.failed?.length || 0
+    renameMsg.value = failed
+      ? `已重命名 ${res.done.length} 条，失败 ${failed} 条（${res.failed[0].reason}）`
+      : `已重命名 ${res.done.length} 条`
+    if (isDownloads.value) downloaded.open(id) // 清单里显示新文件名
+    emit('downloaded', res)
+  } catch (err) {
+    renameMsg.value = `重命名失败：${err.message}`
+  } finally {
+    renaming.value = false
+  }
+}
+
+/**
+ * 资源列表的「已下载」标记 —— 哪些集已经在 qB 里了
+ * ---------------------------------------------------------------------------
+ * 只是**附注**：qB 没配 / 取不到就当没有（不把资源列表拖进错误态）。
+ * 只认单集数字（合集 `01-12` 不标，避免「整季都算已下」的错觉）。
+ */
+const downloadedEpisodes = ref(new Set())
+
+async function loadDownloadedEpisodes(id) {
+  downloadedEpisodes.value = new Set()
+  try {
+    const res = await fetchAnimeDownloads(id)
+    const set = new Set()
+    for (const item of res.items || []) {
+      const ep = String(item.episode || '')
+      if (/^\d{1,4}$/.test(ep)) set.add(Number(ep))
+    }
+    downloadedEpisodes.value = set
+  } catch {
+    /* 标记失败不影响列表 */
+  }
+}
+
 // 作品一换（或详情刚到位）：收起简介 + 重取资源区。
 // immediate 是必须的：面板打开时 data 是后到的，不设它没人触发第一次加载。
 // `source` 也在依赖里 —— 同一部作品从首页切到下载页（或反过来）时，
@@ -516,6 +577,8 @@ watch(
     expanded.value = false
     seriesOpen.value = false
     downloadMsg.value = ''
+    renameMsg.value = ''
+    downloadedEpisodes.value = new Set()
     resetSeries()
     if (!id) {
       mikan.reset()
@@ -529,6 +592,7 @@ watch(
     } else {
       downloaded.reset()
       mikan.open(id)
+      void loadDownloadedEpisodes(id) // 「已下载」标绿（取不到就当没有）
     }
   },
   { immediate: true },

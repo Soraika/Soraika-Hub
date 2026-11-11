@@ -4,6 +4,18 @@
       <h3 class="block-title">已下载</h3>
       <span v-if="state === 'ready'" class="count">{{ items.length }} 个文件</span>
       <span v-if="state === 'ready' && sizeText" class="count">{{ sizeText }}</span>
+      <!-- 重命名：任务名保持旧方括号格式，文件名统一成「番名 S01E01」 -->
+      <button
+        v-if="state === 'ready' && items.length"
+        class="rename-btn"
+        type="button"
+        :disabled="renaming"
+        :title="renaming ? '正在重命名…' : '把任务名与文件名统一成「番名 + 季集号」（先给预览，确认后才改）'"
+        @click="$emit('rename')"
+      >
+        {{ renaming ? '重命名中…' : '重命名' }}
+      </button>
+      <span v-if="renameMessage" class="rename-msg">{{ renameMessage }}</span>
     </div>
 
     <Transition name="dl-phase" mode="out-in">
@@ -78,8 +90,12 @@ defineProps({
   state: { type: String, default: 'loading' },
   /** 当前视图的总体积（面板算好，显示在标题右边） */
   sizeText: { type: String, default: '' },
+  /** 正在重命名（挡住重复点击） */
+  renaming: { type: Boolean, default: false },
+  /** 重命名结果 / 说明（一行字，显示在标题旁） */
+  renameMessage: { type: String, default: '' },
 })
-defineEmits(['retry'])
+defineEmits(['retry', 'rename'])
 
 /** 状态配色：下载中=强调色，异常=警示 */
 const toneOf = (item) => (item.kind === 'downloading' ? 'on' : 'bad')
@@ -111,6 +127,29 @@ function etaText(item) {
 .count {
   color: var(--text-tertiary);
   font-size: 0.72rem;
+}
+/* 重命名：低调的描边按钮，旁边挂一行结果说明（成功/失败都在这） */
+.rename-btn {
+  margin-left: auto;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  transition: border-color var(--dur-fast), color var(--dur-fast), background var(--dur-fast);
+}
+.rename-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.rename-btn:disabled {
+  opacity: 0.6;
+}
+.rename-msg {
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+  line-height: 1.4;
 }
 .empty {
   padding: 4px 0;

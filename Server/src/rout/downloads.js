@@ -8,7 +8,7 @@
  * 业务在 api/pages/downloads.js，这里只做参数整形与信封。
  */
 import { Router } from 'express'
-import { addDownloads, getAnimeDownloads, getDownloads } from '../api/pages/downloads.js'
+import { addDownloads, getAnimeDownloads, getDownloads, renameDownloads } from '../api/pages/downloads.js'
 import { qbConfigured, qbTransfer, qbVersions } from '../api/sources/qb.js'
 import { fail } from '../lib/errors.js'
 
@@ -47,6 +47,23 @@ downloadsRouter.post('/downloads', async (req, res, next) => {
     if (!Array.isArray(items) || !items.length) throw fail('BAD_REQUEST', 'items 需要是非空数组')
     const data = await addDownloads(
       { animeId: animeIdOf(animeId), subgroup: String(subgroup || ''), season: Number(season) || 1, items },
+      { log: req.log },
+    )
+    res.json({ ok: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/downloads/rename —— 重命名（任务名 + 文件名）
+ * body：{ animeId, dryRun? }，**dryRun 默认 true**（只返回计划）；要真改必须显式传 false。
+ */
+downloadsRouter.post('/downloads/rename', async (req, res, next) => {
+  try {
+    const { animeId, dryRun } = req.body || {}
+    const data = await renameDownloads(
+      { animeId: animeIdOf(animeId), dryRun: dryRun !== false },
       { log: req.log },
     )
     res.json({ ok: true, data })

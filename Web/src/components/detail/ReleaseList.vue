@@ -82,7 +82,7 @@
             v-for="item in visibleItems"
             :key="item.magnetHash || item.title"
             class="item"
-            :class="{ checked: isChecked(item) }"
+            :class="{ checked: isChecked(item), 'is-downloaded': isDownloaded(item) }"
             @click="toggleCheck(item)"
           >
             <!-- 集数区：照旧版一个独立的竖条（56px），数字用斜体衬线，一眼能扫到第几集 -->
@@ -129,8 +129,13 @@
                 >
                   <IconFileDownload :size="14" /> 种子
                 </a>
+                <!-- 已下载：整行标绿、按钮位置变成「已下载」（与旧版一致，不再重复加种） -->
+                <span v-if="isDownloaded(item)" class="op done" title="这一集已经在下载列表里">
+                  <IconCheck :size="14" /> 已下载
+                </span>
                 <!-- 下载：单条也能直接加种（不必先勾选） -->
                 <button
+                  v-else
                   class="op"
                   type="button"
                   :aria-disabled="!downloadReady || downloading"
@@ -192,6 +197,8 @@ const props = defineProps({
   downloadReady: { type: Boolean, default: false },
   /** 正在加种（按钮显示「正在加种…」并挡住重复点击） */
   downloading: { type: Boolean, default: false },
+  /** 已下载的集号（Set<number>）：命中就整行标绿、按钮变「已下载」 */
+  downloadedEpisodes: { type: Object, default: () => new Set() },
 })
 const emit = defineEmits(['retry', 'clear-filter', 'more', 'download'])
 
@@ -211,6 +218,15 @@ let copyTimer = null
  * 所以即使没配 AI，界面也不会退化成"全是 —"。
  */
 const epOf = (item) => String(props.episodes?.[item.title] ?? '').trim() || episodeOf(item.title)
+
+/**
+ * 这一集是否已经在下载列表里（qB 里已有）
+ * 只认**单集数字**：合集（`01-12`）不标，否则会给人「整季都下过了」的错觉。
+ */
+function isDownloaded(item) {
+  const ep = Number(epOf(item))
+  return Boolean(ep) && props.downloadedEpisodes instanceof Set && props.downloadedEpisodes.has(ep)
+}
 
 /** 集号数字（排序用）：认不出集号 / 合集 / 特典 → 0（沉底） */
 function episodeNumber(item) {
@@ -534,6 +550,14 @@ onBeforeUnmount(() => clearTimeout(copyTimer))
   border-color: var(--tag-res);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--tag-res) 18%, transparent);
 }
+/* 已下载：整行标绿（沿用旧版的识别方式），集号也跟着变绿 */
+.item.is-downloaded {
+  border-color: color-mix(in srgb, var(--status-success) 45%, var(--border));
+  background: color-mix(in srgb, var(--status-success) 7%, var(--bg-input));
+}
+.item.is-downloaded .ep {
+  color: var(--status-success);
+}
 
 /* ── 集数区：旧版的识别特征（暖金底 + 右侧分隔线 + 斜体衬线数字）──────────
    尺寸按旧版来：56px 宽竖条 + 1.55rem，扫一眼就能找到「第几集」。 */
@@ -626,6 +650,13 @@ onBeforeUnmount(() => clearTimeout(copyTimer))
 .op:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+/* 已下载：绿色、不可点（和旧版一样一眼看出来） */
+.op.done {
+  border-color: color-mix(in srgb, var(--status-success) 40%, var(--border));
+  background: color-mix(in srgb, var(--status-success) 10%, var(--bg-card));
+  color: var(--status-success);
+  cursor: default;
 }
 /* 复制成功：变绿 + 文案换成「已复制」 */
 .op.copied {

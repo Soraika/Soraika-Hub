@@ -401,6 +401,49 @@ async function postQbAddTorrent(baseUrl, apiKey, params = {}, retries = 2) {
     });
 }
 
+/**
+ * 重命名种子（任务名）—— qB 的 `/api/v2/torrents/rename`
+ *
+ * @param {string} baseUrl
+ * @param {string} apiKey
+ * @param {{ hash: string, name: string }} params
+ * @param {number} [retries=0]
+ * @returns {Promise<string | Object | null>}
+ */
+async function postQbRenameTorrent(baseUrl, apiKey, params = {}, retries = 0) {
+    return qbApiCall({
+        baseUrl,
+        apiUrl: "/api/v2/torrents/rename",
+        method: "POST",
+        params,
+        apiKey,
+        tip: "QbRenameTorrent",
+        retries,
+    });
+}
+
+/**
+ * 重命名种子内的文件 —— qB 的 `/api/v2/torrents/renameFile`
+ *
+ * @param {string} baseUrl
+ * @param {string} apiKey
+ * @param {{ hash: string, oldPath: string, newPath: string }} params
+ * @param {number} [retries=0]
+ * @returns {Promise<string | Object | null>}
+ */
+async function postQbRenameFile(baseUrl, apiKey, params = {}, retries = 0) {
+    return qbApiCall({
+        baseUrl,
+        apiUrl: "/api/v2/torrents/renameFile",
+        method: "POST",
+        params,
+        apiKey,
+        tip: "QbRenameFile",
+        retries,
+    });
+}
+
+
 
 // ⚠️ 这里原来有一句顶层 console.log(await getQbTorrentProperties("http://192.168.5.2:8080/", "qbt_…"))
 // —— 导入本模块就会发一次请求，而且把内网地址和真实 API Key 硬编码在了源码里。
@@ -416,4 +459,7 @@ export {
     getQbTorrentList,
     getQbTorrentProperties,
     postQbAddTorrent,
+    postQbRenameTorrent,
+    postQbRenameFile,
+
 };

@@ -52,6 +52,22 @@ export function addDownloads(payload) {
 }
 
 /**
+ * 重命名（qB 任务名 + 落盘文件名）
+ * ---------------------------------------------------------------------------
+ * 默认 dryRun：只返回「会改成什么」（plan / skipped），不写 qB；
+ * 确认后传 `dryRun:false` 才真改（qB 的 rename 不影响做种与数据）。
+ * @param {number} animeId 作品主键
+ * @param {{ dryRun?: boolean }} [options]
+ * @returns {Promise<{ dryRun:boolean, title:string,
+ *   plan: Array<{ hash:string, oldName:string, newName:string, oldFileName:string, newFileName:string }>,
+ *   skipped: Array<{ name:string, reason:string }>,
+ *   done?: Array<object>, failed?: Array<object> }>}
+ */
+export function renameDownloads(animeId, { dryRun = true } = {}) {
+  return apiPost('/api/downloads/rename', { animeId, dryRun }, { timeout: 120000 })
+}
+
+/**
  * qB 状态（设置页显示版本用；没配时返回 `{ configured:false }`）
  * @returns {Promise<{ configured:boolean, versions?:{app:string,api:string}, transfer?:object }>}
  */

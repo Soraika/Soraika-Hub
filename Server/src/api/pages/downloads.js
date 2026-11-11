@@ -10,16 +10,18 @@
  *   · `addDownloads()`      → 资源列表勾选后加种（归档目录 + 标签在这里定）
  */
 import { config } from '../../config.js'
-import { findById, findByMikanId, findByTitle } from '../../db/anime.js'
+import { findById, findByMikanId, findByTitle, rssIdOfSubgroup } from '../../db/anime.js'
 import {
   archiveDirOf,
   buildTags,
   episodeOf,
   episodeOrder,
+  extensionOf,
   kindOf,
   mikanIdOf,
   missingEpisodesOf,
   percentOf,
+  renameTargetOf,
   seasonIndexOf,
   sizeText,
   splitSavePath,
@@ -31,7 +33,7 @@ import { metaFromTags, metaOfText, metaTagsOf, releaseMetaTags } from '../../lib
 import { fail } from '../../lib/errors.js'
 import { posterUrlOf } from '../../lib/format.js'
 import { logger } from '../../lib/logger.js'
-import { qbAddTorrent, qbConfigured, qbTorrents, qbTransfer, qbVersions } from '../sources/qb.js'
+import { qbAddTorrent, qbConfigured, qbRenameFile, qbRenameTorrent, qbTorrents, qbTransfer, qbVersions } from '../sources/qb.js'
 
 /** 认不出的组名（老种子 / 手动加种没有 `sg:` 标签时都落这里） */
 const UNKNOWN_GROUP = '未标注字幕组'
@@ -335,4 +337,84 @@ export async function addDownloads({ animeId, subgroup = '', season = 1, items =
     'downloads.add done',
   )
   return { savePath, tags: baseTags, added, failed }
+}
+
+/**
+ * 重命名：qB 的**任务名** + 落盘**文件名**
+ * ---------------------------------------------------------------------------
+ * 两套名字各有用途，规则不同（见 lib/downloads.js#renameTargetOf）：
+ *   · 任务名：旧方括号格式 `[mikanId][番名][季][集][组rssId][组名]`
+ *     —— qB 里 183 条有 181 条长这样；下载页也是按这个格式认回作品
+ *   · 文件名：`番名 S01E01.mkv`（与归档目录同一套，人看着舒服）
+ * 只处理单集且有扩展名的条目；合集 / 多文件种子跳过并说明原因（改名收益小、风险大）。
+ * 默认 dryRun：先返回「会改成什么」，确认后才真改（qB 的 rename 不影响做种与数据）。
+ * @param {{ animeId:number, dryRun?:boolean }} params
+ */
+export async function renameDownloads({ animeId, dryRun = true } = {}, { log = logger } = {}) {
+  const row = findById(Number(animeId))
+  if (!row) throw fail('NOT_FOUND', `没有 id=${animeId} 的作品记录`)
+
+  const torrents = await qbTorrents({ fresh: true })
+  const mine = torrents.filter((t) => resolveAnime(t)?.id === row.id)
+  const title = row.title_bgm || row.title_mikan || row.title_bgm_origin || ''
+  const plan = []
+  const skipped = []
+
+  for (const t of mine) {
+    const item = normalizeTorrent(t)
+    if (!item.episode || item.episode.includes('-')) {
+      skipped.push({ name: t.name, reason: item.episode ? '合集（多文件）' : '认不出集数' })
+      continue
+    }
+    const ext = extensionOf(item.fileName)
+    if (!ext) {
+      skipped.push({ name: t.name, reason: '多文件种子（没有扩展名）' })
+      continue
+    }
+    const target = renameTargetOf({
+      title,
+      mikanId: row.mikan_id || '',
+      season: item.season || Number(row.series_index) || 1,
+      episode: item.episode,
+      ext,
+      subgroup: item.subgroup,
+      rssId: rssIdOfSubgroup(item.subgroup),
+    })
+    if (!target) {
+      skipped.push({ name: t.name, reason: '生成不出目标名' })
+      continue
+    }
+    if (item.fileName === target.fileName && t.name === target.torrentName) {
+      skipped.push({ name: t.name, reason: '已符合命名规则' })
+      continue
+    }
+    plan.push({
+      hash: t.hash,
+      oldName: t.name,
+      newName: target.torrentName,
+      oldFileName: item.fileName,
+      newFileName: target.fileName,
+    })
+  }
+
+  if (dryRun) {
+    log.info({ animeId: row.id, plan: plan.length, skipped: skipped.length }, 'downloads.rename dry-run')
+    return { dryRun: true, title, plan, skipped }
+  }
+
+  const done = []
+  const failed = []
+  for (const item of plan) {
+    try {
+      if (item.oldFileName !== item.newFileName) {
+        await qbRenameFile({ hash: item.hash, oldPath: item.oldFileName, newPath: item.newFileName })
+      }
+      if (item.oldName !== item.newName) await qbRenameTorrent({ hash: item.hash, name: item.newName })
+      done.push(item)
+    } catch (err) {
+      failed.push({ ...item, reason: err.message })
+    }
+  }
+  log.info({ animeId: row.id, done: done.length, failed: failed.length }, 'downloads.rename done')
+  return { dryRun: false, title, plan, done, failed, skipped }
 }

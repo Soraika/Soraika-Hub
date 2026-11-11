@@ -18,9 +18,11 @@ import {
   episodeOf,
   episodeOrder,
   episodesOf,
+  extensionOf,
   kindOf,
   mikanIdOf,
   missingEpisodesOf,
+  renameTargetOf,
   seasonIndexOf,
   sizeText,
   splitSavePath,
@@ -84,6 +86,27 @@ check(missingEpisodesOf([], 0).missing.length === 0, '总集数未知 → 不判
 check(missingEpisodesOf(['01-13'], 12).have === 12, '合集比总集数长 → 多出来的不算错')
 check(missingEpisodesOf(['14', '15', '16'], 3).have === 3, '累积集号（S02 的 14~16 对一季 3 话）→ 平移到 1 起，不误报全缺')
 check(missingEpisodesOf(['特典'], 12).parsed === 0, '一个集号都解析不出 → parsed=0（卡片不显示「已下 0」）')
+
+/* ── 重命名：任务名（旧方括号格式）+ 文件名（番名 S01E01）────────────────── */
+const renameOne = renameTargetOf({
+  title: '尼古喵喵',
+  mikanId: '3992',
+  season: 1,
+  episode: '1',
+  ext: '.mp4',
+  subgroup: '樱桃花字幕组',
+  rssId: '1205',
+})
+check(renameOne.fileName === '尼古喵喵 S01E01.mp4', `文件名 = 中文番名 + 季集号 → ${renameOne.fileName}`)
+check(
+  renameOne.torrentName === '[3992][尼古喵喵][1][01][1205][樱桃花字幕组]',
+  `任务名 = 旧方括号格式 → ${renameOne.torrentName}`,
+)
+check(renameTargetOf({ title: 'x', episode: '01-12', ext: '.mkv' }) === null, '合集（多文件）不参与重命名')
+check(renameTargetOf({ title: 'x', episode: '01', ext: '' }) === null, '多文件种子（没有扩展名）跳过')
+check(renameTargetOf({ title: '', episode: '01', ext: '.mkv' }) === null, '没有番名 → 跳过')
+check(renameTargetOf({ title: 'a/b:c', episode: '3', ext: 'mkv' }).fileName === 'a b c S01E03.mkv', '文件名里的非法字符被替换')
+check(extensionOf('a.MKV') === '.mkv' && extensionOf('SE01') === '', '扩展名：有就转小写，多文件目录给空')
 
 /* ── 加种应答：qB 5.x 对「重复种子」回 HTTP 409 —— 那不是失败（实测）───────── */
 const { classifyAddResult } = await import('../src/api/sources/qb.js')
@@ -314,6 +337,12 @@ try {
   check(emptyAdd.res.status === 400, '加种时 items 为空 → 400（不做无意义的 qB 请求）')
   const badUrlAdd = await post('/api/downloads', { animeId: 'abc', items: [{ title: 'x' }] })
   check(badUrlAdd.res.status === 400, '加种时 animeId 非法 → 400')
+
+  /* 重命名：校验与默认 dryRun（不传 dryRun 时只返回计划，不写 qB） */
+  const badRename = await post('/api/downloads/rename', { animeId: 'abc' })
+  check(badRename.res.status === 400, '重命名：animeId 非法 → 400 / BAD_REQUEST')
+  const missingRename = await post('/api/downloads/rename', { animeId: 99999999 })
+  check(missingRename.res.status === 404 && missingRename.body?.error?.code === 'NOT_FOUND', '重命名：不存在的作品 → 404')
 
   /* ── 设置页「测试连接」要回两个版本 ─────────────────────────────────── */
   const settingsTest = await post('/api/settings/test', { path: 'qb.base' })

@@ -407,6 +407,24 @@ try {
   check(list.includes('1.2 GB') && list.includes('10-07 12:30'), '资源条目显示大小与时间（都是后端成品字符串）')
   check(list.includes('磁力') && list.includes('种子'), '资源条目有「复制磁力 / 下载种子」两个入口')
   check(list.includes('1 个种子'), '资源区显示条数')
+
+  /* 已下载的集：整行标绿 + 按钮位置变「已下载」（旧版行为，避免重复加种） */
+  const downloadedMark = await renderToString(
+    createSSRApp({
+      render: () =>
+        h(ReleaseList, {
+          items: releaseItems,
+          state: 'ready',
+          episodes: { [releaseItems[0].title]: '04' },
+          downloadedEpisodes: new Set([4]),
+        }),
+    }),
+  )
+  check(
+    downloadedMark.includes('is-downloaded') && downloadedMark.includes('已下载'),
+    '已下载的集：整行标绿 + 按钮变「已下载」',
+  )
+  check(downloadedMark.includes('class="op done"'), '已下载的那条不再给「下载」按钮（避免重复加种）')
   const listEmpty = await renderToString(
     createSSRApp({ render: () => h(ReleaseList, { items: [], state: 'empty' }) }),
   )
@@ -1336,6 +1354,17 @@ try {
   check(
     downloadsPageSource.includes('progressText') && downloadsPageSource.includes('missingText') && downloadsPageSource.includes('#footer'),
     '卡片底部走 footer 槽显示「已下 x / 共 y」与缺的集号（不在信息行里挤）',
+  )
+  /* 重命名：面板里一个按钮，先 dry-run 预览，确认后才真改 */
+  check(
+    downloadListSource.includes("$emit('rename')") &&
+      panelSource.includes('@rename="onRename"') &&
+      panelSource.includes('renameDownloads(id, { dryRun: true })'),
+    '下载页面板有「重命名」按钮（先 dry-run 预览，确认后才改）',
+  )
+  check(
+    panelSource.includes('downloadedEpisodes') && panelSource.includes('loadDownloadedEpisodes'),
+    'Mikan 资源列表能拿到「已下载」集号（标绿用，取不到不影响列表）',
   )
   const { default: DownloadsPageCard } = await vite.ssrLoadModule('/src/pages/DownloadsPage.vue')
   const dlCardHtml = await renderToString(

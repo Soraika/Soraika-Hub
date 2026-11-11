@@ -297,6 +297,47 @@ export function missingEpisodesOf(episodes, totalEpisodes) {
 }
 
 /**
+ * 重命名的目标：qB 的**任务名**（旧方括号格式）+ **实际文件名**
+ * ---------------------------------------------------------------------------
+ * 任务名沿用旧系统那套（qB 里 183 条有 181 条长这样）：
+ *   `[mikanId][番名][季][集][组rssId][组名]`
+ *   `[3905][上伊那牡丹，酒醉身姿似百合花般][1][10][382][喵萌奶茶屋]`
+ * 实际文件名用「中文番名 + 季集号」（与归档目录同一套命名，便于人看）：
+ *   `上伊那牡丹，酒醉身姿似百合花般 S01E10.mkv`
+ *
+ * 只处理「单集 + 能认出扩展名」的条目：合集（`01-12`）是多文件、季番目录结构不同，
+ * 改名收益小、风险大，调用方应跳过（返回 null）。
+ * @param {{ title:string, mikanId?:string|number, season?:number|string, episode:string,
+ *           ext?:string, subgroup?:string, rssId?:string|number }} params
+ * @returns {{ fileBase:string, fileName:string, torrentName:string } | null}
+ */
+export function renameTargetOf({ title, mikanId = '', season = 1, episode, ext = '', subgroup = '', rssId = '' }) {
+  const clean = (value) =>
+    String(value ?? '')
+      .replace(/[\\/:*?"<>|[\]]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  const name = clean(title)
+  const ep = String(episode || '').trim()
+  const suffix = ext ? (ext.startsWith('.') ? ext : `.${ext}`) : ''
+  if (!name || !/^\d{1,4}$/.test(ep) || !suffix) return null
+
+  const seasonNum = Math.max(1, Number(season) || 1)
+  const seasonText = String(seasonNum).padStart(2, '0')
+  const epText = ep.padStart(2, '0')
+  const fileBase = `${name} S${seasonText}E${epText}`
+  const group = clean(subgroup)
+  const torrentName = `[${clean(mikanId)}][${name}][${seasonNum}][${epText}][${clean(rssId)}][${group}]`
+  return { fileBase, fileName: `${fileBase}${suffix.toLowerCase()}`, torrentName }
+}
+
+/** 文件名里的扩展名（多文件种子没有扩展名 → 空） */
+export function extensionOf(fileName) {
+  const m = String(fileName || '').match(/\.([a-z0-9]{2,5})$/i)
+  return m ? `.${m[1].toLowerCase()}` : ''
+}
+
+/**
  * 归档目录（新下载用这一套，命名规范见 docs/ARCHITECTURE.md §7 决策 38）
  * ---------------------------------------------------------------------------
  * `{root}/{番名}/Season 01`（旧写法是 `SE01`，批量迁移以后再补）

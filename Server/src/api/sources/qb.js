@@ -184,3 +184,77 @@ export async function qbAddTorrent({ url, savePath, tags = '', category, paused 
   torrentCache.at = 0 // 新种子立刻要能看到 → 让缓存失效
   return { ok: true, existed: verdict.existed, raw: String(text ?? '') }
 }
+
+/** qB 改名接口的路径（同样写死，避免参数顺序出错） */
+const RENAME_PATH = '/api/v2/torrents/rename'
+const RENAME_FILE_PATH = '/api/v2/torrents/renameFile'
+
+/**
+ * 改名类操作共用：拿状态码 + 响应体 → 可读结论
+ * （qB 5.2 的成功应答是 `Ok.`，个别版本会回 JSON；409 = 目标名字已被占用）
+ */
+async function callQbAction(path, params, tip) {
+  let status = 0
+  let text = ''
+  try {
+    text = await fetchQbPost(config.qb.base, path, params, config.qb.apiKey, tip, 1)
+    status = 200
+  } catch (err) {
+    status = Number(err?.status) || 0
+    text = String(err?.bodyText || '')
+  }
+  /* 实测：rename / renameFile 成功时是 **200 + 空 body**（不是 `Ok.`），
+     所以先按状态码判成功；失败时 qB 会带一句人话（如「文件已存在：…」）。 */
+  if (status >= 200 && status < 300 && !text.trim()) {
+    torrentCache.at = 0
+    return { ok: true }
+  }
+  if (status === 409) {
+    return { ok: false, status, reason: text.trim() ? `qB：${text.trim()}` : '目标名字已被占用（qB 回 409）' }
+  }
+  const verdict = classifyAddResult({ status, text })
+  if (!verdict.ok) {
+    return { ok: false, status, reason: verdict.reason.replace('这次加种', '这次重命名').replace('这次操作', '这次重命名') }
+  }
+  torrentCache.at = 0 // 名字变了 → 列表缓存作废
+  return { ok: true }
+}
+
+/**
+ * 重命名种子（qB 里显示的任务名）
+ * @param {{ hash: string, name: string }} params
+ */
+export async function qbRenameTorrent({ hash, name } = {}) {
+  ensureConfigured()
+  if (!hash) throw fail('BAD_REQUEST', '缺少种子 hash')
+  if (!name) throw fail('BAD_REQUEST', '缺少新任务名')
+  const res = await callQbAction(RENAME_PATH, { hash, name }, 'QbRenameTorrent')
+  if (!res.ok) throw fail('UPSTREAM', res.reason)
+  return { ok: true }
+}
+
+/**
+ * 重命名种子内的文件（实际落盘名）；不影响做种与数据
+ * @param {{ hash: string, oldPath: string, newPath: string }} params
+ */
+export async function qbRenameFile({ hash, oldPath, newPath } = {}) {
+  ensureConfigured()
+  if (!hash) throw fail('BAD_REQUEST', '缺少种子 hash')
+  if (!oldPath || !newPath) throw fail('BAD_REQUEST', '缺少文件路径（oldPath / newPath）')
+  const res = await callQbAction(RENAME_FILE_PATH, { hash, oldPath, newPath }, 'QbRenameFile')
+  if (res.ok) return { ok: true }
+
+  /* 幂等：目标名字已经在了（上一次改成功、或文件名本来就是它）→ 不算失败。
+     判据是 qB 现在报的 content_path 文件名 === newPath（不是猜）。 */
+  try {
+    const list = await getQbTorrentList(config.qb.base, config.qb.apiKey, { hashes: hash }, 0)
+    const current = String(list?.[0]?.content_path || '').split('/').pop()
+    if (current && current === newPath) {
+      torrentCache.at = 0
+      return { ok: true, existed: true }
+    }
+  } catch {
+    /* 查不到就按原错误报 */
+  }
+  throw fail('UPSTREAM', res.reason)
+}
