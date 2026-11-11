@@ -91,6 +91,17 @@ check(classifyAddResult({ status: 200, text: 'Ok.' }).ok === true, 'Ok. = 成功
 const dup = classifyAddResult({ status: 409, text: '' })
 check(dup.ok === true && dup.existed === true, 'HTTP 409 = 已在列表里（不报失败）', JSON.stringify(dup))
 check(classifyAddResult({ status: 200, text: 'Fails.' }).ok === false, 'Fails. = 真失败')
+check(
+  classifyAddResult({
+    status: 200,
+    text: '{"added_torrent_ids":["1533d2692bfdf01f049d5617af2f6caefd6d9229"],"failure_count":0,"pending_count":0,"success_count":1}',
+  }).ok === true,
+  'qB 5.2 的 JSON 应答（success_count=1）= 成功',
+)
+check(
+  classifyAddResult({ status: 200, text: '{"added_torrent_ids":[],"failure_count":1,"pending_count":0,"success_count":0}' }).ok === false,
+  'JSON 应答里 failure_count>0 且没有成功 id = 失败',
+)
 check(!classifyAddResult({ status: 500, text: { error: 'boom' } }).reason.includes('[object'), '错误文案不会出现 [object Object]')
 check(classifyAddResult({ status: 0, text: '' }).reason.includes('没有应答'), '空应答也有可读文案（不是 undefined）')
 check(classifyAddResult({ status: 409, text: '' }).reason.length > 0, '「已存在」也带一句人能看懂的说明')
@@ -201,6 +212,30 @@ try {
     const v = status.body.data.versions || {}
     check(Boolean(v.app && v.api), `两个版本都回（应用 ${v.app} / WebAPI ${v.api}）`)
     check(/^v?\d+\.\d+/.test(v.app), `应用版本是版本号形状 → ${v.app}`)
+
+    /* 真重复加种：拿一个已在列表里的磁力再加一次。
+       既验证「409 = 已存在」，也验证**加种地址正确**（曾经漏传 apiUrl，请求打到
+       `http://host/<apiKey>` 上，qB 回 404 Not Found —— 用户看到的就是这个）。 */
+    const { loadStoredSettings } = await import('../src/api/pages/settings.js')
+    loadStoredSettings()
+    const { qbTorrents, qbAddTorrent } = await import('../src/api/sources/qb.js')
+    const { config } = await import('../src/config.js')
+    const torrents = await qbTorrents({ fresh: true })
+    const withMagnet = torrents.find((t) => String(t.magnet_uri || '').startsWith('magnet:'))
+    if (withMagnet) {
+      const again = await qbAddTorrent({
+        url: withMagnet.magnet_uri,
+        savePath: config.qb.saveRoot,
+        tags: 'soraika-verify',
+        category: config.qb.category,
+      })
+      check(
+        again.ok === true && again.existed === true,
+        `重复加种 → 回报「已存在」（顺带验证加种走的是 /api/v2/torrents/add）→ ${String(withMagnet.name).slice(0, 28)}`,
+      )
+    } else {
+      console.log('· 没有带磁力的种子 → 跳过「重复加种」')
+    }
   }
 
   /* ── 卡片墙 ────────────────────────────────────────────────────────── */

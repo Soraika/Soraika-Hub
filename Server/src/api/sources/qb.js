@@ -80,6 +80,9 @@ export async function qbTorrents({ fresh = false } = {}) {
   return list
 }
 
+/** qB 加种接口的路径（写死一次，避免调用处再传错参数顺序） */
+const ADD_PATH = '/api/v2/torrents/add'
+
 /**
  * qB 加种应答 → 结论（纯函数，验收直接喂数据）
  * ---------------------------------------------------------------------------
@@ -96,6 +99,25 @@ export function classifyAddResult({ status = 0, text = '' } = {}) {
   const body = typeof text === 'string' ? text.trim() : text == null ? '' : JSON.stringify(text).slice(0, 120)
   if (/^ok/i.test(body)) return { ok: true, existed: false, reason: '' }
   if (Number(status) === 409) return { ok: true, existed: true, reason: '种子已经在下载列表里' }
+
+  /* qB 5.2 起 /torrents/add 会回一段 JSON（实测）：
+     {"added_torrent_ids":["…"],"failure_count":0,"pending_count":0,"success_count":1}
+     success_count > 0 就是加进去了；failure_count > 0 且没有成功 id 才是失败。 */
+  if (body.startsWith('{')) {
+    try {
+      const payload = JSON.parse(body)
+      const success = Number(payload?.success_count) || 0
+      const failure = Number(payload?.failure_count) || 0
+      const ids = Array.isArray(payload?.added_torrent_ids) ? payload.added_torrent_ids : []
+      if (success > 0 || (failure === 0 && ids.length > 0)) return { ok: true, existed: false, reason: '' }
+      if (failure > 0) {
+        return { ok: false, existed: false, reason: `qBittorrent 拒绝了这次加种（失败 ${failure} 条）` }
+      }
+    } catch {
+      /* 不是合法 JSON → 落到下面的通用文案 */
+    }
+  }
+
   if (/^fails?\.?$/i.test(body)) return { ok: false, existed: false, reason: 'qBittorrent 拒绝了这次加种（Fails.）' }
   const hint = body ? body.slice(0, 120) : Number(status) ? `HTTP ${status}` : '没有应答'
   return { ok: false, existed: false, reason: `qBittorrent 拒绝了这次加种（${hint}）` }
@@ -118,7 +140,7 @@ export async function qbAddTorrent({ url, savePath, tags = '', category, paused 
   try {
     text = await fetchQbPost(
       config.qb.base,
-      config.qb.apiKey,
+      ADD_PATH,
       {
         urls: url,
         savepath: savePath,
@@ -126,6 +148,7 @@ export async function qbAddTorrent({ url, savePath, tags = '', category, paused 
         ...(tags ? { tags } : {}),
         ...(paused ? { paused: 'true' } : {}),
       },
+      config.qb.apiKey,
       'QbAddTorrent',
       1,
     )
