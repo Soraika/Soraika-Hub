@@ -433,6 +433,50 @@ try {
   mirrorBroken = true
   const fallback = await downloadDump({ asset: { ...asset, digest }, dir: dlDir, log: silent })
   check(fallback.url.includes('dl.test') && !fallback.url.includes('mirror.test'), '镜像 502 → 换下一个镜像成功', fallback.url)
+
+  /* 代理挂起（只发几个字节就不动了）：无进度闸 → 中断换镜像，.part 保留续传。
+     实测过 gh-proxy 会这样卡住 500KB —— 没有这道闸就得等 30 分钟总超时。 */
+  process.env.BGM_DUMP_STALL_MS = '300'
+  const stallDir = mkdtempSync(join(tmpdir(), 'bgm-stall-'))
+  const fetchWithStall = globalThis.fetch
+  let stallCalls = 0
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).includes('stall.test')) {
+      stallCalls++
+      let ctrl
+      const stream = new ReadableStream({
+        start(controller) {
+          ctrl = controller
+          controller.enqueue(zipBuf.subarray(0, 10)) // 先给文件头 10 字节，然后永远不 close
+        },
+      })
+      // 真 fetch 在 abort 时会让 body 报错；mock 也要照做，否则 for-await 会永远等下去
+      init.signal?.addEventListener('abort', () => {
+        try {
+          ctrl.error(new Error('aborted'))
+        } catch {
+          /* 已经关掉了 */
+        }
+      })
+      return new Response(stream, { status: 200 })
+    }
+    return fetchWithStall(url, init)
+  }
+  try {
+    config.bgm.dumpMirrors = ['https://stall.test/{url}', '{url}']
+    const startedAt = Date.now()
+    const stalled = await downloadDump({ asset: { ...asset, digest }, dir: stallDir, log: silent })
+    const ms = Date.now() - startedAt
+    check(stallCalls === 1, '挂起的镜像只试一次就放弃（不会干等 30 分钟）', `calls=${stallCalls}`)
+    check(ms < 5000, `无进度 300ms 后自动换镜像 → ${ms}ms`)
+    check(stalled.url.includes('dl.test') && !stalled.url.includes('stall.test'), '挂起的镜像被换掉，用下一个下完')
+    check(statSync(stalled.file).size === zipBuf.length, '换镜像后从断点续传，文件仍然完整', `${statSync(stalled.file).size}/${zipBuf.length}`)
+  } finally {
+    globalThis.fetch = fetchWithStall
+    delete process.env.BGM_DUMP_STALL_MS
+    config.bgm.dumpMirrors = ['{url}', 'https://mirror.test/{url}']
+    rmSync(stallDir, { recursive: true, force: true })
+  }
 } finally {
   globalThis.fetch = realFetch
   rmSync(dlDir, { recursive: true, force: true })

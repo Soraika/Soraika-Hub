@@ -155,6 +155,15 @@ export async function downloadDump({ asset, dir, log = logger, onProgress } = {}
 }
 
 /**
+ * 「多久没收到数据就认为这个镜像挂了」
+ * ---------------------------------------------------------------------------
+ * 实测（2026-11-10）：gh-proxy 会在发了 500KB 后**再也不动**，而 fetch 的总超时是 30 分钟 ——
+ * 结果整晚都在等一个已经死掉的连接。90 秒没有新字节 → 主动中断，换下一个镜像（.part 保留，接着续）。
+ * 可用 `BGM_DUMP_STALL_MS` 覆盖（验收测试把它设成 300ms）。
+ */
+const stallMs = () => Number(process.env.BGM_DUMP_STALL_MS) || 90000
+
+/**
  * 从一个地址下载到 `<part>`（续传），返回最终字节数
  * @param {string} url
  * @param {string} part
@@ -167,13 +176,31 @@ async function downloadFrom(url, part, { asset, log, onProgress }) {
     offset = 0
   }
 
+  /* 两道闸：总时长（30 分钟）+ 无进度（默认 90 秒）。后者是「代理挂起」的解药 */
+  const controller = new AbortController()
+  let stallTimer = null
+  const armStall = () => {
+    clearTimeout(stallTimer)
+    stallTimer = setTimeout(() => controller.abort(new Error(`${Math.round(stallMs() / 1000)} 秒没有收到数据`)), stallMs())
+  }
+  const totalTimer = setTimeout(() => controller.abort(new Error('下载总时长超限')), DOWNLOAD_TIMEOUT_MS)
+  armStall()
+
   const res = await fetch(url, {
     headers: offset > 0 ? { Range: `bytes=${offset}-` } : {},
-    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    signal: controller.signal,
   })
 
-  if (res.status === 416) return offset // 已经下完（一般是上一次恰好停在末尾）
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (res.status === 416) {
+    clearTimeout(stallTimer)
+    clearTimeout(totalTimer)
+    return offset // 已经下完（一般是上一次恰好停在末尾）
+  }
+  if (!res.ok) {
+    clearTimeout(stallTimer)
+    clearTimeout(totalTimer)
+    throw new Error(`HTTP ${res.status}`)
+  }
   // 服务器忽略 Range：只能从头来，否则会拼出坏文件
   if (offset > 0 && res.status === 200) {
     rmSync(part, { force: true })
@@ -188,6 +215,7 @@ async function downloadFrom(url, part, { asset, log, onProgress }) {
 
   try {
     for await (const chunk of res.body) {
+      armStall() // 每收到一块就重置「无进度」计时
       if (!out.write(chunk)) await once(out, 'drain')
       written += chunk.length
       if (written >= nextReport) {
@@ -199,7 +227,18 @@ async function downloadFrom(url, part, { asset, log, onProgress }) {
         )
       }
     }
+  } catch (err) {
+    // 被上面两道闸中断：给一句能看懂的说明（.part 保留 → 下次从断点继续）
+    if (controller.signal.aborted) {
+      const reason = controller.signal.reason
+      const message = reason instanceof Error ? reason.message : '连接中断'
+      log.warn({ written, total, reason: message }, 'dump.download stall')
+      throw new Error(`下载中断：${message}（已下 ${written} 字节，下次从断点续传）`)
+    }
+    throw err
   } finally {
+    clearTimeout(stallTimer)
+    clearTimeout(totalTimer)
     await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())))
   }
   return written
