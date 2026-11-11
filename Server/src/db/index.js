@@ -113,9 +113,7 @@ function ensureSeriesPositionUnique() {
  */
 const MIGRATIONS = {
   anime: [
-    { column: 'watching', ddl: 'INTEGER' },
     { column: 'bgm_checked_at', ddl: 'INTEGER' },
-    { column: 'bgm_miss_count', ddl: 'INTEGER' },
     // 系列链（见 CONVENTIONS.md §10.2：只给「已在库」的作品写；series_id 取代表行的 id）
     { column: 'series_id', ddl: 'INTEGER' },
     { column: 'series_index', ddl: 'INTEGER' },
@@ -125,9 +123,6 @@ const MIGRATIONS = {
     { column: 'series_checked_at', ddl: 'INTEGER' },
     // v2：链（确定性）与起名（AI）分开记 —— 根名改成"点开系列时才补"
     { column: 'series_named_at', ddl: 'INTEGER' },
-    // 「整条系列都是剧场版」的判定结果（AI 给的 allMovies）—— 存下来，
-    // 否则后续走链因为「根名已有」跳过 AI，会把这个判据丢掉 → 番外又被清零。
-    { column: 'series_all_movies', ddl: 'INTEGER' },
   ],
   // 关系表 v2：每条 id 的「1 跳关系问过没有」—— 决定走链时要不要为它打一次上游
   bgm_stub: [{ column: 'relations_checked_at', ddl: 'INTEGER' }],
@@ -183,18 +178,53 @@ if (legacyV1) finishV2(db)
 /**
  * 清理已废弃的列（一次性、可重入）
  * ---------------------------------------------------------------------------
- * `series_all_movies` 是靠 AI 现算的判据，现在改成看 `bgm_subject.platform = 3`
- * （dump 的平台码，确定性）。老库上这列还在 → 直接删；SQLite 3.35+ 支持 DROP COLUMN。
- * 失败只 warn：删不掉也不影响读取（代码已经不看它了）。
+ * 三个都是 v2 重构后的死列，代码**不读也不写**，老库上却还留着（schema.sql 已经不建了）：
+ *   · `series_all_movies`：原来靠 AI 现算「整条系列是不是全剧场版」，现在看
+ *     `bgm_subject.platform = 3`（dump 的平台码，确定性）。
+ *   · `watching`：「在看人数」已搬进 `bgm_subject.watching`（读取走 v_anime）。
+ *     删之前**先把老值补进档案表**（只在档案表为空时补，不覆盖新值），老数据不丢。
+ *   · `bgm_miss_count`：「连续几次没拿到 bgmId」的计数器。v2 明确不要它了 ——
+ *     有没有 bgm 链接是**事实**，不是失败次数（改用 `mikan_bgm_map.checked_at` 退避）。
+ * 失败只 warn：删不掉也不影响读取（SQLite 3.35+ 才支持 DROP COLUMN）。
  */
 function dropDeprecatedColumns() {
   const cols = new Set(db.prepare('PRAGMA table_info(anime)').all().map((col) => col.name))
-  if (!cols.has('series_all_movies')) return
-  try {
-    db.exec('ALTER TABLE anime DROP COLUMN series_all_movies')
-    logger.warn('db.migrate drop anime.series_all_movies')
-  } catch (err) {
-    logger.warn({ err: err.message }, 'db.migrate drop series_all_movies fail')
+
+  // watching：先搬数据再删（老库上没搬的话，详情里的「N 人在看」会突然消失）
+  if (cols.has('watching')) {
+    try {
+      const moved = db
+        .prepare(
+          `UPDATE bgm_subject
+              SET watching = (SELECT a.watching FROM anime a WHERE a.bgm_id = bgm_subject.bgm_id)
+            WHERE watching IS NULL
+              AND EXISTS (SELECT 1 FROM anime a WHERE a.bgm_id = bgm_subject.bgm_id AND a.watching IS NOT NULL)`,
+        )
+        .run()
+      if (moved.changes) logger.info({ rows: moved.changes }, 'db.migrate backfill bgm_subject.watching')
+      db.exec('ALTER TABLE anime DROP COLUMN watching')
+      logger.warn('db.migrate drop anime.watching')
+    } catch (err) {
+      logger.warn({ err: err.message }, 'db.migrate drop watching fail')
+    }
+  }
+
+  if (cols.has('bgm_miss_count')) {
+    try {
+      db.exec('ALTER TABLE anime DROP COLUMN bgm_miss_count')
+      logger.warn('db.migrate drop anime.bgm_miss_count')
+    } catch (err) {
+      logger.warn({ err: err.message }, 'db.migrate drop bgm_miss_count fail')
+    }
+  }
+
+  if (cols.has('series_all_movies')) {
+    try {
+      db.exec('ALTER TABLE anime DROP COLUMN series_all_movies')
+      logger.warn('db.migrate drop anime.series_all_movies')
+    } catch (err) {
+      logger.warn({ err: err.message }, 'db.migrate drop series_all_movies fail')
+    }
   }
 }
 
