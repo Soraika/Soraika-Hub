@@ -125,6 +125,16 @@ export const SETTINGS_FIELDS = [
      分类名沿用旧系统的 soraika-hub，这样新种子和盘上已有的 176 条在 qB 里还是同一堆。 */
   { path: 'qb.saveRoot', env: 'QB_SAVE_ROOT', group: 'qb', section: '归档', label: '归档目录', type: 'text', advanced: true, hint: '下载落到这里，按番名建子目录' },
   { path: 'qb.category', env: 'QB_CATEGORY', group: 'qb', section: '归档', label: '分类', type: 'text', advanced: true, hint: 'qBittorrent 里的分类名' },
+  {
+    path: 'qb.autoRename',
+    env: 'QB_AUTO_RENAME',
+    group: 'qb',
+    section: '归档',
+    label: '自动重命名',
+    type: 'boolean',
+    advanced: true,
+    hint: '后台每分钟把「已完成」的种子统一命名（任务名旧格式 + 文件名 番名 S01E01；qB 内改名，不动数据）',
+  },
 ]
 
 /**

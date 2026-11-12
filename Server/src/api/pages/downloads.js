@@ -418,3 +418,89 @@ export async function renameDownloads({ animeId, dryRun = true } = {}, { log = l
   log.info({ animeId: row.id, done: done.length, failed: failed.length }, 'downloads.rename done')
   return { dryRun: false, title, plan, done, failed, skipped }
 }
+
+/**
+ * 自动重命名队列（worker 每分钟跑一次 / CLI 手动）
+ * ---------------------------------------------------------------------------
+ * 与「按作品重命名」同一套规则，区别是**扫全库**：把 qB 里所有「已完成 +
+ * 单集 + 认得出番名」的种子统一成「任务名旧格式 + 文件名 番名 S01E01」。
+ * 三条约束：
+ *   · 只改**已完成**的（下载中的文件还在写、名字随时会变）；
+ *   · 合集（`01-12`）与多文件种子跳过（改的是种子内相对路径，合集风险大）；
+ *   · 每次最多改 `limit` 条（默认 10）—— 后台慢慢来，不卡 qB、也不刷日志。
+ * @param {{ limit?: number, dryRun?: boolean }} [options]
+ */
+export async function renameAllDownloads({ limit = 10, dryRun = true } = {}, { log = logger } = {}) {
+  if (!qbConfigured()) return { configured: false, plan: [], done: [], failed: [], skipped: [], skippedCount: 0 }
+  const torrents = await qbTorrents({ fresh: true })
+  const plan = []
+  const skipped = []
+  let skippedCount = 0
+  const noteSkip = (name, reason) => {
+    skippedCount++
+    if (skipped.length < 20) skipped.push({ name, reason })
+  }
+
+  for (const t of torrents) {
+    if (plan.length >= limit) break
+    const row = resolveAnime(t)
+    if (!row) continue // 认不出的留给下载页「未识别」，不在这里瞎猜
+    const item = normalizeTorrent(t)
+    if (item.kind !== 'done') continue
+    if (!item.episode || item.episode.includes('-')) {
+      noteSkip(t.name, item.episode ? '合集（多文件）' : '认不出集数')
+      continue
+    }
+    const ext = extensionOf(item.fileName)
+    if (!ext) {
+      noteSkip(t.name, '多文件种子（没有扩展名）')
+      continue
+    }
+    const target = renameTargetOf({
+      title: row.title_bgm || row.title_mikan || row.title_bgm_origin,
+      mikanId: row.mikan_id || '',
+      season: item.season || Number(row.series_index) || 1,
+      episode: item.episode,
+      ext,
+      subgroup: item.subgroup,
+      rssId: rssIdOfSubgroup(item.subgroup),
+    })
+    if (!target) {
+      noteSkip(t.name, '生成不出目标名')
+      continue
+    }
+    // 已经符合规则的静默跳过（不刷 skipped 列表，否则每次都是同一批）
+    if (item.fileName === target.fileName && t.name === target.torrentName) continue
+    plan.push({
+      hash: t.hash,
+      animeId: row.id,
+      oldName: t.name,
+      newName: target.torrentName,
+      oldFileName: item.fileName,
+      newFileName: target.fileName,
+    })
+  }
+
+  if (dryRun) {
+    log.info({ plan: plan.length, skipped: skippedCount }, 'downloads.rename-all dry-run')
+    return { configured: true, dryRun: true, plan, skipped, skippedCount }
+  }
+
+  const done = []
+  const failed = []
+  for (const item of plan) {
+    try {
+      if (item.oldFileName !== item.newFileName) {
+        await qbRenameFile({ hash: item.hash, oldPath: item.oldFileName, newPath: item.newFileName })
+      }
+      if (item.oldName !== item.newName) await qbRenameTorrent({ hash: item.hash, name: item.newName })
+      done.push(item)
+    } catch (err) {
+      failed.push({ ...item, reason: err.message })
+    }
+  }
+  if (done.length || failed.length) {
+    log.info({ done: done.length, failed: failed.length, skipped: skippedCount }, 'downloads.rename-all done')
+  }
+  return { configured: true, dryRun: false, plan, done, failed, skipped, skippedCount }
+}

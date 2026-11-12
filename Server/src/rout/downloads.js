@@ -8,7 +8,7 @@
  * 业务在 api/pages/downloads.js，这里只做参数整形与信封。
  */
 import { Router } from 'express'
-import { addDownloads, getAnimeDownloads, getDownloads, renameDownloads } from '../api/pages/downloads.js'
+import { addDownloads, getAnimeDownloads, getDownloads, renameAllDownloads, renameDownloads } from '../api/pages/downloads.js'
 import { qbConfigured, qbTransfer, qbVersions } from '../api/sources/qb.js'
 import { fail } from '../lib/errors.js'
 
@@ -64,6 +64,23 @@ downloadsRouter.post('/downloads/rename', async (req, res, next) => {
     const { animeId, dryRun } = req.body || {}
     const data = await renameDownloads(
       { animeId: animeIdOf(animeId), dryRun: dryRun !== false },
+      { log: req.log },
+    )
+    res.json({ ok: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/downloads/rename-all —— 全库重命名（队列手动触发 / CLI）
+ * body：{ limit?, dryRun? }，**dryRun 默认 true**。
+ */
+downloadsRouter.post('/downloads/rename-all', async (req, res, next) => {
+  try {
+    const { limit, dryRun } = req.body || {}
+    const data = await renameAllDownloads(
+      { limit: Math.max(1, Math.min(100, Number(limit) || 10)), dryRun: dryRun !== false },
       { log: req.log },
     )
     res.json({ ok: true, data })

@@ -34,6 +34,7 @@ import { logger } from '../lib/logger.js'
 import { enrichOne, lastDailyBoundary, refreshStaleOne } from './enrich.js'
 import { updateDump } from './dump-update.js'
 import { fillSeriesFor } from './series.js'
+import { renameAllDownloads } from '../api/pages/downloads.js'
 
 /** 运行状态（模块内私有：外部只能通过 getWorkerState() 拿快照，避免被随手改） */
 const workerState = {
@@ -47,6 +48,8 @@ const workerState = {
   daily: { at: '', year: 0, boundaryAt: 0, refreshed: 0, due: 0, doneAt: 0 },
   /** 触发③：系列链补齐（新作品入库后算一次；老系列不主动重算 —— 见 CONVENTIONS.md §10.1） */
   series: { processed: 0, done: 0, skipped: 0, pending: 0, doneTotal: 0, cooldownUntil: 0 },
+  /** 触发④：自动重命名队列（每分钟扫一遍已完成的种子；qB.autoRename 可关） */
+  rename: { enabled: false, at: 0, renamed: 0, failed: 0, lastError: null },
   /** 离线 dump 的自动更新（每天到点检查一次；下载/导入是后台异步跑的，不挡其它队列） */
   dump: {
     at: '',
@@ -72,6 +75,9 @@ let seriesFailStreak = 0
 let seriesCooldownUntil = 0
 /** dump 更新的失败退避（最多 6 小时；换进程后由 dump_state.checked_at 决定还要不要再查） */
 let dumpFailStreak = 0
+/** 自动重命名队列的间隔（60 秒一次；每次最多 10 条） */
+const RENAME_EVERY_MS = 60_000
+let lastRenameAt = 0
 /** 循环的 promise（优雅停机时等它退出） */
 let loopDone = null
 /** 唤醒正在休眠的循环：停机时不用干等一个 idleMs */
@@ -278,6 +284,27 @@ async function loop(log) {
         workerState.series.cooldownUntil = seriesCooldownUntil
         worked = true
         await pause(config.worker.gapMs)
+      }
+    }
+
+    // ── 触发④：自动重命名队列（每分钟一次，每次最多 10 条）────────────────
+    // 只认「已完成」的种子；qB 没配 / 设置里关掉就整段跳过。
+    // 有改名就算"干过活"—— 不睡 30 秒，直接下一轮继续清（最多几分钟清完）。
+    if (config.qb?.autoRename && Date.now() - lastRenameAt >= RENAME_EVERY_MS) {
+      lastRenameAt = Date.now()
+      try {
+        const renamed = await renameAllDownloads({ limit: 10, dryRun: false }, { log })
+        workerState.rename.enabled = true
+        workerState.rename.at = Date.now()
+        if (renamed.done?.length) workerState.rename.renamed += renamed.done.length
+        if (renamed.failed?.length) workerState.rename.failed += renamed.failed.length
+        if (renamed.done?.length || renamed.failed?.length) {
+          log.info({ done: renamed.done.length, failed: renamed.failed.length }, 'worker.rename done')
+          worked = true
+        }
+      } catch (err) {
+        workerState.rename.lastError = err?.message || String(err)
+        log.warn({ err: err?.message }, 'worker.rename fail')
       }
     }
 

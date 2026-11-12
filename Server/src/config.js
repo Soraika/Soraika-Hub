@@ -138,6 +138,15 @@ export const config = {
      */
     saveRoot: '/downloads/anime',
     category: 'soraika-hub',
+    /**
+     * 自动重命名队列
+     * -----------------------------------------------------------------------
+     * 后台每分钟扫一遍「已完成」的种子，把名字统一成
+     *   任务名 `[mikanId][番名][季][集][组rssId][组名]` + 文件名 `番名 S01E01.ext`
+     * 只动 qB 里的名字（rename / renameFile），不改数据、不影响做种；
+     * 合集（多文件）与认不出集数的跳过。设置页可以关掉。
+     */
+    autoRename: true,
   },
 
   /**

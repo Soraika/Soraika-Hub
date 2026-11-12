@@ -344,6 +344,14 @@ try {
   const missingRename = await post('/api/downloads/rename', { animeId: 99999999 })
   check(missingRename.res.status === 404 && missingRename.body?.error?.code === 'NOT_FOUND', '重命名：不存在的作品 → 404')
 
+  /* 自动重命名队列：默认 dry-run（只给计划，不写 qB） */
+  const allDry = await post('/api/downloads/rename-all', { limit: 3 })
+  check(
+    allDry.res.ok && allDry.body?.data?.dryRun === true && Array.isArray(allDry.body.data.plan),
+    '重命名队列：dry-run 返回计划（默认不写 qB）',
+  )
+  check(Number.isInteger(allDry.body?.data?.skippedCount), '重命名队列：给出跳过计数（合集 / 多文件 / 已符合）')
+
   /* ── 设置页「测试连接」要回两个版本 ─────────────────────────────────── */
   const settingsTest = await post('/api/settings/test', { path: 'qb.base' })
   const t = settingsTest.body?.data
