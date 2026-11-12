@@ -129,20 +129,18 @@
                 >
                   <IconFileDownload :size="14" /> 种子
                 </a>
-                <!-- 已下载：整行标绿、按钮位置变成「已下载」（与旧版一致，不再重复加种） -->
-                <span v-if="isDownloaded(item)" class="op done" title="这一集已经在下载列表里">
-                  <IconCheck :size="14" /> 已下载
-                </span>
-                <!-- 下载：单条也能直接加种（不必先勾选） -->
+                <!-- 已下载：按钮变实底绿 + 文案「已添加」（旧版就是这么反馈的），不再重复加种 -->
                 <button
-                  v-else
                   class="op"
+                  :class="{ added: isDownloaded(item) }"
                   type="button"
-                  :aria-disabled="!downloadReady || downloading"
-                  :title="downloadHint"
+                  :disabled="isDownloaded(item) || !downloadReady || downloading"
+                  :title="isDownloaded(item) ? '这一集已经在下载列表里' : downloadHint"
                   @click.stop="downloadOne(item)"
                 >
-                  <IconDownload :size="14" /> 下载
+                  <IconCheck v-if="isDownloaded(item)" :size="14" />
+                  <IconDownload v-else :size="14" />
+                  {{ isDownloaded(item) ? '已添加' : '下载' }}
                 </button>
               </div>
             </div>
@@ -651,11 +649,15 @@ onBeforeUnmount(() => clearTimeout(copyTimer))
   border-color: var(--accent);
   color: var(--accent);
 }
-/* 已下载：绿色、不可点（和旧版一样一眼看出来） */
-.op.done {
-  border-color: color-mix(in srgb, var(--status-success) 40%, var(--border));
-  background: color-mix(in srgb, var(--status-success) 10%, var(--bg-card));
-  color: var(--status-success);
+/* 已下载：按钮变实底绿 + 白字（照旧版：点完立刻变色，一眼看出加过了） */
+.op.added {
+  background: var(--status-success);
+  border-color: var(--status-success);
+  color: var(--text-invert);
+  transform: scale(1.05);
+}
+.op.added:disabled {
+  opacity: 1;
   cursor: default;
 }
 /* 复制成功：变绿 + 文案换成「已复制」 */

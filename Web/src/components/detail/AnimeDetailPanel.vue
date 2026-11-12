@@ -500,6 +500,16 @@ async function onDownload(items) {
     if (existed && fresh) notes.push(`其中 ${existed} 个已存在`)
     if (res.failed.length) notes.push(`${res.failed.length} 条失败（${res.failed[0].title}：${res.failed[0].reason}）`)
     downloadMsg.value = head + (notes.length ? `；${notes.join('；')}` : '')
+    /* 点完立刻把这几集标成「已添加」（旧版就是按钮当场变绿）——
+       不等下次打开面板，也不用重新拉一次 qB。 */
+    if (res.added.length) {
+      const next = new Set(downloadedEpisodes.value)
+      for (const item of res.added) {
+        const ep = Number(String(item.episode || episodeOf(item.title) || '').trim())
+        if (Number.isInteger(ep) && ep > 0) next.add(ep)
+      }
+      downloadedEpisodes.value = next
+    }
     // 让容器知道「下载列表变了」——它会重取一次，下载页不用手动刷新
     emit('downloaded', res)
   } catch (err) {

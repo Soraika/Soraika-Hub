@@ -420,11 +420,11 @@ try {
         }),
     }),
   )
+  check(downloadedMark.includes('is-downloaded'), '已下载的集整行标绿')
   check(
-    downloadedMark.includes('is-downloaded') && downloadedMark.includes('已下载'),
-    '已下载的集：整行标绿 + 按钮变「已下载」',
+    /<button class="[^"]*\badded\b[^"]*"/.test(downloadedMark) && downloadedMark.includes('已添加'),
+    '已下载的那条按钮变实底绿「已添加」（旧版交互）',
   )
-  check(downloadedMark.includes('class="op done"'), '已下载的那条不再给「下载」按钮（避免重复加种）')
   const listEmpty = await renderToString(
     createSSRApp({ render: () => h(ReleaseList, { items: [], state: 'empty' }) }),
   )
