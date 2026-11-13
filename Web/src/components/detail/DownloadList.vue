@@ -120,7 +120,7 @@ import { isBatchEpisode } from '@/utils/episode'
  * 画质/字幕/片源来自**后端**：加种时就写进 qB 标签（`res:` / `sub:` / `src:`），
  * 改名之后也还在；老种子没有这些标签，后端会用文件名兜底解析（认不出就是空）。
  */
-defineProps({
+const props = defineProps({
   /** [{ hash, name, fileName, episode, subgroup, tags, sizeText, stateText, kind, progress, speedText, eta }] */
   items: { type: Array, default: () => [] },
   /** loading | error | empty | ready */
@@ -377,8 +377,6 @@ function etaText(item) {
 .dl-phase-leave-to {
   opacity: 0;
 }
-</style>
-
 /* ── 单条改名（任务名 / 文件名分开填）───────────────────────────────────
    放在这一行内部而不是弹窗：一次只看一条，改错了也跑不出这一行。 */
 .row-rename {
@@ -477,3 +475,4 @@ function etaText(item) {
   color: var(--danger);
   font-size: 0.7rem;
 }
+</style>
