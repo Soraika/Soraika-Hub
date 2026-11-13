@@ -197,7 +197,7 @@
               :batch-filter="aiBatchFilter"
               :download-ready="downloadReady"
               :downloading="downloading"
-              :downloaded-episodes="downloadedEpisodes"
+              :downloaded-hashes="downloadedHashes"
               @retry="retryReleases"
               @clear-filter="clearAiTags"
               @more="ensureParsed"
@@ -500,15 +500,12 @@ async function onDownload(items) {
     if (existed && fresh) notes.push(`其中 ${existed} 个已存在`)
     if (res.failed.length) notes.push(`${res.failed.length} 条失败（${res.failed[0].title}：${res.failed[0].reason}）`)
     downloadMsg.value = head + (notes.length ? `；${notes.join('；')}` : '')
-    /* 点完立刻把这几集标成「已添加」（旧版就是按钮当场变绿）——
+    /* 点完立刻把这几条按 hash 标成「已添加」（旧版就是按钮当场变绿）——
        不等下次打开面板，也不用重新拉一次 qB。 */
     if (res.added.length) {
-      const next = new Set(downloadedEpisodes.value)
-      for (const item of res.added) {
-        const ep = Number(String(item.episode || episodeOf(item.title) || '').trim())
-        if (Number.isInteger(ep) && ep > 0) next.add(ep)
-      }
-      downloadedEpisodes.value = next
+      const next = new Set(downloadedHashes.value)
+      for (const item of res.added) if (item.hash) next.add(String(item.hash).toLowerCase())
+      downloadedHashes.value = next
     }
     // 让容器知道「下载列表变了」——它会重取一次，下载页不用手动刷新
     emit('downloaded', res)
@@ -555,23 +552,21 @@ async function onRename() {
 }
 
 /**
- * 资源列表的「已下载」标记 —— 哪些集已经在 qB 里了
+ * 资源列表的「已下载」标记 —— **按 torrent hash 判定**（旧版就是这么做的）
  * ---------------------------------------------------------------------------
- * 只是**附注**：qB 没配 / 取不到就当没有（不把资源列表拖进错误态）。
- * 只认单集数字（合集 `01-12` 不标，避免「整季都算已下」的错觉）。
+ * 不是按集号：同一集不同字幕组是不同的种子，按集号标会把没下过的也说成已下。
+ * hash 来源：qB torrents 的 `hash`；资源条目里的 `magnetHash`（RSS pageLink 末段）。
+ * 只是附注：qB 没配 / 取不到就当没有（不把资源列表拖进错误态）。
  */
-const downloadedEpisodes = ref(new Set())
+const downloadedHashes = ref(new Set())
 
-async function loadDownloadedEpisodes(id) {
-  downloadedEpisodes.value = new Set()
+async function loadDownloadedHashes(id) {
+  downloadedHashes.value = new Set()
   try {
     const res = await fetchAnimeDownloads(id)
     const set = new Set()
-    for (const item of res.items || []) {
-      const ep = String(item.episode || '')
-      if (/^\d{1,4}$/.test(ep)) set.add(Number(ep))
-    }
-    downloadedEpisodes.value = set
+    for (const item of res.items || []) if (item.hash) set.add(String(item.hash).toLowerCase())
+    downloadedHashes.value = set
   } catch {
     /* 标记失败不影响列表 */
   }
@@ -588,7 +583,7 @@ watch(
     seriesOpen.value = false
     downloadMsg.value = ''
     renameMsg.value = ''
-    downloadedEpisodes.value = new Set()
+    downloadedHashes.value = new Set()
     resetSeries()
     if (!id) {
       mikan.reset()
@@ -602,7 +597,7 @@ watch(
     } else {
       downloaded.reset()
       mikan.open(id)
-      void loadDownloadedEpisodes(id) // 「已下载」标绿（取不到就当没有）
+      void loadDownloadedHashes(id) // 「已下载」按 hash 标绿（取不到就当没有）
     }
   },
   { immediate: true },

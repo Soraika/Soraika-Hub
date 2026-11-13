@@ -102,8 +102,12 @@ check(
   renameOne.torrentName === '[3992][尼古喵喵][1][01][1205][樱桃花字幕组]',
   `任务名 = 旧方括号格式 → ${renameOne.torrentName}`,
 )
-check(renameTargetOf({ title: 'x', episode: '01-12', ext: '.mkv' }) === null, '合集（多文件）不参与重命名')
-check(renameTargetOf({ title: 'x', episode: '01', ext: '' }) === null, '多文件种子（没有扩展名）跳过')
+check(renameTargetOf({ title: 'x', episode: '01-12', ext: '.mkv' }).fileName === '', '合集（多文件）不改文件名')
+check(
+  renameTargetOf({ title: 'x', episode: '01-12', ext: '.mkv' }).torrentName === '[][x][1][01-12][][]',
+  '合集仍然改任务名（集号是区间）',
+)
+check(renameTargetOf({ title: 'x', episode: '01', ext: '' }).fileName === '', '多文件种子（没有扩展名）不改文件名')
 check(renameTargetOf({ title: '', episode: '01', ext: '.mkv' }) === null, '没有番名 → 跳过')
 check(renameTargetOf({ title: 'a/b:c', episode: '3', ext: 'mkv' }).fileName === 'a b c S01E03.mkv', '文件名里的非法字符被替换')
 check(extensionOf('a.MKV') === '.mkv' && extensionOf('SE01') === '', '扩展名：有就转小写，多文件目录给空')

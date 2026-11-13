@@ -17,23 +17,31 @@ import {
   episodeOf,
   episodeOrder,
   extensionOf,
+  fileNameOf,
   kindOf,
   mikanIdOf,
   missingEpisodesOf,
   percentOf,
-  renameTargetOf,
   seasonIndexOf,
   sizeText,
   splitSavePath,
   stateTextOf,
   subgroupOf,
   tagsOf,
+  torrentNameOf,
 } from '../../lib/downloads.js'
 import { metaFromTags, metaOfText, metaTagsOf, releaseMetaTags } from '../../lib/release-tags.js'
 import { fail } from '../../lib/errors.js'
 import { posterUrlOf } from '../../lib/format.js'
 import { logger } from '../../lib/logger.js'
-import { qbAddTorrent, qbConfigured, qbRenameFile, qbRenameTorrent, qbTorrents, qbTransfer, qbVersions } from '../sources/qb.js'
+import { qbAddTorrent, qbAddTorrentFile, qbConfigured, qbRenameFile, qbRenameTorrent, qbTorrents, qbTransfer, qbVersions } from '../sources/qb.js'
+
+/** 一条资源对应哪个 btih：磁力里的、或 .torrent 文件名里的（RSS 的 pageLink 末段也是它） */
+function hashOfRelease(item) {
+  const text = `${item.magnet || ''} ${item.torrentUrl || ''} ${item.magnetHash || ''}`
+  const m = text.match(/urn:btih:([0-9a-z]{32,40})/i) || text.match(/([0-9a-f]{40})\.torrent/i) || text.match(/\b([0-9a-f]{40})\b/i)
+  return m ? m[1].toLowerCase() : ''
+}
 
 /** 认不出的组名（老种子 / 手动加种没有 `sg:` 标签时都落这里） */
 const UNKNOWN_GROUP = '未标注字幕组'
@@ -306,26 +314,57 @@ export async function addDownloads({ animeId, subgroup = '', season = 1, items =
   const added = []
   const failed = []
   for (const item of items) {
-    const url = String(item.magnet || item.torrentUrl || '').trim()
-    if (!url) {
+    const magnet = String(item.magnet || '').trim()
+    const torrentUrl = String(item.torrentUrl || '').trim()
+    if (!magnet && !torrentUrl) {
       failed.push({ title: item.title, reason: '这条资源没有磁力 / 种子链接' })
       continue
     }
     /**
-     * **加种时就把元数据写进标签**（`res:1080P` / `sub:简日内嵌` / `src:WEB-DL`）。
+     * 加种时就把元数据写进标签（`res:1080P` / `sub:简日内嵌` / `src:WEB-DL`）。
      * 这是唯一能扛住改名的存法：文件名改成 `番名 S01E04.mkv` 之后，画质与字幕信息
      * 在名字里就没了，事后**推不出来**（旧系统 113/176 条就是这么丢的）。
      */
     const meta = metaOfText(item.title)
     const tags = [baseTags, ...metaTagsOf(meta)].filter(Boolean).join(',')
+    const hash = hashOfRelease(item)
     try {
-      const result = await qbAddTorrent({ url, savePath, tags, category: config.qb?.category })
+      let result
+      if (torrentUrl) {
+        /* RSS 的默认产物就是 .torrent：**服务端取下来、把文件本体交给 qB**。
+           不把 URL 甩给 qB —— 那要求 qB 自己能访问 Mikan（常常不行/被 522），
+           而且磁力是我们用 hash 拼的（没有 tracker），速度也差。 */
+        try {
+          const res = await fetch(torrentUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 SoraikaHub', Referer: 'https://mikanime.tv/' },
+            signal: AbortSignal.timeout(20000),
+          })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const buffer = Buffer.from(await res.arrayBuffer())
+          if (!buffer.length) throw new Error('空种子')
+          result = await qbAddTorrentFile({
+            buffer,
+            filename: `${hash || Date.now()}.torrent`,
+            savePath,
+            tags,
+            category: config.qb?.category,
+          })
+        } catch (err) {
+          // 取不到种子文件就退回「把 URL 交给 qB」（有些镜像不支持服务端取）
+          log.warn({ title: item.title, err: err.message }, 'downloads.add torrent-fetch fallback')
+          result = await qbAddTorrent({ url: torrentUrl, savePath, tags, category: config.qb?.category })
+        }
+      } else {
+        result = await qbAddTorrent({ url: magnet, savePath, tags, category: config.qb?.category })
+      }
       added.push({
         title: item.title,
         episode: item.episode || episodeOf(item.title),
         tags,
         /** 本来就在列表里（qB 409）—— 前端据此说「已存在」而不是「刚加入」 */
         existed: Boolean(result?.existed),
+        /** hash：前端据此把这一条标成「已添加」（与 qB 里的 hash 对得上） */
+        hash,
       })
     } catch (err) {
       failed.push({ title: item.title, reason: err.message })
@@ -362,38 +401,37 @@ export async function renameDownloads({ animeId, dryRun = true } = {}, { log = l
 
   for (const t of mine) {
     const item = normalizeTorrent(t)
-    if (!item.episode || item.episode.includes('-')) {
-      skipped.push({ name: t.name, reason: item.episode ? '合集（多文件）' : '认不出集数' })
+    if (!item.episode) {
+      skipped.push({ name: t.name, reason: '认不出集数' })
       continue
     }
-    const ext = extensionOf(item.fileName)
-    if (!ext) {
-      skipped.push({ name: t.name, reason: '多文件种子（没有扩展名）' })
-      continue
-    }
-    const target = renameTargetOf({
+    const season = item.season || Number(row.series_index) || 1
+    const torrentName = torrentNameOf({
       title,
       mikanId: row.mikan_id || '',
-      season: item.season || Number(row.series_index) || 1,
+      season,
       episode: item.episode,
-      ext,
       subgroup: item.subgroup,
       rssId: rssIdOfSubgroup(item.subgroup),
     })
-    if (!target) {
-      skipped.push({ name: t.name, reason: '生成不出目标名' })
-      continue
-    }
-    if (item.fileName === target.fileName && t.name === target.torrentName) {
+    const ext = extensionOf(item.fileName)
+    const fileName = /^\d{1,4}$/.test(item.episode) && ext ? fileNameOf({ title, season, episode: item.episode, ext }) : ''
+    const renameTorrent = Boolean(torrentName) && t.name !== torrentName
+    const renameFile = Boolean(fileName) && item.fileName !== fileName
+    if (!renameTorrent && !renameFile) {
       skipped.push({ name: t.name, reason: '已符合命名规则' })
       continue
     }
     plan.push({
       hash: t.hash,
       oldName: t.name,
-      newName: target.torrentName,
+      newName: torrentName || t.name,
       oldFileName: item.fileName,
-      newFileName: target.fileName,
+      newFileName: fileName || item.fileName,
+      /** 任务名 / 文件名**分开标记**：合集只改任务名，不改里面的文件 */
+      renameTorrent,
+      renameFile,
+      episode: item.episode,
     })
   }
 
@@ -406,10 +444,8 @@ export async function renameDownloads({ animeId, dryRun = true } = {}, { log = l
   const failed = []
   for (const item of plan) {
     try {
-      if (item.oldFileName !== item.newFileName) {
-        await qbRenameFile({ hash: item.hash, oldPath: item.oldFileName, newPath: item.newFileName })
-      }
-      if (item.oldName !== item.newName) await qbRenameTorrent({ hash: item.hash, name: item.newName })
+      if (item.renameFile) await qbRenameFile({ hash: item.hash, oldPath: item.oldFileName, newPath: item.newFileName })
+      if (item.renameTorrent) await qbRenameTorrent({ hash: item.hash, name: item.newName })
       done.push(item)
     } catch (err) {
       failed.push({ ...item, reason: err.message })
@@ -447,37 +483,37 @@ export async function renameAllDownloads({ limit = 10, dryRun = true } = {}, { l
     if (!row) continue // 认不出的留给下载页「未识别」，不在这里瞎猜
     const item = normalizeTorrent(t)
     if (item.kind !== 'done') continue
-    if (!item.episode || item.episode.includes('-')) {
-      noteSkip(t.name, item.episode ? '合集（多文件）' : '认不出集数')
+    if (!item.episode) {
+      noteSkip(t.name, '认不出集数')
       continue
     }
-    const ext = extensionOf(item.fileName)
-    if (!ext) {
-      noteSkip(t.name, '多文件种子（没有扩展名）')
-      continue
-    }
-    const target = renameTargetOf({
-      title: row.title_bgm || row.title_mikan || row.title_bgm_origin,
+    const season = item.season || Number(row.series_index) || 1
+    const title = row.title_bgm || row.title_mikan || row.title_bgm_origin
+    const torrentName = torrentNameOf({
+      title,
       mikanId: row.mikan_id || '',
-      season: item.season || Number(row.series_index) || 1,
+      season,
       episode: item.episode,
-      ext,
       subgroup: item.subgroup,
       rssId: rssIdOfSubgroup(item.subgroup),
     })
-    if (!target) {
-      noteSkip(t.name, '生成不出目标名')
-      continue
-    }
+    const ext = extensionOf(item.fileName)
+    const fileName = /^\d{1,4}$/.test(item.episode) && ext ? fileNameOf({ title, season, episode: item.episode, ext }) : ''
+    const renameTorrent = Boolean(torrentName) && t.name !== torrentName
+    const renameFile = Boolean(fileName) && item.fileName !== fileName
     // 已经符合规则的静默跳过（不刷 skipped 列表，否则每次都是同一批）
-    if (item.fileName === target.fileName && t.name === target.torrentName) continue
+    if (!renameTorrent && !renameFile) continue
     plan.push({
       hash: t.hash,
       animeId: row.id,
       oldName: t.name,
-      newName: target.torrentName,
+      newName: torrentName || t.name,
       oldFileName: item.fileName,
-      newFileName: target.fileName,
+      newFileName: fileName || item.fileName,
+      /** 任务名 / 文件名分开标记：合集只改任务名，不动里面的文件 */
+      renameTorrent,
+      renameFile,
+      episode: item.episode,
     })
   }
 
@@ -490,10 +526,8 @@ export async function renameAllDownloads({ limit = 10, dryRun = true } = {}, { l
   const failed = []
   for (const item of plan) {
     try {
-      if (item.oldFileName !== item.newFileName) {
-        await qbRenameFile({ hash: item.hash, oldPath: item.oldFileName, newPath: item.newFileName })
-      }
-      if (item.oldName !== item.newName) await qbRenameTorrent({ hash: item.hash, name: item.newName })
+      if (item.renameFile) await qbRenameFile({ hash: item.hash, oldPath: item.oldFileName, newPath: item.newFileName })
+      if (item.renameTorrent) await qbRenameTorrent({ hash: item.hash, name: item.newName })
       done.push(item)
     } catch (err) {
       failed.push({ ...item, reason: err.message })

@@ -415,8 +415,7 @@ try {
         h(ReleaseList, {
           items: releaseItems,
           state: 'ready',
-          episodes: { [releaseItems[0].title]: '04' },
-          downloadedEpisodes: new Set([4]),
+          downloadedHashes: new Set([String(releaseItems[0].magnetHash).toLowerCase()]),
         }),
     }),
   )
@@ -1363,8 +1362,8 @@ try {
     '下载页面板有「重命名」按钮（先 dry-run 预览，确认后才改）',
   )
   check(
-    panelSource.includes('downloadedEpisodes') && panelSource.includes('loadDownloadedEpisodes'),
-    'Mikan 资源列表能拿到「已下载」集号（标绿用，取不到不影响列表）',
+    panelSource.includes('downloadedHashes') && panelSource.includes('loadDownloadedHashes'),
+    'Mikan 资源列表能拿到已下载的 hash（标绿用，取不到不影响列表）',
   )
   const { default: DownloadsPageCard } = await vite.ssrLoadModule('/src/pages/DownloadsPage.vue')
   const dlCardHtml = await renderToString(

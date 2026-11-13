@@ -297,21 +297,13 @@ export function missingEpisodesOf(episodes, totalEpisodes) {
 }
 
 /**
- * 重命名的目标：qB 的**任务名**（旧方括号格式）+ **实际文件名**
+ * 任务名（qB 里显示的名字）—— 旧方括号格式
  * ---------------------------------------------------------------------------
- * 任务名沿用旧系统那套（qB 里 183 条有 181 条长这样）：
- *   `[mikanId][番名][季][集][组rssId][组名]`
- *   `[3905][上伊那牡丹，酒醉身姿似百合花般][1][10][382][喵萌奶茶屋]`
- * 实际文件名用「中文番名 + 季集号」（与归档目录同一套命名，便于人看）：
- *   `上伊那牡丹，酒醉身姿似百合花般 S01E10.mkv`
- *
- * 只处理「单集 + 能认出扩展名」的条目：合集（`01-12`）是多文件、季番目录结构不同，
- * 改名收益小、风险大，调用方应跳过（返回 null）。
- * @param {{ title:string, mikanId?:string|number, season?:number|string, episode:string,
- *           ext?:string, subgroup?:string, rssId?:string|number }} params
- * @returns {{ fileBase:string, fileName:string, torrentName:string } | null}
+ * `[mikanId][番名][季][集][组rssId][组名]`
+ * 合集也照样能给（集号是 `04-05` 这种区间）—— 任务名和文件名不是一个东西：
+ * 任务名对合集有意义，文件名只对单文件种子有意义。
  */
-export function renameTargetOf({ title, mikanId = '', season = 1, episode, ext = '', subgroup = '', rssId = '' }) {
+export function torrentNameOf({ title, mikanId = '', season = 1, episode, subgroup = '', rssId = '' }) {
   const clean = (value) =>
     String(value ?? '')
       .replace(/[\\/:*?"<>|[\]]/g, ' ')
@@ -319,16 +311,40 @@ export function renameTargetOf({ title, mikanId = '', season = 1, episode, ext =
       .trim()
   const name = clean(title)
   const ep = String(episode || '').trim()
+  if (!name || !/^\d{1,4}(-\d{1,4})?$/.test(ep)) return null
+  const seasonNum = Math.max(1, Number(season) || 1)
+  const [from, to] = ep.split('-')
+  const epText = to ? `${from.padStart(2, '0')}-${to.padStart(2, '0')}` : from.padStart(2, '0')
+  return `[${clean(mikanId)}][${name}][${seasonNum}][${epText}][${clean(rssId)}][${clean(subgroup)}]`
+}
+
+/**
+ * 文件名（落盘名）—— `番名 S01E01.ext`
+ * 只对**单集 + 有扩展名**成立；合集/多文件种子返回 null（不动里面的文件）。
+ */
+export function fileNameOf({ title, season = 1, episode, ext = '' }) {
+  const clean = (value) => String(value ?? '').replace(/[\\/:*?"<>|[\]]/g, ' ').replace(/\s+/g, ' ').trim()
+  const name = clean(title)
+  const ep = String(episode || '').trim()
   const suffix = ext ? (ext.startsWith('.') ? ext : `.${ext}`) : ''
   if (!name || !/^\d{1,4}$/.test(ep) || !suffix) return null
-
   const seasonNum = Math.max(1, Number(season) || 1)
-  const seasonText = String(seasonNum).padStart(2, '0')
-  const epText = ep.padStart(2, '0')
-  const fileBase = `${name} S${seasonText}E${epText}`
-  const group = clean(subgroup)
-  const torrentName = `[${clean(mikanId)}][${name}][${seasonNum}][${epText}][${clean(rssId)}][${group}]`
-  return { fileBase, fileName: `${fileBase}${suffix.toLowerCase()}`, torrentName }
+  return `${name} S${String(seasonNum).padStart(2, '0')}E${ep.padStart(2, '0')}${suffix.toLowerCase()}`
+}
+
+/**
+ * 重命名的目标：任务名 + 文件名（两者**各自独立**，合集只有任务名）
+ * @returns {{ fileBase:string, fileName:string, torrentName:string } | null}
+ */
+export function renameTargetOf({ title, mikanId = '', season = 1, episode, ext = '', subgroup = '', rssId = '' }) {
+  const torrentName = torrentNameOf({ title, mikanId, season, episode, subgroup, rssId })
+  const fileName = fileNameOf({ title, season, episode, ext })
+  if (!torrentName && !fileName) return null
+  return {
+    fileBase: fileName ? fileName.replace(/\.[a-z0-9]+$/i, '') : '',
+    fileName: fileName || '',
+    torrentName: torrentName || '',
+  }
 }
 
 /** 文件名里的扩展名（多文件种子没有扩展名 → 空） */

@@ -84,6 +84,51 @@ export async function qbTorrents({ fresh = false } = {}) {
 const ADD_PATH = '/api/v2/torrents/add'
 
 /**
+ * 上传 .torrent 文件加种（不是把 URL 交给 qB 去取）
+ * ---------------------------------------------------------------------------
+ * RSS 给的默认就是 .torrent（`torrentUrl`），而磁力是我们用 hash 拼的（没有 tracker）。
+ * 把文件本体交给 qB 最稳：不依赖 qB 能不能访问 Mikan、也不会丢 tracker。
+ * qB 对上传成功的应答与 add 一样（`Ok.` / JSON / 409 已存在）。
+ */
+export async function qbAddTorrentFile({ buffer, filename = 'file.torrent', savePath, tags = '', category, paused = false } = {}) {
+  ensureConfigured()
+  if (!buffer?.length) throw fail('BAD_REQUEST', '缺少种子文件内容')
+
+  const form = new FormData()
+  form.append('torrents', new Blob([buffer], { type: 'application/x-bittorrent' }), filename)
+  if (savePath) form.append('savepath', savePath)
+  if (category) form.append('category', category)
+  if (tags) form.append('tags', tags)
+  if (paused) form.append('paused', 'true')
+
+  let status = 0
+  let text = ''
+  try {
+    const res = await fetch(new URL(ADD_PATH, config.qb.base).href, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.qb.apiKey}` },
+      body: form,
+      signal: AbortSignal.timeout(60000),
+    })
+    status = res.status
+    text = await res.text()
+  } catch (err) {
+    status = Number(err?.status) || 0
+    text = String(err?.bodyText || err?.message || '')
+  }
+
+  let verdict = classifyAddResult({ status, text })
+  if (!verdict.ok && status >= 200 && status < 300 && !String(text).trim()) {
+    verdict = { ok: true, existed: false, reason: '' } // 有些版本上传成功回空 body
+  }
+  if (status === 409) verdict = { ok: true, existed: true, reason: '种子已经在下载列表里' }
+  logger.info({ savePath, category, ok: verdict.ok, existed: verdict.existed, status, raw: String(text).slice(0, 40) }, 'qb.add-file done')
+  if (!verdict.ok) throw fail('UPSTREAM', verdict.reason)
+  torrentCache.at = 0
+  return { ok: true, existed: verdict.existed, raw: String(text ?? '') }
+}
+
+/**
  * qB 加种应答 → 结论（纯函数，验收直接喂数据）
  * ---------------------------------------------------------------------------
  * qB 5.x 的三种真实应答，实测出来的：

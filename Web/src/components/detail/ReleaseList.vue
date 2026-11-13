@@ -195,8 +195,8 @@ const props = defineProps({
   downloadReady: { type: Boolean, default: false },
   /** 正在加种（按钮显示「正在加种…」并挡住重复点击） */
   downloading: { type: Boolean, default: false },
-  /** 已下载的集号（Set<number>）：命中就整行标绿、按钮变「已下载」 */
-  downloadedEpisodes: { type: Object, default: () => new Set() },
+  /** 已下载的种子 hash（Set<string>）：命中就整行标绿、按钮变「已添加」（旧版按 hash 判定） */
+  downloadedHashes: { type: Object, default: () => new Set() },
 })
 const emit = defineEmits(['retry', 'clear-filter', 'more', 'download'])
 
@@ -218,12 +218,12 @@ let copyTimer = null
 const epOf = (item) => String(props.episodes?.[item.title] ?? '').trim() || episodeOf(item.title)
 
 /**
- * 这一集是否已经在下载列表里（qB 里已有）
- * 只认**单集数字**：合集（`01-12`）不标，否则会给人「整季都下过了」的错觉。
+ * 这一条是否已经在 qB 里 —— **按 torrent hash 判定**（旧版就是这么做的）
+ * 比按集号准：同一集不同字幕组是不同种子，按集号会把没下过的也标成已下。
  */
 function isDownloaded(item) {
-  const ep = Number(epOf(item))
-  return Boolean(ep) && props.downloadedEpisodes instanceof Set && props.downloadedEpisodes.has(ep)
+  const hash = String(item.magnetHash || '').toLowerCase()
+  return Boolean(hash) && props.downloadedHashes instanceof Set && props.downloadedHashes.has(hash)
 }
 
 /** 集号数字（排序用）：认不出集号 / 合集 / 特典 → 0（沉底） */
