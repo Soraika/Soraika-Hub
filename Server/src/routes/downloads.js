@@ -6,6 +6,8 @@
  *   POST /api/downloads               加种 `{ animeId, subgroup?, season?, items:[{title,magnet|torrentUrl}] }`
  *   GET  /api/downloads/torrent/:hash      单个种子：当前任务名 + 种子内文件 + 建议改名
  *   POST /api/downloads/torrent/:hash/rename  单个种子改名（任务名 / 文件名可分开传）
+ *   GET  /api/xunlei/status           迅雷连通性 + 容量（飞牛 NAS 上的迅雷应用）
+ *   GET  /api/xunlei/tasks            迅雷任务列表（只读；迅雷没有改名接口）
  *   GET  /api/qb/status               qB 状态（两个版本 + 速度）；设置页与下载页顶部用
  * 业务在 api/pages/downloads.js，这里只做参数整形与信封。
  */
@@ -20,6 +22,7 @@ import {
   renameTorrentItem,
 } from './../api/pages/downloads.js'
 import { qbConfigured, qbTransfer, qbVersions } from './../api/sources/qb.js'
+import { xunleiAbout, xunleiConfigured, xunleiDevice, xunleiTasks } from './../api/sources/xunlei.js'
 import { fail } from './../lib/errors.js'
 
 export const downloadsRouter = Router()
@@ -132,6 +135,44 @@ downloadsRouter.post('/downloads/torrent/:hash/rename', async (req, res, next) =
       { log: req.log },
     )
     res.json({ ok: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * GET /api/xunlei/status —— 迅雷连得上吗、盘还剩多少
+ * 没配时同样不报错：`{ configured:false }`，界面照旧只显示 qB
+ */
+downloadsRouter.get('/xunlei/status', async (req, res, next) => {
+  try {
+    if (!xunleiConfigured()) return res.json({ ok: true, data: { configured: false } })
+    const [about, device] = await Promise.all([
+      xunleiAbout().catch((err) => ({ error: err.message })),
+      xunleiDevice().catch((err) => ({ error: err.message })),
+    ])
+    const quota = about?.quota || null
+    res.json({
+      ok: true,
+      data: {
+        configured: true,
+        quota: quota ? { limit: quota.limit, usage: quota.usage } : null,
+        user: device?.user || null,
+        downloads: device?.downloads || [],
+        error: about?.error || device?.error || '',
+      },
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/** GET /api/xunlei/tasks —— 迅雷任务列表（只读） */
+downloadsRouter.get('/xunlei/tasks', async (req, res, next) => {
+  try {
+    if (!xunleiConfigured()) return res.json({ ok: true, data: { configured: false, items: [] } })
+    const items = await xunleiTasks({ limit: Math.min(200, Number(req.query.limit) || 100) })
+    res.json({ ok: true, data: { configured: true, items, count: items.length } })
   } catch (err) {
     next(err)
   }

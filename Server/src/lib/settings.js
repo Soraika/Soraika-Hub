@@ -24,6 +24,7 @@ export const SETTINGS_GROUPS = [
   { key: 'worker', label: '后台任务', hint: '档案补齐与今年番剧的每日更新' },
   { key: 'cache', label: '缓存与图片', hint: '首页排期缓存、海报出图与浏览器缓存' },
   { key: 'qb', label: '下载', hint: 'qBittorrent，下载功能接入后才用得上' },
+  { key: 'xunlei', label: '迅雷', hint: '飞牛 NAS 上的迅雷应用，下载走它（改名只能走 qB）' },
 ]
 
 /**
@@ -135,6 +136,16 @@ export const SETTINGS_FIELDS = [
     advanced: true,
     hint: '后台自动统一任务名与文件名',
   },
+
+  // ── 迅雷（fnOS 版）─────────────────────────────────────────────────────
+  /* 这四项是「照着自己 NAS 抄」的，没有默认值可猜：base 是 fnOS 网关里的应用前缀，
+     cookie 是 fnOS 登录态，panAuth 是 3 天过期的 JWT，space 是设备 id。
+     全部留空 = 不启用迅雷，下载页只看 qB。 */
+  { path: 'xunlei.base', env: 'XUNLEI_BASE', group: 'xunlei', section: '迅雷', label: '接口地址', type: 'text', advanced: true, placeholder: 'http://NAS:5666/cgi/ThirdParty/xunlei/index.cgi', hint: 'fnOS 网关下的应用前缀' },
+  { path: 'xunlei.cookie', env: 'XUNLEI_COOKIE', group: 'xunlei', section: '迅雷', label: 'fnOS Cookie', type: 'secret', advanced: true, hint: '浏览器里复制整串 Cookie' },
+  { path: 'xunlei.panAuth', env: 'XUNLEI_PAN_AUTH', group: 'xunlei', section: '迅雷', label: 'pan_auth', type: 'secret', advanced: true, hint: 'JWT，3 天过期，过期要换' },
+  { path: 'xunlei.space', env: 'XUNLEI_SPACE', group: 'xunlei', section: '迅雷', label: '设备空间', type: 'text', advanced: true, placeholder: 'device_id#…', hint: '任务列表里的 space 字段' },
+  { path: 'xunlei.downloadDir', env: 'XUNLEI_DOWNLOAD_DIR', group: 'xunlei', section: '归档', label: '落盘目录', type: 'text', advanced: true, hint: 'NAS 上的真实路径' },
 ]
 
 /**

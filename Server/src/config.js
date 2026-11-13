@@ -150,6 +150,34 @@ export const config = {
   },
 
   /**
+   * 迅雷（fnOS 版）—— 下载走它，改名不走它
+   * ---------------------------------------------------------------------------
+   * 逆向结果见 `docs/XUNLEI-API.md`，三条要点：
+   *  · 它不是一个独立服务：接口挂在 fnOS 网关下 `/cgi/ThirdParty/xunlei/index.cgi`
+   *    （所以在 5666 上直接打 /tasks 拿到的是 fnOS 的 SPA，永远对不上）
+   *  · 鉴权 = 查询参数 `panAuth`（JWT，3 天过期）**加** fnOS 登录 cookie（`fnos-token`）；
+   *    只给其中一个会被回 `invalid token` 或 502
+   *  · **没有改名接口**（任务名、文件名都改不了），所以「改名」只能落在 qB
+   *    或者直接改 NAS 上的文件
+   */
+  xunlei: {
+    /** fnOS 基址 + 迅雷应用前缀，例如 http://192.168.5.2:5666/cgi/ThirdParty/xunlei/index.cgi */
+    base: '',
+    /** fnOS 登录 cookie 原文（`fnos-token=...; xtoken=...` 整串粘进来） */
+    cookie: '',
+    /** pan_auth（JWT，形如 eyJhbGciOi...，3 天过期） */
+    panAuth: '',
+    /** 设备空间 id，形如 device_id#7b399...
+     *  —— 从 `/drive/v1/tasks?type=user%23runner` 的应答里取 */
+    space: '',
+    /**
+     * 迅雷的落盘目录（**NAS 上的真实路径**，不是对外显示的 /应用文件/…）
+     * 默认值是 fnOS 迅雷应用的挂载点
+     */
+    downloadDir: '/var/apps/xunlei/shares/downloads',
+  },
+
+  /**
    * AI 能力（可选功能）—— OpenAI 兼容的 /chat/completions
    * ---------------------------------------------------------------------------
    * 默认按 DeepSeek 配：改 baseUrl + model 就能换成任何兼容网关
