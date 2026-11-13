@@ -83,11 +83,11 @@ function makeZip(entries) {
 const DB_FILE = `data/tmp-verify-archive-${process.pid}.db`
 process.env.DB_FILE = DB_FILE
 
-const { db } = await import('../src/db/index.js')
-const { runArchiveImport, resolveDumpSource } = await import('../src/jobs/import-archive.js')
-const { archivePatch, archiveTags, leadingId, ratingTotalOf } = await import('../src/lib/bgm-archive.js')
-const { countRelations, relatedOf, stubOf } = await import('../src/db/relation.js')
-const { walkSeries } = await import('../src/lib/series.js')
+const { db } = await import('./../src/db/index.js')
+const { runArchiveImport, resolveDumpSource } = await import('./../src/jobs/import-archive.js')
+const { archivePatch, archiveTags, leadingId, ratingTotalOf } = await import('./../src/domain/bgm-archive.js')
+const { countRelations, relatedOf, stubOf } = await import('./../src/db/relation.js')
+const { walkSeries } = await import('./../src/domain/series.js')
 
 const silent = { info() {}, warn() {}, error() {} }
 
@@ -274,7 +274,7 @@ check(
 
 /* ── 在线补关系（dump 覆盖不到的新番）：写回一次，之后不再打上游 ─────────── */
 console.log('\n— 在线补关系（逐条回退）')
-const { isRelationsKnown, saveRelationsFromApi } = await import('../src/db/relation.js')
+const { isRelationsKnown, saveRelationsFromApi } = await import('./../src/db/relation.js')
 check(isRelationsKnown('1') === true, 'dump 里出现过的 id 标记为「关系问过」')
 check(isRelationsKnown('777') === false, '没见过的 id → 需要打一次上游')
 saveRelationsFromApi('777', [
@@ -337,10 +337,10 @@ check(
 check(rowOf('2').tags === '["恋爱","校园"]', 'deflate 条目（subject.jsonlines）也读对了', rowOf('2').tags)
 
 console.log('\n— 自动更新（索引多源 / digest 跳过 / Range 续传 / sha256）')
-const { config } = await import('../src/config.js')
-const { fetchDumpIndex, downloadDump } = await import('../src/api/sources/bgm-dump.js')
-const { checkDump } = await import('../src/jobs/dump-update.js')
-const { saveDumpState } = await import('../src/db/dump.js')
+const { config } = await import('./../src/config.js')
+const { fetchDumpIndex, downloadDump } = await import('./../src/api/sources/bgm-dump.js')
+const { checkDump } = await import('./../src/jobs/dump-update.js')
+const { saveDumpState } = await import('./../src/db/dump.js')
 
 const digest = createHash('sha256').update(zipBuf).digest('hex')
 const dlDir = mkdtempSync(join(tmpdir(), 'bgm-dl-'))

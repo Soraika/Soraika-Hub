@@ -4,13 +4,23 @@
  *   GET  /api/downloads               卡片墙：一部番一张卡（已下几集 / 体积 / 状态）+ 未识别项
  *   GET  /api/downloads/:animeId      面板：已下载的按字幕组分组
  *   POST /api/downloads               加种 `{ animeId, subgroup?, season?, items:[{title,magnet|torrentUrl}] }`
+ *   GET  /api/downloads/torrent/:hash      单个种子：当前任务名 + 种子内文件 + 建议改名
+ *   POST /api/downloads/torrent/:hash/rename  单个种子改名（任务名 / 文件名可分开传）
  *   GET  /api/qb/status               qB 状态（两个版本 + 速度）；设置页与下载页顶部用
  * 业务在 api/pages/downloads.js，这里只做参数整形与信封。
  */
 import { Router } from 'express'
-import { addDownloads, getAnimeDownloads, getDownloads, renameAllDownloads, renameDownloads } from '../api/pages/downloads.js'
-import { qbConfigured, qbTransfer, qbVersions } from '../api/sources/qb.js'
-import { fail } from '../lib/errors.js'
+import {
+  addDownloads,
+  getAnimeDownloads,
+  getDownloads,
+  getTorrentNaming,
+  renameAllDownloads,
+  renameDownloads,
+  renameTorrentItem,
+} from './../api/pages/downloads.js'
+import { qbConfigured, qbTransfer, qbVersions } from './../api/sources/qb.js'
+import { fail } from './../lib/errors.js'
 
 export const downloadsRouter = Router()
 
@@ -19,6 +29,13 @@ function animeIdOf(raw) {
   const id = Number(raw)
   if (!Number.isInteger(id) || id <= 0) throw fail('BAD_REQUEST', 'animeId 需要是正整数')
   return id
+}
+
+/** 改名范围：只改任务名 / 只改文件名 / 两个都改（默认） */
+function scopeOf(raw) {
+  const text = String(raw || '').trim()
+  if (text === 'torrentName' || text === 'fileName') return text
+  return 'all'
 }
 
 /** GET /api/downloads?fresh=1 —— fresh 跳过 4 秒缓存（用户点「刷新」） */
@@ -61,9 +78,9 @@ downloadsRouter.post('/downloads', async (req, res, next) => {
  */
 downloadsRouter.post('/downloads/rename', async (req, res, next) => {
   try {
-    const { animeId, dryRun } = req.body || {}
+    const { animeId, dryRun, scope } = req.body || {}
     const data = await renameDownloads(
-      { animeId: animeIdOf(animeId), dryRun: dryRun !== false },
+      { animeId: animeIdOf(animeId), dryRun: dryRun !== false, scope: scopeOf(scope) },
       { log: req.log },
     )
     res.json({ ok: true, data })
@@ -78,9 +95,40 @@ downloadsRouter.post('/downloads/rename', async (req, res, next) => {
  */
 downloadsRouter.post('/downloads/rename-all', async (req, res, next) => {
   try {
-    const { limit, dryRun } = req.body || {}
+    const { limit, dryRun, scope } = req.body || {}
     const data = await renameAllDownloads(
-      { limit: Math.max(1, Math.min(100, Number(limit) || 10)), dryRun: dryRun !== false },
+      { limit: Math.max(1, Math.min(100, Number(limit) || 10)), dryRun: dryRun !== false, scope: scopeOf(scope) },
+      { log: req.log },
+    )
+    res.json({ ok: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * GET /api/downloads/torrent/:hash —— 单个种子的两种名字（界面弹窗用）
+ * 返回里 `suggest` 就是按规则算出来的目标：任务名一份、每个文件一份。
+ */
+downloadsRouter.get('/downloads/torrent/:hash', async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await getTorrentNaming({ hash: req.params.hash }) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/downloads/torrent/:hash/rename —— 单个种子改名
+ * body：
+ *   `{ torrentName?: string, files?: [{ oldPath, newPath }], dryRun?: boolean }`
+ * 两个名字**互不影响**：只传 torrentName 就只改任务名，只传 files 就只改文件。
+ */
+downloadsRouter.post('/downloads/torrent/:hash/rename', async (req, res, next) => {
+  try {
+    const { torrentName, files, dryRun } = req.body || {}
+    const data = await renameTorrentItem(
+      { hash: req.params.hash, torrentName, files, dryRun: dryRun === true },
       { log: req.log },
     )
     res.json({ ok: true, data })

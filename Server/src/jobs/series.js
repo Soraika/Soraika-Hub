@@ -20,12 +20,12 @@
  *   npm run series -- --force      # 全部重算（先把 series_checked_at 清空）
  */
 import { pathToFileURL } from 'node:url'
-import { classifySeries } from '../api/pages/ai.js'
-import { loadStoredSettings } from '../api/pages/settings.js'
-import { fetchRelatedSubjects, fetchSubject } from '../api/sources/bgm.js'
-import { config } from '../config.js'
-import { db, val } from '../db/index.js'
-import { hasRelations, isRelationsKnown, relatedOf, saveRelationsFromApi, stubOf } from '../db/relation.js'
+import { classifySeries } from './../api/pages/ai.js'
+import { loadStoredSettings } from './../api/pages/settings.js'
+import { fetchRelatedSubjects, fetchSubject } from './../api/sources/bgm.js'
+import { config } from './../config.js'
+import { db, val } from './../db/index.js'
+import { hasRelations, isRelationsKnown, relatedOf, saveRelationsFromApi, stubOf } from './../db/relation.js'
 import {
   ensureBgmStub,
   findByBgmIds,
@@ -34,10 +34,10 @@ import {
   setSeriesMeta,
   setSeriesPosition,
   updateAirDate,
-} from '../db/anime.js'
-import { logger } from '../lib/logger.js'
-import { pickRepresentative, walkSeries } from '../lib/series.js'
-import { SEASON_START_MONTH } from '../lib/season.js'
+} from './../db/anime.js'
+import { logger } from './../lib/logger.js'
+import { pickRepresentative, walkSeries } from './../domain/series.js'
+import { SEASON_START_MONTH } from './../domain/season.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 

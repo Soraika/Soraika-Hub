@@ -1,7 +1,7 @@
 /**
  * AI 接口
  * ---------------------------------------------------------------------------
- * 后端形状见 Server/src/rout/ai.js / Server/docs/MCP.md。
+ * 后端形状见 Server/src/routes/ai.js / Server/docs/MCP.md。
  * 要点：没配 key 不是错误。后端会回 AI_DISABLED（501），
  * 前端按 code 显示「未配置」，而不是弹「失败，请重试」（重试一万次也不会好）。
  */

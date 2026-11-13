@@ -18,12 +18,12 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { fetchSubject } from '../api/sources/bgm.js'
-import { config } from '../config.js'
-import { setPosterSource } from '../db/anime.js'
-import { fail } from '../lib/errors.js'
-import { request } from '../lib/http-client.js'
-import { logger } from '../lib/logger.js'
+import { fetchSubject } from './../api/sources/bgm.js'
+import { config } from './../config.js'
+import { setPosterSource } from './../db/anime.js'
+import { fail } from './../lib/errors.js'
+import { request } from './../lib/http-client.js'
+import { logger } from './../lib/logger.js'
 
 export const cacheDir = resolve(process.cwd(), config.image.dir)
 mkdirSync(cacheDir, { recursive: true })

@@ -8,8 +8,8 @@
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { config } from '../config.js'
-import { logger } from '../lib/logger.js'
+import { config } from './../config.js'
+import { logger } from './../lib/logger.js'
 import { finishV2, needsV2, startV2 } from './migrate-v2.js'
 
 const dbPath = resolve(process.cwd(), config.dbFile)

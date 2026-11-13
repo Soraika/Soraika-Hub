@@ -19,10 +19,10 @@
  *   npm run sweep -- --limit=100                 # 只跑前 100 个待扫 id
  */
 import { pathToFileURL } from 'node:url'
-import { getAnimeBangumiId, getAnimeTitle } from '../clients/Mikan.js'
-import { getScanWatermark, listScannedMikanIds, markMapChecked, maxScannedMikanId, rememberMikan, setScanWatermark } from '../db/map.js'
-import { logger } from '../lib/logger.js'
-import { tryBases } from '../lib/multi-source.js'
+import { getAnimeBangumiId, getAnimeTitle } from './../api/sources/transport/mikan.js'
+import { getScanWatermark, listScannedMikanIds, markMapChecked, maxScannedMikanId, rememberMikan, setScanWatermark } from './../db/map.js'
+import { logger } from './../lib/logger.js'
+import { tryBases } from './../lib/multi-source.js'
 
 /** 命令行参数：`--key=value` / `--flag`（不引依赖，够用就好） */
 const arg = (name, fallback) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? fallback

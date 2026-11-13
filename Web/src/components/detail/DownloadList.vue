@@ -57,6 +57,42 @@
 
           <!-- 右侧：字幕组（附注，不是分组维度）。名字长了两行截断，hover 看全名 -->
           <span class="subgroup" :title="item.subgroup || '未标注字幕组'">{{ item.subgroup || '未标注字幕组' }}</span>
+          <!-- 改名：只改这一条。任务名与文件名在这里是**两个输入框**，互不影响 -->
+          <button
+            class="row-rename"
+            type="button"
+            :disabled="renameBusy"
+            title="改这一条的名字（任务名 / 文件名 分开填）"
+            @click.stop="$emit('rename-open', item)"
+          >
+            改名
+          </button>
+
+          <!-- 内联编辑区：展开在下面，不弹窗（跟这一行绑在一起，不会看错条目） -->
+          <div v-if="draft && draft.hash === item.hash" class="rename-editor">
+            <p class="re-name-hint">
+              {{ draft.summary }}
+              <span class="re-tip">任务名 = qB 列表里那一行；文件名 = 盘上的真实文件名。两个可以只改一个。</span>
+            </p>
+
+            <label class="re-field">
+              <span class="re-label">任务名</span>
+              <input v-model="form.torrentName" class="re-input" spellcheck="false" :placeholder="draft.torrentName" />
+            </label>
+
+            <div v-for="(f, i) in form.files" :key="f.oldPath" class="re-field">
+              <span class="re-label">{{ draft.files.length > 1 ? `文件 ${i + 1}` : '文件名' }}</span>
+              <input v-model="f.newPath" class="re-input mono" spellcheck="false" />
+            </div>
+
+            <div class="re-actions">
+              <button class="re-btn primary" type="button" :disabled="renameBusy" @click="applyRename">
+                {{ renameBusy ? '改动中…' : '应用' }}
+              </button>
+              <button class="re-btn" type="button" :disabled="renameBusy" @click="$emit('rename-cancel')">取消</button>
+              <span v-if="renameError" class="re-err">{{ renameError }}</span>
+            </div>
+          </div>
         </li>
       </ul>
     </Transition>
@@ -64,6 +100,7 @@
 </template>
 
 <script setup>
+import { ref, watch } from 'vue'
 import StateBlock from '@/components/ui/StateBlock.vue'
 import { isBatchEpisode } from '@/utils/episode'
 
@@ -94,8 +131,53 @@ defineProps({
   renaming: { type: Boolean, default: false },
   /** 重命名结果 / 说明（一行字，显示在标题旁） */
   renameMessage: { type: String, default: '' },
+  /** 正在改名的那一条（`/api/downloads/torrent/:hash` 的返回；null = 没展开） */
+  draft: { type: Object, default: null },
+  /** 改名请求进行中 */
+  renameBusy: { type: Boolean, default: false },
+  /** 改名失败的原文（成功就空） */
+  renameError: { type: String, default: '' },
 })
-defineEmits(['retry', 'rename'])
+const emit = defineEmits(['retry', 'rename', 'rename-open', 'rename-cancel', 'rename-apply'])
+
+/**
+ * 编辑区里的表单 —— 从 draft 拷一份出来改，不直接改 props。
+ * **两个名字分开**：`torrentName`（qB 列表里那一行）和 `files[].newPath`（盘上文件名）。
+ * 默认值用后端算好的建议；用户改哪个就提交哪个，没改的按原样提交（值相同 = 不动）。
+ */
+const form = ref({ torrentName: '', files: [] })
+watch(
+  () => props.draft,
+  (d) => {
+    if (!d) {
+      form.value = { torrentName: '', files: [] }
+      return
+    }
+    form.value = {
+      torrentName: d.suggest?.torrentName?.to || d.torrentName || '',
+      /** 文件列表只放「视频/字幕」这类真能改的；其余（封面、字体）不展示，免得被误改 */
+      files: (d.suggest?.files || [])
+        .filter((f) => f.kind)
+        .map((f) => ({ oldPath: f.from, newPath: f.to || f.from })),
+    }
+  },
+  { immediate: true },
+)
+
+function applyRename() {
+  const d = props.draft
+  if (!d) return
+  const name = String(form.value.torrentName || '').trim()
+  const files = form.value.files
+    .map((f) => ({ oldPath: f.oldPath, newPath: String(f.newPath || '').trim() }))
+    .filter((f) => f.newPath && f.newPath !== f.oldPath)
+  emit('rename-apply', {
+    hash: d.hash,
+    /** 任务名没变就不传（后端据此判定「没要改的」） */
+    torrentName: name && name !== d.torrentName ? name : '',
+    files,
+  })
+}
 
 /** 状态配色：下载中=强调色，异常=警示 */
 const toneOf = (item) => (item.kind === 'downloading' ? 'on' : 'bad')
@@ -166,9 +248,10 @@ function etaText(item) {
   padding: 0;
   list-style: none;
 }
+/* 四列：集数竖条 ｜ 这集是什么 ｜ 字幕组 ｜ 改名按钮；编辑区横跨整行 */
 .item {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) auto;
+  grid-template-columns: 56px minmax(0, 1fr) auto auto;
   min-height: 52px;
   overflow: hidden; /* 集数区要贴到卡片边，圆角靠这一层裁 */
   border: 1px solid var(--border);
@@ -295,3 +378,102 @@ function etaText(item) {
   opacity: 0;
 }
 </style>
+
+/* ── 单条改名（任务名 / 文件名分开填）───────────────────────────────────
+   放在这一行内部而不是弹窗：一次只看一条，改错了也跑不出这一行。 */
+.row-rename {
+  align-self: center;
+  margin-right: 8px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+  transition: border-color var(--dur-fast), color var(--dur-fast), background var(--dur-fast);
+}
+.item:hover .row-rename:not(:disabled) {
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+.row-rename:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.row-rename:disabled {
+  opacity: 0.5;
+}
+
+.rename-editor {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px dashed var(--border);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+.re-name-hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+.re-tip {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+}
+.re-field {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.re-label {
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+  text-align: right;
+}
+.re-input {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+}
+.re-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+/* 文件名里常有方括号、点号，等宽字体更好数 */
+.re-input.mono {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.72rem;
+}
+.re-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.re-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+.re-btn.primary {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.re-btn:disabled {
+  opacity: 0.6;
+}
+.re-err {
+  color: var(--danger);
+  font-size: 0.7rem;
+}

@@ -4,7 +4,7 @@
  * 用法：`node scripts/verify-downloads.mjs`（独立端口 3305，不抢开发实例）
  *
  * 两类断言：
- *   ① **纯函数**（lib/downloads.js）：老种子的标签/名字怎么认回作品与组、集数怎么取、
+ *   ① **纯函数**（domain/downloads.js）：老种子的标签/名字怎么认回作品与组、集数怎么取、
  *      归档目录怎么拼 —— 这些是「下载页能不能把盘上的文件对上作品」的全部依据，必须钉住
  *   ② **真接口**：qB 没配时也要给结构化空值（页面显示引导），配了就要有卡有组；
  *      错误路径（坏 id / 没配）各自的响应码
@@ -28,8 +28,8 @@ import {
   splitSavePath,
   stateTextOf,
   subgroupOf,
-} from '../src/lib/downloads.js'
-import { metaFromTags, metaOfText, metaTagsOf, releaseMetaTags } from '../src/lib/release-tags.js'
+} from './../src/domain/downloads.js'
+import { metaFromTags, metaOfText, metaTagsOf, releaseMetaTags } from './../src/domain/release-tags.js'
 
 const PORT = Number(process.env.VERIFY_DOWNLOADS_PORT || 3305)
 const base = `http://127.0.0.1:${PORT}`
@@ -113,7 +113,7 @@ check(renameTargetOf({ title: 'a/b:c', episode: '3', ext: 'mkv' }).fileName === 
 check(extensionOf('a.MKV') === '.mkv' && extensionOf('SE01') === '', '扩展名：有就转小写，多文件目录给空')
 
 /* ── 加种应答：qB 5.x 对「重复种子」回 HTTP 409 —— 那不是失败（实测）───────── */
-const { classifyAddResult } = await import('../src/api/sources/qb.js')
+const { classifyAddResult } = await import('./../src/api/sources/qb.js')
 check(classifyAddResult({ status: 200, text: 'Ok.' }).ok === true, 'Ok. = 成功')
 const dup = classifyAddResult({ status: 409, text: '' })
 check(dup.ok === true && dup.existed === true, 'HTTP 409 = 已在列表里（不报失败）', JSON.stringify(dup))
@@ -243,10 +243,10 @@ try {
     /* 真重复加种：拿一个已在列表里的磁力再加一次。
        既验证「409 = 已存在」，也验证**加种地址正确**（曾经漏传 apiUrl，请求打到
        `http://host/<apiKey>` 上，qB 回 404 Not Found —— 用户看到的就是这个）。 */
-    const { loadStoredSettings } = await import('../src/api/pages/settings.js')
+    const { loadStoredSettings } = await import('./../src/api/pages/settings.js')
     loadStoredSettings()
-    const { qbTorrents, qbAddTorrent } = await import('../src/api/sources/qb.js')
-    const { config } = await import('../src/config.js')
+    const { qbTorrents, qbAddTorrent } = await import('./../src/api/sources/qb.js')
+    const { config } = await import('./../src/config.js')
     const torrents = await qbTorrents({ fresh: true })
     const withMagnet = torrents.find((t) => String(t.magnet_uri || '').startsWith('magnet:'))
     if (withMagnet) {

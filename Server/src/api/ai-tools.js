@@ -8,8 +8,8 @@
  * 加新能力只需两步：AI_TOOLS 里加一条 + callAiTool 的 switch 接上实现 ——
  * HTTP（POST /api/ai/call）与未来的 MCP 两侧自动都有。
  */
-import { fail } from '../lib/errors.js'
-import { logger } from '../lib/logger.js'
+import { fail } from './../lib/errors.js'
+import { logger } from './../lib/logger.js'
 import { classifyEpisodes, classifyReleaseTags } from './pages/ai.js'
 import { aiSearchAnime } from './pages/anime.js'
 

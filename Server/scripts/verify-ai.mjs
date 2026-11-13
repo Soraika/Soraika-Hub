@@ -126,7 +126,7 @@ try {
   const aiPageSource = readFileSync(new URL('../src/api/pages/ai.js', import.meta.url), 'utf8')
   const aiPromptSource = readFileSync(new URL('../src/api/ai/prompts.js', import.meta.url), 'utf8')
   const aiSharedSource = readFileSync(new URL('../src/api/ai/shared.js', import.meta.url), 'utf8')
-  const aiRoutSource = readFileSync(new URL('../src/rout/ai.js', import.meta.url), 'utf8')
+  const aiRoutSource = readFileSync(new URL('../src/routes/ai.js', import.meta.url), 'utf8')
   const aiPromptData = JSON.parse(readFileSync(new URL('../src/api/ai/prompts.json', import.meta.url), 'utf8'))
   const aiAllSource = [aiPageSource, aiPromptSource, aiSharedSource].join('\n')
 
@@ -152,7 +152,7 @@ try {
     bundlePrompt.includes('default') && bundlePrompt.includes('默认勾选'),
     '提示词契约里描述了可选的 default（默认勾选），并说明只有用户补充要求明确提到时才给',
   )
-  const { mergeModelTags } = await import('../src/api/ai/shared.js')
+  const { mergeModelTags } = await import('./../src/api/ai/shared.js')
   const twoTitles = ['a [1080p][简日内嵌].mp4', 'b [720p][简日内嵌].mp4']
   const merged = mergeModelTags(
     [
@@ -185,7 +185,7 @@ try {
   )
 
   /* 集数：v12 起按输入顺序返回数组（不再重复文件名）—— 输出 token 砍半，响应更快。 */
-  const { episodesFrom } = await import('../src/api/ai/shared.js')
+  const { episodesFrom } = await import('./../src/api/ai/shared.js')
   const epsArray = episodesFrom([12, null, '1-12', '07v2', 3], ['a.mkv', 'b.mkv', 'c.mkv', 'd.mkv', 'e.mkv'])
   check(
     epsArray['a.mkv'] === 12 && epsArray['b.mkv'] === null && epsArray['c.mkv'] === '1-12' && epsArray['e.mkv'] === 3,

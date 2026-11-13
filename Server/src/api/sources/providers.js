@@ -11,9 +11,9 @@
  * 缓存 24 小时；取不到就退回代码里的静态清单（`AI_PROVIDERS`）——
  * 界面照常可用，只是没有 200 家那么多可选。
  */
-import { AI_PROVIDERS } from '../../lib/settings.js'
-import { request } from '../../lib/http-client.js'
-import { logger } from '../../lib/logger.js'
+import { AI_PROVIDERS } from './../../lib/settings.js'
+import { request } from './../../lib/http-client.js'
+import { logger } from './../../lib/logger.js'
 
 const CATALOG_URL = 'https://models.dev/api.json'
 const CATALOG_TTL_MS = 24 * 60 * 60 * 1000

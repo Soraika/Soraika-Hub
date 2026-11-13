@@ -16,14 +16,14 @@
  *   · 不落库：AI 结果属可重算的派生数据，进程内缓存够用（要持久化再加表）
  *   · 番名与季不由这里产出：番名是调用方传进来的，季由系列的季位决定
  */
-import { config } from '../../config.js'
-import { fail } from '../../lib/errors.js'
-import { revisionOf } from '../../lib/format.js'
-import { logger } from '../../lib/logger.js'
-import { normalizeSeriesAiOutput } from '../../lib/series.js'
-import { normalizeSignature } from '../../lib/release-match.js'
-import { createMemCache } from '../../cache/mem.js'
-import { defaultSystemOf, fillNames, promptHashOf, promptText, promptVersion } from '../ai/prompts.js'
+import { config } from './../../config.js'
+import { fail } from './../../lib/errors.js'
+import { revisionOf } from './../../lib/format.js'
+import { logger } from './../../lib/logger.js'
+import { normalizeSeriesAiOutput } from './../../domain/series.js'
+import { normalizeSignature } from './../../domain/release-match.js'
+import { createMemCache } from './../../cache/mem.js'
+import { defaultSystemOf, fillNames, promptHashOf, promptText, promptVersion } from './../ai/prompts.js'
 import {
   TYPE_ORDER,
   chunk,
@@ -33,9 +33,9 @@ import {
   mapLimit,
   mergeModelTags,
   uniqueTitles,
-} from '../ai/shared.js'
-import { chatJson } from '../sources/ai.js'
-import { searchCandidates, normalizeKeyword } from '../../db/anime.js'
+} from './../ai/shared.js'
+import { chatJson } from './../sources/ai.js'
+import { searchCandidates, normalizeKeyword } from './../../db/anime.js'
 
 /** 标签 30 分钟 / 集数 24 小时（都可配，**改完立即生效**），都按内容哈希缓存 */
 const tagCache = createMemCache({ ttlMs: () => config.ai.tagCacheTtlMs, max: 200 })
@@ -338,7 +338,7 @@ ${extraLines}`
 }
 
 /* ── ④ 资源格式特征（从某个字幕组的样本里抽出「格式」）──────────────────────
-   注意分工：**抽取**在这里（AI），**判断某条资源属于谁**在 lib/release-match.js
+   注意分工：**抽取**在这里（AI），**判断某条资源属于谁**在 domain/release-match.js
    （确定性匹配，免费且可测）。为什么这样分：几百条资源逐条问模型又慢又贵，
    而"这批名字的共有格式"问一次就够了。
    改了下面的 prompt 必须同步升 FORMAT_PROMPT_VERSION（缓存 key 带版本号）。 */
@@ -351,7 +351,7 @@ const formatCache = createMemCache({ ttlMs: () => 6 * 60 * 60 * 1000, max: 200 }
  * 从「某个字幕组自己的资源文件名」抽出格式特征
  * ---------------------------------------------------------------------------
  * 用途：Mikan 的单字幕组 feed 只给最近 100 条，要靠这个特征去**全量 feed** 里
- * 把该组的其它条目认领回来（认领逻辑见 lib/release-match.js）。
+ * 把该组的其它条目认领回来（认领逻辑见 domain/release-match.js）。
  * 没配 AI / 样本太少 / 抽不出来 → 返回 null，调用方用 `signatureFromSamples` 确定性兜底。
  * @param {string[]} samples 同一个字幕组的资源文件名（取前 20 条足够）
  * @returns {Promise<{prefix?:string, literals?:string[], source:'ai', cached:boolean}|null>}
@@ -391,7 +391,7 @@ export async function classifyReleaseFormat(samples = [], { provider, log = logg
    为什么要它：Mikan 详情页 404 的老番拿不到「这部有哪些组」，但**全量 feed 是完整的**，
    而且每条文件名开头几乎都带组标记（`【DMHY】` / `[c.c动漫]`…）。
    所以只把**去重后的组标记**（通常 5~10 个）+ **我们库里的组名字典**发给模型做一次映射，
-   逐条归类交给确定性前缀匹配（`lib/release-match.js#groupTagOf`）—— 一次调用搞定，
+   逐条归类交给确定性前缀匹配（`domain/release-match.js#groupTagOf`）—— 一次调用搞定，
    不用把几百条文件名都塞给模型（那样又慢又贵）。
    改 prompt 必须同步升 GROUP_PROMPT_VERSION。 */
 

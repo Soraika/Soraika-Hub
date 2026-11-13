@@ -7,7 +7,7 @@
  *   4. 来源条目 → anime 行：字段映射只在这里做，改来源字段只动这几个函数
  */
 import { primaryBase } from './multi-source.js'
-import { seasonOf } from './season.js'
+import { seasonOf } from './../domain/season.js'
 
 /** 星期 → 区块标题/徽标。0=周日…6=周六 与 Mikan、前端 weekOrder.js 一致；7/8 是 Mikan 给的非星期内容 */
 export const DAY_META = {

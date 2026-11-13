@@ -12,7 +12,7 @@
  * 为什么不做「健康检查 + 主动摘除」：这是个单机小服务，请求量很低，
  * 顺序尝试 + 记忆已经够用；主动摘除反而会引入"摘错了再也回不来"的状态。
  */
-import { config } from '../config.js'
+import { config } from './../config.js'
 import { fail } from './errors.js'
 import { logger } from './logger.js'
 

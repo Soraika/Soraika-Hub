@@ -16,12 +16,12 @@
  *   npm run enrich -- --gap=200    # 调每条之间的间隔
  */
 import { pathToFileURL } from 'node:url'
-import { fetchSubject } from '../api/sources/bgm.js'
-import { fetchAnimeProfile } from '../api/sources/mikan.js'
-import { config } from '../config.js'
-import { applyBgmMeta, findByMikanId, isMovieOnlySeries, rememberSubgroups, stats } from '../db/anime.js'
-import { markMapChecked } from '../db/map.js'
-import { upsertSubject } from '../db/subject.js'
+import { fetchSubject } from './../api/sources/bgm.js'
+import { fetchAnimeProfile } from './../api/sources/mikan.js'
+import { config } from './../config.js'
+import { applyBgmMeta, findByMikanId, isMovieOnlySeries, rememberSubgroups, stats } from './../db/anime.js'
+import { markMapChecked } from './../db/map.js'
+import { upsertSubject } from './../db/subject.js'
 import { renumberMovieSeries } from './series.js'
 import {
   claimNextArchive,
@@ -31,9 +31,9 @@ import {
   markBgmChecked,
   markBgmMiss,
   takeNextStale,
-} from '../db/queue.js'
-import { bgmToRow } from '../lib/format.js'
-import { logger } from '../lib/logger.js'
+} from './../db/queue.js'
+import { bgmToRow } from './../lib/format.js'
+import { logger } from './../lib/logger.js'
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 

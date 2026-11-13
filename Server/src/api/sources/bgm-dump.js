@@ -15,10 +15,10 @@ import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { config } from '../../config.js'
-import { fail } from '../../lib/errors.js'
-import { logger } from '../../lib/logger.js'
-import { probeMs } from '../../lib/multi-source.js'
+import { config } from './../../config.js'
+import { fail } from './../../lib/errors.js'
+import { logger } from './../../lib/logger.js'
+import { probeMs } from './../../lib/multi-source.js'
 
 /** 探测镜像的超时：2 秒还没吐出首字节，基本就是"能连但很慢"，不该继续等 */
 const PROBE_TIMEOUT_MS = 2000

@@ -17,8 +17,8 @@ import {
   resetSettings,
   testEndpoint,
   updateSettings,
-} from '../api/pages/settings.js'
-import { fail } from '../lib/errors.js'
+} from './../api/pages/settings.js'
+import { fail } from './../lib/errors.js'
 
 export const settingsRouter = Router()
 

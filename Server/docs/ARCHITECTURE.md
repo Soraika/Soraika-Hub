@@ -30,19 +30,25 @@
                      └───────────────────────┬────────────────────────────┘
                                              │ HTTP（JSON 信封 { ok, data })
 ┌──────────────────────────────── Server (Express) ────────────────────────┐
-│ rout/        只拼装：校验参数 → 调 api/ → 包信封                          │
-│ api/pages    编排：定优先级（库 → 缓存 → 上游）、拼成品字符串             │
-│ api/sources  数据源适配：mikan / bgm / ai（超时、重试、字段归一）         │
-│ clients/     最底层抓取与解析：Mikan.js（cheerio）/ Qb.js                 │
-│ db/          SQLite：anime / subgroup / settings + queue（队列策略）      │
-│ lib/         纯函数：format / season / series / release-match / settings  │
-│ cache/       进程内缓存（按 TTL + 内容哈希）+ 海报落盘（poster）          │
-│ jobs/        worker（3 触发）/ enrich / series / sweep-mikan              │
+ │ routes/      只拼装：校验参数 → 调 api/ → 包信封                        │
+ │ api/pages    编排：定优先级（库 → 缓存 → 上游）、拼成品字符串           │
+ │ api/sources  数据源适配：mikan / bgm / ai / qb（超时、重试、字段归一）  │
+ │ transport/ 最底层抓取与解析：mikan.js / qb.js（不认识业务）             │
+ │ db/          SQLite：anime / subgroup / settings + queue（队列策略）    │
+ │ domain/      业务规则（纯函数）：downloads / qb-naming / release-*      │
+ │ lib/         基础设施（与业务无关）：format / settings / http-client    │
+ │ cache/       进程内缓存（按 TTL + 内容哈希）+ 海报落盘（poster）        │
+ │ jobs/        worker（3 触发）/ enrich / series / sweep-mikan            │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**依赖方向（单向，不许反向）**：`rout → api → (db | sources | clients) → lib`；
-`jobs` 与 `api` 平行，都建在 `db + lib` 之上（CONVENTIONS §1）。
+**依赖方向（单向，不许反向）**：`routes → api → (db | sources) → domain → lib`；
+`jobs` 与 `api` 平行，都建在 `db + domain + lib` 之上（CONVENTIONS §1）。
+
+三层别混：
+- `api/sources/transport/` 只管「把字节拿回来并解析」（cheerio / fetch），不认识业务；
+- `api/sources/` 做超时、重试、多源切换、字段归一，仍然不认识业务；
+- `domain/` 是**业务规则**：谁算正传、种子该叫什么名、标签怎么认回作品。纯函数，不发请求、不碰库。
 
 ### 一次「点海报」的数据流
 
@@ -337,15 +343,18 @@ Mikan 额外一层 **解析级重试**：200 但连标题都解析不出来 = �
 Server/
   src/
     config.js                 ← 代码默认值（env 只剩 PORT / DB_FILE / LOG_LEVEL）
-    rout/                     ← 只拼装（home / anime / ai / settings / img / health）
+    routes/                   ← 只拼装（home / anime / ai / settings / img / downloads / health）
     api/
       pages/                  ← 编排（home / anime / ai / settings）
-      sources/                ← 数据源适配（mikan / bgm / ai）
+      sources/                ← 数据源适配（mikan / bgm / ai / qb）
+        transport/            ← mikan.js / qb.js（抓取 + 解析，不认识业务）
       mappers/                ← 行 → DTO（成品字符串在这里拼）
       ai-tools.js             ← AI_TOOLS + callAiTool（MCP 形状）
-    clients/                  ← Mikan.js / Qb.js（抓取 + cheerio 解析）
     db/                       ← index.js（连接+迁移）/ schema.sql / anime.js / queue.js / settings.js
-    lib/                      ← format / season / series / release-match / settings / http-client / errors / logger
+    domain/                   ← 业务规则（纯函数）：downloads / qb-naming / release-tags
+                                / release-match / series / season / bgm-archive
+    lib/                      ← 基础设施：format / settings / http-client / multi-source
+                                / errors / logger / unzip / torrent-meta
     cache/                    ← mem.js（TTL + 内容哈希）/ poster.js（海报落盘）
     jobs/                     ← worker.js（3 触发）/ enrich.js / series.js / sweep-mikan.js
   scripts/                    ← verify-*.mjs（6 个验收）+ tmp-*.mjs（用完即删）
@@ -357,9 +366,11 @@ Web/
     pages/                    ← HomePage / DiscoverPage / SettingsPage
     components/
       common/                 ← PosterCard / PosterImage / CardGrid / SeasonPicker / MetroNav / SearchBox
-      detail/                 ← AnimeDetailPanel / DetailSkeleton / SubgroupBar / AiSlot / ReleaseList
+      detail/                 ← AnimeDetailPanel / DetailSkeleton / SubgroupBar / AiSlot
+                                / ReleaseList / DownloadList
       settings/ ui/ layout/   ← FieldControl / PopoverPanel / StateBlock / Spinner / AppSideNav …
     composables/              ← useSchedule / useAnimeDetail / useSeries / useReleases
+                                useDownloadActions（加种 + 批量改名 + 单条改任务名/文件名）
                                 useAiTags / useEpisodes / useSettings / useTheme / useScrollSpy
     api/                      ← 只 fetch（http / home / anime / ai / settings）
     utils/                    ← episode / duration / season / weekOrder / orderKey

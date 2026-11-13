@@ -22,9 +22,9 @@ import { existsSync, statSync } from 'node:fs'
 import { createReadStream } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { applyArchiveBatch, listBgmTargets, stats } from '../db/anime.js'
-import { clearRelations, insertRelations, insertStubs, markStubRelationsChecked } from '../db/relation.js'
-import { upsertSubjects } from '../db/subject.js'
+import { applyArchiveBatch, listBgmTargets, stats } from './../db/anime.js'
+import { clearRelations, insertRelations, insertStubs, markStubRelationsChecked } from './../db/relation.js'
+import { upsertSubjects } from './../db/subject.js'
 import {
   DUMP_FILES,
   RELATION_FILE,
@@ -32,9 +32,9 @@ import {
   archivePatch,
   leadingId,
   readJsonLinesFrom,
-} from '../lib/bgm-archive.js'
-import { logger } from '../lib/logger.js'
-import { listZipEntries, openZipEntry } from '../lib/unzip.js'
+} from './../domain/bgm-archive.js'
+import { logger } from './../lib/logger.js'
+import { listZipEntries, openZipEntry } from './../lib/unzip.js'
 
 /** 一个事务写多少行（几百条足够摊平事务开销，也不会长时间占着写锁） */
 const BATCH_SIZE = 500

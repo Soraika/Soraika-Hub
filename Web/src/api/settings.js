@@ -1,7 +1,7 @@
 /**
  * 设置接口
  * ---------------------------------------------------------------------------
- * 后端形状见 Server/src/rout/settings.js：
+ * 后端形状见 Server/src/routes/settings.js：
  *   · GET  /api/settings        整包（分组 / 字段+当前值 / 只读项）；**密钥只回「配没配」，不回明文**
  *   · PUT  /api/settings        保存 `{ values: { path: value } }`；某项传 null = 还原该项为默认
  *   · POST /api/settings/reset  重置（paths 空数组 = 全部）

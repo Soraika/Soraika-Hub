@@ -8,13 +8,13 @@
  *      「mikanId → bgmId（权威）→ Bangumi 评分」并回写；补进去的评分下次请求就能看到。
  *      首页请求路径里**不做任何评分补齐**（不阻塞、也不用猜测式标题匹配）
  */
-import { warmPosters } from '../../cache/poster.js'
-import { config } from '../../config.js'
-import { listBySeason, maxUpdatedAt, upsertManyFromMikan } from '../../db/anime.js'
-import { logger } from '../../lib/logger.js'
-import { buildYearOptions, currentSeason } from '../../lib/season.js'
-import { groupByDay } from '../mappers/home.js'
-import { fetchSeasonSchedule } from '../sources/mikan.js'
+import { warmPosters } from './../../cache/poster.js'
+import { config } from './../../config.js'
+import { listBySeason, maxUpdatedAt, upsertManyFromMikan } from './../../db/anime.js'
+import { logger } from './../../lib/logger.js'
+import { buildYearOptions, currentSeason } from './../../domain/season.js'
+import { groupByDay } from './../mappers/home.js'
+import { fetchSeasonSchedule } from './../sources/mikan.js'
 
 /**
  * 首页排期

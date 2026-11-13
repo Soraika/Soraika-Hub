@@ -3,9 +3,9 @@
  * （这样以后 MCP「把已有接口公开」可以直接复用 api/ 层，不用再抄一遍）
  */
 import { Router } from 'express'
-import { getHomeSchedule } from '../api/pages/home.js'
-import { fail } from '../lib/errors.js'
-import { SEASONS } from '../lib/season.js'
+import { getHomeSchedule } from './../api/pages/home.js'
+import { fail } from './../lib/errors.js'
+import { SEASONS } from './../domain/season.js'
 
 export const homeRouter = Router()
 

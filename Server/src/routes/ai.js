@@ -12,8 +12,8 @@
  */
 import { Router } from 'express'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { AI_TOOLS, callAiTool } from '../api/ai-tools.js'
-import { aiCacheStats, classifyEpisodes, classifyReleaseTags } from '../api/pages/ai.js'
+import { AI_TOOLS, callAiTool } from './../api/ai-tools.js'
+import { aiCacheStats, classifyEpisodes, classifyReleaseTags } from './../api/pages/ai.js'
 import {
   DEFAULT_FILE,
   OVERRIDE_FILE,
@@ -26,10 +26,10 @@ import {
   promptSystemOf,
   promptText,
   promptVersion,
-} from '../api/ai/prompts.js'
-import { aiProviderInfo, listModels } from '../api/sources/ai.js'
-import { listProviders } from '../api/sources/providers.js'
-import { fail } from '../lib/errors.js'
+} from './../api/ai/prompts.js'
+import { aiProviderInfo, listModels } from './../api/sources/ai.js'
+import { listProviders } from './../api/sources/providers.js'
+import { fail } from './../lib/errors.js'
 
 export const aiRouter = Router()
 

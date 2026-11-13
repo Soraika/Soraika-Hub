@@ -11,11 +11,11 @@
  *      抠不出来归 PARSE（与「上游页面改版」同类：重试没用，得改 prompt）
  * 换供应商只改 config.ai 的 baseUrl / model（OpenAI、Moonshot、本地 Ollama、vLLM 都兼容）。
  */
-import { upstreamCache } from '../../cache/mem.js'
-import { config } from '../../config.js'
-import { fail } from '../../lib/errors.js'
-import { request } from '../../lib/http-client.js'
-import { logger } from '../../lib/logger.js'
+import { upstreamCache } from './../../cache/mem.js'
+import { config } from './../../config.js'
+import { fail } from './../../lib/errors.js'
+import { request } from './../../lib/http-client.js'
+import { logger } from './../../lib/logger.js'
 
 /** 从模型回复里抠出 JSON 对象：去掉代码围栏 → 直接解析 → 退一步截取首尾大括号之间 */
 function extractJson(content, log) {

@@ -8,7 +8,7 @@
  */
 process.env.PORT ||= '3301'
 
-await import('../src/index.js')
+await import('./../src/index.js')
 
 // 等它挂上处理器 + 起好 HTTP 服务，再触发停机
 setTimeout(() => process.emit('SIGINT'), 800)

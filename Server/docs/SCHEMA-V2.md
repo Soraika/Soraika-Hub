@@ -186,7 +186,7 @@ dump 里 `type=2`（动画）的 `platform` 分布（2026-11-03 全量扫）：
 | 2006 | 其他/番外 | 148 | 私立堀镡学园 番外篇 / 声优战队 |
 
 所以「整条系列都是剧场版」**不用 AI 判**：`系列所有成员的 platform = 3` 就是。
-`series_all_movies` 列删掉；判定放在 `lib/series.js` 里一个纯函数：
+`series_all_movies` 列删掉；判定放在 `domain/series.js` 里一个纯函数：
 
 ```js
 const allMovies = members.length > 0 && members.every((m) => m.platform === 3)
@@ -320,7 +320,7 @@ titleOriginal = title_bgm_origin 与 displayTitle 不同时才有值   -- 详情
 | `src/jobs/sweep-mikan.js` | INSERT `anime`（全量 183~4124） | 改名 `scan-mikan.js`：**尾部扫描 + 连续 200 个 404 即停 + 水位**（§3.2），只写 `mikan_bgm_map` |
 | `src/jobs/series.js` | 一条流程：走链 + AI 起名 + 落库 | 拆两半：`runSeriesChain()`（确定性，写 `series_chain_at`）/ `nameSeries()`（AI，点开时调，写 `series_named_at`）；`allMovies` 改用 `platform === 3` |
 | `src/api/pages/anime.js`（详情） | 返回系列列表 | 返回时若 `series_named_at IS NULL` → 起名请求走单独的轻接口（不阻塞详情） |
-| `src/lib/series.js` | `parseSeriesAnswer` 里读 `allMovies` | 增 `isAllMovies(members)`（platform 判据），AI 只负责 `rootTitle` / `namingStyle` |
+| `src/domain/series.js` | `parseSeriesAnswer` 里读 `allMovies` | 增 `isAllMovies(members)`（platform 判据），AI 只负责 `rootTitle` / `namingStyle` |
 | `src/lib/format.js` | `bgmToRow` 产出 anime 行 | 拆成 `bgmToSubject()`（→ 档案表）+ `mikanToRow()`（→ 排期）+ `displayTitle()` |
 | `src/jobs/import-archive.js` | 写 `anime` 九列 | 写 `bgm_subject`；支持 zip 流式读（`--latest` / `--zip=`）与 `--check` |
 | `src/lib/unzip.js`（新） | —— | 零依赖 zip：EOCD + 中央目录 + `zlib.createInflateRaw`，按条目流式输出 |

@@ -5,10 +5,10 @@
  * 启动时 index.js 调 loadStoredSettings()：先回落 .env 快照，再套用库里的覆盖项 ——
  * 所以改完设置**不用重启**即生效（改的就是同一个 config 对象），这也是「store 在库里」的好处。
  */
-import { config, defaultConfig } from '../../config.js'
-import { clearSettings, listSettings, setSettings, settingsMeta } from '../../db/settings.js'
-import { fail } from '../../lib/errors.js'
-import { logger } from '../../lib/logger.js'
+import { config, defaultConfig } from './../../config.js'
+import { clearSettings, listSettings, setSettings, settingsMeta } from './../../db/settings.js'
+import { fail } from './../../lib/errors.js'
+import { logger } from './../../lib/logger.js'
 import {
   AI_PROVIDERS,
   READONLY_FIELDS,
@@ -22,7 +22,7 @@ import {
   parseImport,
   resetToDefaults,
   validateValue,
-} from '../../lib/settings.js'
+} from './../../lib/settings.js'
 
 /** 回落代码默认值 → 套用库里的覆盖项（读库/重置/导入后都走这条路径，保证内存与库一致） */
 function applyStored() {

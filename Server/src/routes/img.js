@@ -37,11 +37,11 @@ import {
   ensurePosterSrc,
   hashOf,
   findCached,
-} from '../cache/poster.js'
-import { config } from '../config.js'
-import { findById, setPosterPath } from '../db/anime.js'
-import { fail } from '../lib/errors.js'
-import { logger } from '../lib/logger.js'
+} from './../cache/poster.js'
+import { config } from './../config.js'
+import { findById, setPosterPath } from './../db/anime.js'
+import { fail } from './../lib/errors.js'
+import { logger } from './../lib/logger.js'
 
 export const imgRouter = Router()
 

@@ -11,10 +11,10 @@
  * 一层把 `Authorization: Bearer <key>` 认成登录态的网关（key 由用户在设置页填），
  * 所以这里沿用 `clients/Qb.js` 的 Bearer 写法 —— 两处保持一致，别一边改一边忘。
  */
-import { config } from '../../config.js'
-import { fetchQbPost, getQbGlobalTransferInfo, getQbTorrentList, getQbVersion } from '../../clients/Qb.js'
-import { fail } from '../../lib/errors.js'
-import { logger } from '../../lib/logger.js'
+import { config } from './../../config.js'
+import { fetchQbGet, fetchQbPost, getQbGlobalTransferInfo, getQbTorrentList, getQbVersion } from './transport/qb.js'
+import { fail } from './../../lib/errors.js'
+import { logger } from './../../lib/logger.js'
 
 /** 版本号不会变，缓存久一点；传输/种子列表是「实时」的，缓存只用来挡连击 */
 const VERSION_TTL_MS = 60_000
@@ -90,7 +90,7 @@ const ADD_PATH = '/api/v2/torrents/add'
  * 把文件本体交给 qB 最稳：不依赖 qB 能不能访问 Mikan、也不会丢 tracker。
  * qB 对上传成功的应答与 add 一样（`Ok.` / JSON / 409 已存在）。
  */
-export async function qbAddTorrentFile({ buffer, filename = 'file.torrent', savePath, tags = '', category, paused = false } = {}) {
+export async function qbAddTorrentFile({ buffer, filename = 'file.torrent', savePath, tags = '', category, paused = false, rename = '' } = {}) {
   ensureConfigured()
   if (!buffer?.length) throw fail('BAD_REQUEST', '缺少种子文件内容')
 
@@ -100,6 +100,9 @@ export async function qbAddTorrentFile({ buffer, filename = 'file.torrent', save
   if (category) form.append('category', category)
   if (tags) form.append('tags', tags)
   if (paused) form.append('paused', 'true')
+  /* `rename`：加种时就定根名（`.torrent` 才知道里面是什么，磁力这一刻没有名字）。
+     单文件种子的根就是那个文件 → 落地即正确文件名，省掉后面所有的改名与竞态。 */
+  if (rename) form.append('rename', rename)
 
   let status = 0
   let text = ''
@@ -233,6 +236,8 @@ export async function qbAddTorrent({ url, savePath, tags = '', category, paused 
 /** qB 改名接口的路径（同样写死，避免参数顺序出错） */
 const RENAME_PATH = '/api/v2/torrents/rename'
 const RENAME_FILE_PATH = '/api/v2/torrents/renameFile'
+const RENAME_FOLDER_PATH = '/api/v2/torrents/renameFolder'
+const FILES_PATH = '/api/v2/torrents/files'
 
 /**
  * 改名类操作共用：拿状态码 + 响应体 → 可读结论
@@ -290,11 +295,11 @@ export async function qbRenameFile({ hash, oldPath, newPath } = {}) {
   if (res.ok) return { ok: true }
 
   /* 幂等：目标名字已经在了（上一次改成功、或文件名本来就是它）→ 不算失败。
-     判据是 qB 现在报的 content_path 文件名 === newPath（不是猜）。 */
+     判据只能用 `/torrents/files` 的相对路径：content_path 是多文件种子的**文件夹**，
+     拿它的尾段比对永远对不上（这就是"重复点也报失败"的老问题）。 */
   try {
-    const list = await getQbTorrentList(config.qb.base, config.qb.apiKey, { hashes: hash }, 0)
-    const current = String(list?.[0]?.content_path || '').split('/').pop()
-    if (current && current === newPath) {
+    const names = (await qbTorrentFiles(hash)).map((f) => f.name)
+    if (names.includes(newPath)) {
       torrentCache.at = 0
       return { ok: true, existed: true }
     }
@@ -302,4 +307,52 @@ export async function qbRenameFile({ hash, oldPath, newPath } = {}) {
     /* 查不到就按原错误报 */
   }
   throw fail('UPSTREAM', res.reason)
+}
+
+/**
+ * 种子内的文件列表（**改名的唯一依据**）
+ * ---------------------------------------------------------------------------
+ * `GET /api/v2/torrents/files` 的 `name` 是**相对种子根的路径**（可能带子目录），
+ * 它才是 `renameFile` 的 `oldPath`。`content_path` 不是：多文件种子那里是文件夹。
+ * @param {string} hash
+ * @returns {Promise<Array<{ name: string, size: number, progress: number, priority: number }>>}
+ */
+export async function qbTorrentFiles(hash) {
+  ensureConfigured()
+  if (!hash) throw fail('BAD_REQUEST', '缺少种子 hash')
+
+  let raw = ''
+  try {
+    raw = await fetchQbGet(config.qb.base, FILES_PATH, { hash }, config.qb.apiKey, 'QbTorrentFiles', 1)
+  } catch (err) {
+    if (Number(err?.status) === 404) throw fail('NOT_FOUND', 'qB 里没有这个种子')
+    throw fail('UPSTREAM', `读不到种子文件列表：${err.message}`)
+  }
+
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed)
+      ? parsed.map((f) => ({
+          name: String(f.name || ''),
+          size: Number(f.size) || 0,
+          progress: Number(f.progress) || 0,
+          priority: Number(f.priority) || 0,
+        }))
+      : []
+  } catch {
+    throw fail('UPSTREAM', 'qB 返回的文件列表不是 JSON（版本太老或接口被网关改写）')
+  }
+}
+
+/**
+ * 重命名种子里的文件夹（4.3.3+）
+ * @param {{ hash: string, oldPath: string, newPath: string }} params
+ */
+export async function qbRenameFolder({ hash, oldPath, newPath } = {}) {
+  ensureConfigured()
+  if (!hash) throw fail('BAD_REQUEST', '缺少种子 hash')
+  if (!oldPath || !newPath) throw fail('BAD_REQUEST', '缺少文件夹路径（oldPath / newPath）')
+  const res = await callQbAction(RENAME_FOLDER_PATH, { hash, oldPath, newPath }, 'QbRenameFolder')
+  if (!res.ok) throw fail('UPSTREAM', res.reason)
+  return { ok: true }
 }

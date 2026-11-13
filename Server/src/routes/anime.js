@@ -3,10 +3,10 @@
  * 与 home.js 同构：只做「校验 id + 调聚合层 + 返回信封」
  */
 import { Router } from 'express'
-import { aiSearchAnime, getAnimeDetail, getAnimeSeries, getAnimeSubgroups, getSubgroupReleases } from '../api/pages/anime.js'
-import { searchByKeyword } from '../db/anime.js'
-import { toCardItem } from '../api/mappers/home.js'
-import { fail } from '../lib/errors.js'
+import { aiSearchAnime, getAnimeDetail, getAnimeSeries, getAnimeSubgroups, getSubgroupReleases } from './../api/pages/anime.js'
+import { searchByKeyword } from './../db/anime.js'
+import { toCardItem } from './../api/mappers/home.js'
+import { fail } from './../lib/errors.js'
 
 export const animeRouter = Router()
 

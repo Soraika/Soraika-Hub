@@ -16,10 +16,10 @@
 import { existsSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { downloadDump, fetchDumpIndex } from '../api/sources/bgm-dump.js'
-import { config } from '../config.js'
-import { getDumpState, saveDumpState } from '../db/dump.js'
-import { logger } from '../lib/logger.js'
+import { downloadDump, fetchDumpIndex } from './../api/sources/bgm-dump.js'
+import { config } from './../config.js'
+import { getDumpState, saveDumpState } from './../db/dump.js'
+import { logger } from './../lib/logger.js'
 import { runArchiveImport } from './import-archive.js'
 
 /**

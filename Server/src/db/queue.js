@@ -13,7 +13,7 @@
  * 队列规范的 7 条见 CONVENTIONS.md §5；消费者：jobs/worker.js、jobs/enrich.js、
  * rout/index.js（看板计数）。
  */
-import { config } from '../config.js'
+import { config } from './../config.js'
 import { db, val } from './index.js'
 import { claimNextMapPending, countMapCooling, countMapPending, markMapChecked } from './map.js'
 

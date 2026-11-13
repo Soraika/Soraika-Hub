@@ -16,12 +16,12 @@ import {
   getMikanSeasonPage,
   getSeasonAnimeList,
   getSubGroupList,
-} from '../../clients/Mikan.js'
-import { config } from '../../config.js'
-import { fail } from '../../lib/errors.js'
-import { mikanToRow, releaseToItem } from '../../lib/format.js'
-import { logger } from '../../lib/logger.js'
-import { primaryBase, tryBases } from '../../lib/multi-source.js'
+} from './transport/mikan.js'
+import { config } from './../../config.js'
+import { fail } from './../../lib/errors.js'
+import { mikanToRow, releaseToItem } from './../../lib/format.js'
+import { logger } from './../../lib/logger.js'
+import { primaryBase, tryBases } from './../../lib/multi-source.js'
 
 /**
  * 抓某季排期 → anime 行数组

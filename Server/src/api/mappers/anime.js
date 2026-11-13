@@ -5,10 +5,10 @@
  * 差异只在「卡片要一行摘要、面板要整份档案」，所以这里是独立映射而不是复用 toCardItem。
  * poster 同样走统一出图入口：/api/img/anime/{id}（缓存 / 防盗链 / 换源都在后端）。
  */
-import { config } from '../../config.js'
-import { DAY_META, compactNumber, parseTags, posterUrlOf, ratingText, scoreText, themeTags } from '../../lib/format.js'
-import { primaryBase } from '../../lib/multi-source.js'
-import { seasonOf } from '../../lib/season.js'
+import { config } from './../../config.js'
+import { DAY_META, compactNumber, parseTags, posterUrlOf, ratingText, scoreText, themeTags } from './../../lib/format.js'
+import { primaryBase } from './../../lib/multi-source.js'
+import { seasonOf } from './../../domain/season.js'
 
 /**
  * 放送季文案：`2026 夏`

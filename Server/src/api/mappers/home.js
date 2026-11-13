@@ -5,7 +5,7 @@
  * （拼成品字符串、按星期分组）是两件事 —— 前端字段要改时只动这里，不碰取数逻辑。
  * 约定：前端不做格式化，所以 ratingText / metaText 都在这层拼好。
  */
-import { DAY_META, metaText, parseTags, posterUrlOf, ratingText, scoreText } from '../../lib/format.js'
+import { DAY_META, metaText, parseTags, posterUrlOf, ratingText, scoreText } from './../../lib/format.js'
 
 /**
  * 一行 anime 记录 → 首页卡片

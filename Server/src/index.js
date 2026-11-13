@@ -15,7 +15,7 @@ import { config } from './config.js'
 import { db } from './db/index.js'
 import { toApiError } from './lib/errors.js'
 import { logger } from './lib/logger.js'
-import { apiRouter } from './rout/index.js'
+import { apiRouter } from './routes/index.js'
 
 const app = express()
 app.disable('x-powered-by')

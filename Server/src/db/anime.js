@@ -6,7 +6,7 @@
  * （此时 score/bgm_id 还是空的），评分是后台补齐的；如果 upsert 时用 NULL 覆盖，
  * 已经补好的评分会被下一次排期刷新清掉。
  */
-import { config } from '../config.js'
+import { config } from './../config.js'
 import { db, val } from './index.js'
 import { rememberMikan } from './map.js'
 

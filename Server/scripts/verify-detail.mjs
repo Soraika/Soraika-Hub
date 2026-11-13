@@ -8,7 +8,7 @@
  */
 import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { revisionOf } from '../src/lib/format.js'
+import { revisionOf } from './../src/lib/format.js'
 
 const PORT = Number(process.env.VERIFY_DETAIL_PORT || 3302)
 const base = `http://127.0.0.1:${PORT}`
@@ -139,7 +139,7 @@ try {
   check(longQ.res.status === 400, '搜索：q 超 80 字 → 400')
 
   /* ── 模糊搜索：空格分词（词序无关）/ 全角归一 / LIKE 通配符不被放大 ─────── */
-  const { normalizeKeyword, splitTerms, editDistance } = await import('../src/db/anime.js')
+  const { normalizeKeyword, splitTerms, editDistance } = await import('./../src/db/anime.js')
   check(normalizeKeyword('  ＥＶＡ　(２０２４)  ') === 'eva (2024)', '归一化：全角转半角 + 压缩空白 + 小写', normalizeKeyword('  ＥＶＡ　(２０２４)  '))
   check(splitTerms('名侦探,柯南、剧场版').join('|') === '名侦探|柯南|剧场版', '分词：中英文标点都算分隔', splitTerms('名侦探,柯南、剧场版').join('|'))
   check(splitTerms('%_').length === 0, 'LIKE 通配符被去掉（不会变成全表命中）')
@@ -190,7 +190,7 @@ try {
 
   /* 剧场版 / 总集篇 挂在「续集」边上也不是正传的一季（BGM 就是这么标的，实测《妄想学生会》）。
      它们必须归番外、**不给季位**，否则弹层会显示成 S03 / S04 这种根本没意义的季号。 */
-  const { extraCategoryOfName } = await import('../src/lib/series.js')
+  const { extraCategoryOfName } = await import('./../src/domain/series.js')
   check(
     extraCategoryOfName('劇場版 生徒会役員共', '剧场版 妄想学生会') === '剧场版' &&
       extraCategoryOfName('劇場版 チェンソーマン レゼ篇') === '剧场版' &&
@@ -232,7 +232,7 @@ try {
      提示词已经是数据（决策 44/45）：字段名写在 `api/ai/prompts.json` 里，不在 ai.js 里了 ——
      断言跟着数据走，否则每次调提示词都会「红一条」，久了就没人看红条了。 */
   check(
-    /allMovies/.test(readFileSync(new URL('../src/lib/series.js', import.meta.url), 'utf8')) &&
+    /allMovies/.test(readFileSync(new URL('../src/domain/series.js', import.meta.url), 'utf8')) &&
       /allMovies/.test(readFileSync(new URL('../src/api/ai/prompts.json', import.meta.url), 'utf8')) &&
       /movieOnly/.test(seriesJobSource),
     '全剧场版系列：AI 判 allMovies → 番外按年占季位 + 命名风格 volume',
@@ -256,7 +256,7 @@ try {
     '剧场版系列重排前补缺失的上映日期（不准「没日期就排最后」）',
   )
 
-  const { toAnimeDetail } = await import('../src/api/mappers/anime.js')
+  const { toAnimeDetail } = await import('./../src/api/mappers/anime.js')
   const dtoNoSeason = toAnimeDetail({ id: 1, title: 'x', year: null, season: null, air_date: '2004-10-05' })
   const dtoBoth = toAnimeDetail({ id: 2, title: 'y', year: 2026, season: '夏', air_date: '2026-07-05' })
   const dtoNone = toAnimeDetail({ id: 3, title: 'z', year: null, season: null, air_date: '' })
@@ -324,7 +324,7 @@ try {
      （同一个组在不同作品里写法可能不同），入字典只会跨作品污染；但界面上总得有个标签。 */
   check(
     /isLikelyGroupTag/.test(animePageSource) &&
-      /NON_GROUP_TAG/.test(readFileSync(new URL('../src/lib/release-match.js', import.meta.url), 'utf8')) &&
+      /NON_GROUP_TAG/.test(readFileSync(new URL('../src/domain/release-match.js', import.meta.url), 'utf8')) &&
       /map\[tag\] = tag/.test(animePageSource) &&
       !/rememberSubgroups\([^)]*\btag\b/.test(animePageSource),
     '库里没有的组 → 标记照原样显示；不进字典（画质/编码/语言被挡掉）',

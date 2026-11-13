@@ -9,12 +9,12 @@
  * 这里刻意**不做**「按季度检索 + 标题匹配」那种猜测式匹配（已删除）：长寿番（柯南 /
  * 面包超人）本期没有 air_date 落在当季、译名又常不一致，猜错比暂时没分更糟。
  */
-import { upstreamCache } from '../../cache/mem.js'
-import { config } from '../../config.js'
-import { fail } from '../../lib/errors.js'
-import { request } from '../../lib/http-client.js'
-import { logger } from '../../lib/logger.js'
-import { tryBases } from '../../lib/multi-source.js'
+import { upstreamCache } from './../../cache/mem.js'
+import { config } from './../../config.js'
+import { fail } from './../../lib/errors.js'
+import { request } from './../../lib/http-client.js'
+import { logger } from './../../lib/logger.js'
+import { tryBases } from './../../lib/multi-source.js'
 
 /** 条目详情缓存时长：评分/标签变化很慢，6 小时足够 */
 const SUBJECT_TTL_MS = 6 * 60 * 60 * 1000
@@ -55,7 +55,7 @@ export async function fetchSubject(bgmId) {
 /**
  * 条目的 1 跳关联 —— 系列链就是靠它一层层走出来的（见 CONVENTIONS.md §10.1）
  * ---------------------------------------------------------------------------
- * 只做「取数 + 归一化字段」，**不做业务判断**（谁算正传、谁算番外由 lib/series.js 决定）。
+ * 只做「取数 + 归一化字段」，**不做业务判断**（谁算正传、谁算番外由 domain/series.js 决定）。
  * 注意两件事：
  *   · 返回里**没有 year**（镜像 API 的 1 跳只有 id / name / name_cn / relation / type）
  *     → 链序不能靠年份，只能靠关系方向（续集 / 前传）走出来

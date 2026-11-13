@@ -150,7 +150,7 @@ try {
      踩过的两个坑：① 文件名用自增 id → 重建库后 id 全变，几百张图变孤儿，
      每次都回源（缓存等于不存在）；② 回源不校验内容 → 图床防盗链返回的 200+HTML
      被当海报存下来。这里直接测嗅探函数 + 源码级钉住命名规则。 */
-  const { sniffImage } = await import('../src/cache/poster.js')
+  const { sniffImage } = await import('./../src/cache/poster.js')
   const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(20)])
   const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(20)])
   const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBP'), Buffer.alloc(8)])
@@ -163,7 +163,7 @@ try {
       sniffImage(Buffer.alloc(4)) === null,
     'HTML 错误页 / 空文件一律不算图片（否则会被当海报缓存下来）',
   )
-  const imgSource = readFileSync(new URL('../src/rout/img.js', import.meta.url), 'utf8')
+  const imgSource = readFileSync(new URL('../src/routes/img.js', import.meta.url), 'utf8')
   const posterSource = readFileSync(new URL('../src/cache/poster.js', import.meta.url), 'utf8')
   const homeSource = readFileSync(new URL('../src/api/pages/home.js', import.meta.url), 'utf8')
   check(

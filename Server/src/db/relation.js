@@ -11,7 +11,7 @@
  *     排剧场版季位也要用（省掉每部一次 BGM 请求）。
  */
 import { db } from './index.js'
-import { inverseRelationNameOf, relationCodeOf, relationNameOf } from '../lib/bgm-archive.js'
+import { inverseRelationNameOf, relationCodeOf, relationNameOf } from './../domain/bgm-archive.js'
 
 const stmt = {
   clear: db.prepare('DELETE FROM bgm_relation'),

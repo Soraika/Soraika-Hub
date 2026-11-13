@@ -14,9 +14,9 @@
  * 状态会同步到 workerState，`GET /api/health` 里能看到进度。
  */
 import { pathToFileURL } from 'node:url'
-import { loadStoredSettings } from '../api/pages/settings.js'
-import { config } from '../config.js'
-import { getDumpState } from '../db/dump.js'
+import { loadStoredSettings } from './../api/pages/settings.js'
+import { config } from './../config.js'
+import { getDumpState } from './../db/dump.js'
 import {
   claimNextArchive,
   claimNextMissingBgm,
@@ -29,12 +29,12 @@ import {
   countStale,
   releaseSeries,
   resetStaleSeriesClaims,
-} from '../db/queue.js'
-import { logger } from '../lib/logger.js'
+} from './../db/queue.js'
+import { logger } from './../lib/logger.js'
 import { enrichOne, lastDailyBoundary, refreshStaleOne } from './enrich.js'
 import { updateDump } from './dump-update.js'
 import { fillSeriesFor } from './series.js'
-import { renameAllDownloads } from '../api/pages/downloads.js'
+import { renameAllDownloads } from './../api/pages/downloads.js'
 
 /** 运行状态（模块内私有：外部只能通过 getWorkerState() 拿快照，避免被随手改） */
 const workerState = {

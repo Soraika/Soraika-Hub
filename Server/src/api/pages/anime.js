@@ -12,17 +12,17 @@
  *      抓到顺手落库（下载队列 / 归档要用这些 id），但**不拿库里的当答案**。
  *   4. 系列：没算过就现场跑一遍走链（用户看了啥、库里没有就补一遍）
  */
-import { warmPoster } from '../../cache/poster.js'
-import { findById, listByFilters, listSeriesMembers, listSubgroupDict, rememberSubgroups, searchByKeyword } from '../../db/anime.js'
-import { claimBySignature, groupTagsOf, isLikelyGroupTag, labelByGroupTag, signatureFromSamples } from '../../lib/release-match.js'
+import { warmPoster } from './../../cache/poster.js'
+import { findById, listByFilters, listSeriesMembers, listSubgroupDict, rememberSubgroups, searchByKeyword } from './../../db/anime.js'
+import { claimBySignature, groupTagsOf, isLikelyGroupTag, labelByGroupTag, signatureFromSamples } from './../../domain/release-match.js'
 import { classifyGroupTags, classifyReleaseFormat, resolveSearchIntent } from './ai.js'
-import { enrichOne } from '../../jobs/enrich.js'
-import { fillSeriesFor } from '../../jobs/series.js'
-import { fail } from '../../lib/errors.js'
-import { logger } from '../../lib/logger.js'
-import { toAnimeDetail, toSubgroupItem } from '../mappers/anime.js'
-import { toCardItem } from '../mappers/home.js'
-import { fetchAnimeProfile, fetchSubgroupReleases } from '../sources/mikan.js'
+import { enrichOne } from './../../jobs/enrich.js'
+import { fillSeriesFor } from './../../jobs/series.js'
+import { fail } from './../../lib/errors.js'
+import { logger } from './../../lib/logger.js'
+import { toAnimeDetail, toSubgroupItem } from './../mappers/anime.js'
+import { toCardItem } from './../mappers/home.js'
+import { fetchAnimeProfile, fetchSubgroupReleases } from './../sources/mikan.js'
 
 /** 现场补档的防抖窗口：同一条作品 5 分钟内只补一次（连点 / 来回切换不重复打上游） */
 const ENRICH_DEBOUNCE_MS = 5 * 60 * 1000
@@ -316,7 +316,7 @@ async function tagNameMap(row, items, { log }) {
  * 而不带 subgroupid 的全量 feed 是完整历史（369 条 / 1~169 集）。所以：
  *   · 单组 feed **没到 100 条** → 本来就是全的，直接用
  *   · 到了 100 条 → 判定「可能被截断」→ 拉全量，再用**这个组自己的格式特征**认领回来
- *     （特征：AI 从样本里抽，抽不出来用确定性推导；匹配是纯函数，见 lib/release-match.js）
+ *     （特征：AI 从样本里抽，抽不出来用确定性推导；匹配是纯函数，见 domain/release-match.js）
  * 认领结果比样本还少 → 判定特征不可靠，退回样本（最坏也就是原来的 100 条，不会更差）。
  * @param {number|string} id 作品主键
  * @param {number|string} subgroupRssId 字幕组在该作品下的 RSS id（/subgroups 的 id），或 'all'

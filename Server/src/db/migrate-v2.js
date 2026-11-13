@@ -12,7 +12,7 @@
  *
  * 为什么保留原 id：qB 老标签、前端正在看的链接都指着它；重建可以，但没必要让它们失效。
  */
-import { logger } from '../lib/logger.js'
+import { logger } from './../lib/logger.js'
 
 const hasTable = (db, name) =>
   Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name))

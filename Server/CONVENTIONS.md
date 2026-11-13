@@ -34,18 +34,19 @@
 
 ## 1. 分层与依赖方向
 
-依赖只能向下：`rout → api → (db | sources) → lib`；`jobs` 与 `api` 平行，都建立在 `db` + `lib` 之上。
+依赖只能向下：`routes → api → (db | sources) → domain → lib`；`jobs` 与 `api` 平行，都建立在 `db` + `domain` + `lib` 之上。
 
 | 目录 | 做什么 | 禁止 |
 |---|---|---|
-| `rout/` | 校验入参、调 api、拼 `{ ok, data }` / 错误信封 | 写业务、直接查库、直接抓上游 |
+| `routes/` | 校验入参、调 api、拼 `{ ok, data }` / 错误信封 | 写业务、直接查库、直接抓上游 |
 | `api/pages/` | 页面级编排：取数顺序、库优先、组装响应 | 拼 SQL、解析 HTML |
 | `api/mappers/` | 行 ↔ DTO 映射、分组、排序（`toCardItem` / `groupByDay` / `toAnimeDetail`） | 取数、写库 |
-| `api/sources/` | 封装单个外部源（mikan / bgm），输出归一化字段 | 落库、拼展示文案 |
+| `api/sources/` | 封装单个外部源（mikan / bgm / ai / qb），输出归一化字段 | 落库、拼展示文案、业务判断 |
 | `db/` | 表 CRUD（`anime.js`）与**队列语义**（`queue.js`）分开 | 发 HTTP、拼文案 |
-| `clients/` | 纯抓取 + 解析（请求、重试、cheerio） | 落库、业务判断 |
-| `lib/` | 横切能力：`config` `logger`(pino 单例) `errors` `http-client` `format` `season` | 反向依赖上层目录 |
-| `jobs/` | 后台任务：队列循环、节流、状态快照 | 被 `rout/` 直接调（要走 api 层） |
+| `api/sources/transport/` | 纯抓取 + 解析（请求、重试、cheerio），只认 URL 与字节 | 落库、业务判断、认识 config 之外的东西 |
+| `domain/` | **业务规则**（纯函数）：种子叫法 `qb-naming`、归档命名 `downloads`、标签与匹配 `release-*`、系列链 `series` | 发请求、碰库、依赖 `api/` |
+| `lib/` | 基础设施：`config` `logger`(pino 单例) `errors` `http-client` `multi-source` `format` `settings` `unzip` | 反向依赖上层目录、写业务规则 |
+| `jobs/` | 后台任务：队列循环、节流、状态快照 | 被 `routes/` 直接调（要走 api 层） |
 | `cache/` | 进程内 TTL / 单飞 | 存持久化数据（那是 `db/`） |
 
 ---
@@ -207,7 +208,7 @@ AI 是**可选功能**：没配 `AI_API_KEY` 也照常跑 —— 相关接口回
 前端显示「未配置」而不是「失败重试」。别把「没配」混进「失败」。
 
 - **分层**：`api/sources/ai.js`（供应商调用 + 抠 JSON，认 config）→ `api/pages/ai.js`（业务能力 + prompt + 缓存）
-  → `api/ai-tools.js`（对外清单 + 分发）→ `rout/ai.js`（HTTP）
+  → `api/ai-tools.js`（对外清单 + 分发）→ `routes/ai.js`（HTTP）
 - **一个能力只写一遍**：`AI_TOOLS`（清单）与 `callAiTool`（实现）是唯一入口，HTTP 的 `/api/ai/call`
   与将来的 MCP 都从这走；加能力 = 清单加一条 + switch 接上，别在路由里另写一套
 - **缓存按内容哈希**（不是条数 —— 旧版按数量做 key，不同内容同长度会互相串），

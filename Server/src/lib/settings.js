@@ -10,7 +10,7 @@
  * restart=true 的含义：那几项是**启动时读进局部变量**的（端口、落盘目录、缓存实例的 TTL…），
  * 改了要重启对应进程才生效 —— 设置页会显式提示，别让人以为保存了没用。
  */
-import { config, defaultConfig } from '../config.js'
+import { config, defaultConfig } from './../config.js'
 import { fail } from './errors.js'
 
 /**
@@ -133,7 +133,7 @@ export const SETTINGS_FIELDS = [
     label: '自动重命名',
     type: 'boolean',
     advanced: true,
-    hint: '后台每分钟把「已完成」的种子统一命名（任务名旧格式 + 文件名 番名 S01E01；qB 内改名，不动数据）',
+    hint: '后台自动统一任务名与文件名',
   },
 ]
 

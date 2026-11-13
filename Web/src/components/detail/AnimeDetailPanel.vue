@@ -211,8 +211,14 @@
               :size-text="downloadSizeText"
               :renaming="renaming"
               :rename-message="renameMsg"
+              :draft="renameDraft"
+              :rename-busy="renameBusy"
+              :rename-error="renameError"
               @retry="retryReleases"
               @rename="onRename"
+              @rename-open="onRenameOpen"
+              @rename-cancel="onRenameCancel"
+              @rename-apply="onRenameApply"
             />
           </section>
 
@@ -238,8 +244,8 @@ import DownloadList from './DownloadList.vue'
 import AiSlot from './AiSlot.vue'
 import PopoverPanel from '@/components/ui/PopoverPanel.vue'
 import { useReleases } from '@/composables/useReleases'
+import { useDownloadActions } from '@/composables/useDownloadActions'
 import { useDownloadedReleases } from '@/composables/useDownloadedReleases'
-import { addDownloads, fetchAnimeDownloads, renameDownloads } from '@/api/downloads'
 import { useAiTags } from '@/composables/useAiTags'
 import { useEpisodes } from '@/composables/useEpisodes'
 import { useSeries } from '@/composables/useSeries'
@@ -452,125 +458,39 @@ const SUMMARY_LIMIT = 120
 const expanded = ref(false)
 const summaryLong = computed(() => (props.data?.summary?.length ?? 0) > SUMMARY_LIMIT)
 
-
-
 /**
- * 加种（资源列表里点「下载」）
- * ---------------------------------------------------------------------------
- * 服务端负责三件事（见 api/pages/downloads.js）：算归档目录、写标签（`mid` / `sg`）、
- * 逐条调 qB。前端只负责把「这一部 + 当前字幕组 + 勾了哪些」传上去。
- * 结果就用一句话交代：成功几条、失败几条（失败的第一条原因也给出来，方便判断是
- * 磁力失效还是 qB 没连通）。
+ * 所有「会写 qB」的动作（加种 / 批量改名 / 单条改名）都在这个 composable 里。
+ * 面板只负责摆界面 —— 这一段原来是 200 多行的状态机，挤在一个 1100 行的组件里没人愿意读。
+ * 依赖全部用 thunk 传进去（`() => ...`），所以调用时才取值，不受声明顺序影响。
  */
-const downloading = ref(false)
-const downloadMsg = ref('')
-const downloadFailed = ref(false)
-/** 季号：系列算过就用季位（S02 → 2），没算过就当第一季（目录落 `Season 01`） */
-const seasonForDownload = computed(() => Number(series.value?.currentIndex) || 1)
+const {
+  downloading,
+  downloadMsg,
+  downloadFailed,
+  onDownload,
+  downloadedHashes,
+  loadDownloadedHashes,
+  renaming,
+  renameMsg,
+  onRename,
+  renameDraft,
+  renameBusy,
+  renameError,
+  onRenameOpen,
+  onRenameCancel,
+  onRenameApply,
+  resetMessages,
+} = useDownloadActions({
+  animeId: () => props.data?.id || null,
+  subgroupName: () => mikan.activeSubgroup.value?.name || '',
+  /** 季号：系列算过就用季位（S02 → 2），没算过就当第一季（目录落 `Season 01`） */
+  season: () => Number(series.value?.currentIndex) || 1,
+  isDownloads: () => isDownloads.value,
+  onListChanged: (id) => downloaded.open(id),
+  onRefreshed: (res) => emit('downloaded', res),
+})
 
-async function onDownload(items) {
-  const list = Array.isArray(items) ? items : []
-  if (!list.length || downloading.value || !props.data?.id) return
 
-  downloading.value = true
-  downloadMsg.value = ''
-  downloadFailed.value = false
-  try {
-    const res = await addDownloads({
-      animeId: props.data.id,
-      subgroup: mikan.activeSubgroup.value?.name || '',
-      season: seasonForDownload.value,
-      items: list.map((it) => ({
-        title: it.title,
-        magnet: it.magnet,
-        torrentUrl: it.torrentUrl,
-        episode: it.episode || '',
-      })),
-    })
-    downloadFailed.value = res.failed.length > 0
-    // 「已在列表里」不算失败（qB 5.x 对重复种子回 409）：分开说，免得以为没加上
-    const existed = res.added.filter((it) => it.existed).length
-    const fresh = res.added.length - existed
-    const head = fresh
-      ? `已加入 ${fresh} 个下载 → ${res.savePath}`
-      : existed
-        ? `已在下载列表中 ${existed} 个（没有重复添加）`
-        : '没有加进任何下载'
-    const notes = []
-    if (existed && fresh) notes.push(`其中 ${existed} 个已存在`)
-    if (res.failed.length) notes.push(`${res.failed.length} 条失败（${res.failed[0].title}：${res.failed[0].reason}）`)
-    downloadMsg.value = head + (notes.length ? `；${notes.join('；')}` : '')
-    /* 点完立刻把这几条按 hash 标成「已添加」（旧版就是按钮当场变绿）——
-       不等下次打开面板，也不用重新拉一次 qB。 */
-    if (res.added.length) {
-      const next = new Set(downloadedHashes.value)
-      for (const item of res.added) if (item.hash) next.add(String(item.hash).toLowerCase())
-      downloadedHashes.value = next
-    }
-    // 让容器知道「下载列表变了」——它会重取一次，下载页不用手动刷新
-    emit('downloaded', res)
-  } catch (err) {
-    downloadFailed.value = true
-    downloadMsg.value = `加种失败：${err.message}`
-  } finally {
-    downloading.value = false
-  }
-}
-
-/* ── 重命名：先 dry-run 预览，确认后才改（任务名 + 文件名都统一）───────── */
-const renaming = ref(false)
-const renameMsg = ref('')
-
-async function onRename() {
-  const id = props.data?.id
-  if (!id || renaming.value) return
-  renaming.value = true
-  renameMsg.value = ''
-  try {
-    const plan = await renameDownloads(id, { dryRun: true })
-    if (!plan.plan.length) {
-      renameMsg.value = plan.skipped.length ? `没有需要改名的（${plan.skipped[0].reason}）` : '没有需要改名的'
-      return
-    }
-    const sample = plan.plan.slice(0, 3).map((item) => item.newFileName).join('\n')
-    const more = plan.plan.length > 3 ? `\n…共 ${plan.plan.length} 条` : ''
-    if (!window.confirm(`将重命名 ${plan.plan.length} 条：\n${sample}${more}\n\n任务名保持旧格式，文件名为「番名 S01E01」。继续？`)) {
-      return
-    }
-    const res = await renameDownloads(id, { dryRun: false })
-    const failed = res.failed?.length || 0
-    renameMsg.value = failed
-      ? `已重命名 ${res.done.length} 条，失败 ${failed} 条（${res.failed[0].reason}）`
-      : `已重命名 ${res.done.length} 条`
-    if (isDownloads.value) downloaded.open(id) // 清单里显示新文件名
-    emit('downloaded', res)
-  } catch (err) {
-    renameMsg.value = `重命名失败：${err.message}`
-  } finally {
-    renaming.value = false
-  }
-}
-
-/**
- * 资源列表的「已下载」标记 —— **按 torrent hash 判定**（旧版就是这么做的）
- * ---------------------------------------------------------------------------
- * 不是按集号：同一集不同字幕组是不同的种子，按集号标会把没下过的也说成已下。
- * hash 来源：qB torrents 的 `hash`；资源条目里的 `magnetHash`（RSS pageLink 末段）。
- * 只是附注：qB 没配 / 取不到就当没有（不把资源列表拖进错误态）。
- */
-const downloadedHashes = ref(new Set())
-
-async function loadDownloadedHashes(id) {
-  downloadedHashes.value = new Set()
-  try {
-    const res = await fetchAnimeDownloads(id)
-    const set = new Set()
-    for (const item of res.items || []) if (item.hash) set.add(String(item.hash).toLowerCase())
-    downloadedHashes.value = set
-  } catch {
-    /* 标记失败不影响列表 */
-  }
-}
 
 // 作品一换（或详情刚到位）：收起简介 + 重取资源区。
 // immediate 是必须的：面板打开时 data 是后到的，不设它没人触发第一次加载。
@@ -581,9 +501,7 @@ watch(
   ([id]) => {
     expanded.value = false
     seriesOpen.value = false
-    downloadMsg.value = ''
-    renameMsg.value = ''
-    downloadedHashes.value = new Set()
+    resetMessages()
     resetSeries()
     if (!id) {
       mikan.reset()

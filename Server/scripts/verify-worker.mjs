@@ -18,9 +18,9 @@ import {
   releaseSeries,
   resetStaleSeriesClaims,
   takeNextStale,
-} from '../src/db/queue.js'
-import { countSubgroupDict, stats } from '../src/db/anime.js'
-import { lastDailyBoundary } from '../src/jobs/enrich.js'
+} from './../src/db/queue.js'
+import { countSubgroupDict, stats } from './../src/db/anime.js'
+import { lastDailyBoundary } from './../src/jobs/enrich.js'
 
 let failed = 0
 const check = (ok, msg) => {
@@ -85,7 +85,7 @@ console.log(`  └ 残留"处理中"标记：${stale} 条（有 worker 在跑时
 /* ── ⑤ 补档案时顺手抓字幕组（老番的「资源」区靠它）─────────────────────────
    档案补齐的快路径是「已有 bgm_id → 只打 Bangumi」，而字幕组只存在于 Mikan 详情页；
    不顺手补的话，扫描进来的老番点开面板资源区永远是空的。 */
-const { config } = await import('../src/config.js')
+const { config } = await import('./../src/config.js')
 check(config.worker.fetchSubgroups === true, 'worker.fetchSubgroups 默认开（否则老番资源区永远空）')
 const enrichSource = readFileSync(new URL('../src/jobs/enrich.js', import.meta.url), 'utf8')
 check(

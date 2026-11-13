@@ -52,19 +52,47 @@ export function addDownloads(payload) {
 }
 
 /**
- * 重命名（qB 任务名 + 落盘文件名）
+ * 重命名（**任务名和实际文件名是两件事**，可以分开改）
  * ---------------------------------------------------------------------------
  * 默认 dryRun：只返回「会改成什么」（plan / skipped），不写 qB；
  * 确认后传 `dryRun:false` 才真改（qB 的 rename 不影响做种与数据）。
+ * `scope`：'all'（默认，两个都改）/ 'torrentName'（只改 qB 列表里那个名字）/
+ *          'fileName'（只改种子内的文件）。
  * @param {number} animeId 作品主键
- * @param {{ dryRun?: boolean }} [options]
- * @returns {Promise<{ dryRun:boolean, title:string,
- *   plan: Array<{ hash:string, oldName:string, newName:string, oldFileName:string, newFileName:string }>,
- *   skipped: Array<{ name:string, reason:string }>,
+ * @param {{ dryRun?: boolean, scope?: 'all'|'torrentName'|'fileName' }} [options]
+ * @returns {Promise<{ dryRun:boolean, scope:string, title:string,
+ *   plan: Array<{ hash:string, episode:string, oldName:string, newName:string,
+ *     renameTorrent:boolean, renameFiles:number, filePlan:Array<{from:string,to:string,ok:boolean}>,
+ *     summary:string }>,
+ *   skipped: Array<{ hash:string, name:string, reason:string }>,
  *   done?: Array<object>, failed?: Array<object> }>}
  */
-export function renameDownloads(animeId, { dryRun = true } = {}) {
-  return apiPost('/api/downloads/rename', { animeId, dryRun }, { timeout: 120000 })
+export function renameDownloads(animeId, { dryRun = true, scope = 'all' } = {}) {
+  return apiPost('/api/downloads/rename', { animeId, dryRun, scope }, { timeout: 120000 })
+}
+
+/**
+ * 单个种子的两种名字（弹窗用）
+ * @param {string} hash 种子 hash
+ * @returns {Promise<{ hash:string, animeId:number|null, animeTitle:string, episode:string,
+ *   state:string, stateText:string, torrentName:string,
+ *   files: Array<{ name:string, size:number }>,
+ *   suggest: { torrentName:{from:string,to:string,ok:boolean,reason:string},
+ *              files: Array<{ from:string,to:string,ok:boolean,kind:string,reason:string }> },
+ *   summary: string }>}
+ */
+export function fetchTorrentNaming(hash) {
+  return apiGet(`/api/downloads/torrent/${encodeURIComponent(hash)}`, { timeout: 30000 })
+}
+
+/**
+ * 单个种子改名 —— 两个名字互不影响
+ * @param {string} hash
+ * @param {{ torrentName?: string, files?: Array<{ oldPath:string, newPath:string }>, dryRun?: boolean }} payload
+ * @returns {Promise<{ dryRun:boolean, done:Array<object>, failed:Array<object> }>}
+ */
+export function renameTorrent(hash, payload) {
+  return apiPost(`/api/downloads/torrent/${encodeURIComponent(hash)}/rename`, payload, { timeout: 60000 })
 }
 
 /**

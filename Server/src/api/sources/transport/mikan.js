@@ -1,6 +1,6 @@
 import * as cheerio from 'cheerio';
 // 日志统一走 lib/logger.js（不在各 client 里各建一个 pino —— 那样输出格式会不一致）
-import { logger } from '../lib/logger.js';
+import { logger } from '../../../lib/logger.js';
 
 
 /**
