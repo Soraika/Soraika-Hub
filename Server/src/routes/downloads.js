@@ -6,6 +6,10 @@
  *   POST /api/downloads               加种 `{ animeId, subgroup?, season?, items:[{title,magnet|torrentUrl}] }`
  *   GET  /api/downloads/torrent/:hash      单个种子：当前任务名 + 种子内文件 + 建议改名
  *   POST /api/downloads/torrent/:hash/rename  单个种子改名（任务名 / 文件名可分开传）
+ *   GET  /api/baidu/status            百度网盘连通性（当前账号）
+ *   POST /api/baidu/offline           把磁力/电驴/直链丢给百度做离线下载
+ *   GET  /api/baidu/offline           百度离线任务列表
+ *   POST /api/baidu/transfer          转存分享链接（可带提取码）
  *   GET  /api/xunlei/status           迅雷连通性 + 容量（飞牛 NAS 上的迅雷应用）
  *   GET  /api/xunlei/tasks            迅雷任务列表（只读；迅雷没有改名接口）
  *   GET  /api/qb/status               qB 状态（两个版本 + 速度）；设置页与下载页顶部用
@@ -23,6 +27,7 @@ import {
 } from './../api/pages/downloads.js'
 import { qbConfigured, qbTransfer, qbVersions } from './../api/sources/qb.js'
 import { xunleiAbout, xunleiConfigured, xunleiDevice, xunleiTasks } from './../api/sources/xunlei.js'
+import { baiduConfigured, baiduOfflineAdd, baiduOfflineList, baiduTransfer, baiduWho } from './../api/sources/baidu.js'
 import { fail } from './../lib/errors.js'
 
 export const downloadsRouter = Router()
@@ -135,6 +140,57 @@ downloadsRouter.post('/downloads/torrent/:hash/rename', async (req, res, next) =
       { log: req.log },
     )
     res.json({ ok: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * GET /api/baidu/status —— 百度连得上吗、当前是哪个账号
+ */
+downloadsRouter.get('/baidu/status', async (req, res, next) => {
+  try {
+    if (!baiduConfigured()) return res.json({ ok: true, data: { configured: false } })
+    const who = await baiduWho().catch((err) => ({ error: err.message }))
+    res.json({ ok: true, data: { configured: true, who: who?.raw || '', error: who?.error || '' } })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/baidu/offline —— 加离线下载
+ * body：`{ urls: string[], path?: string }`（磁力 / 电驴 / http 直链都行）
+ */
+downloadsRouter.post('/baidu/offline', async (req, res, next) => {
+  try {
+    const { urls, path } = req.body || {}
+    if (!Array.isArray(urls) && typeof urls !== 'string') throw fail('BAD_REQUEST', 'urls 需要是数组或字符串')
+    const data = await baiduOfflineAdd({ urls, path })
+    res.json({ ok: true, data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/** GET /api/baidu/offline —— 离线任务列表（原样文本 + 逐行） */
+downloadsRouter.get('/baidu/offline', async (req, res, next) => {
+  try {
+    if (!baiduConfigured()) return res.json({ ok: true, data: { configured: false } })
+    res.json({ ok: true, data: { configured: true, ...(await baiduOfflineList()) } })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/baidu/transfer —— 转存分享链接
+ * body：`{ shareUrl: string, pwd?: string, path?: string }`
+ */
+downloadsRouter.post('/baidu/transfer', async (req, res, next) => {
+  try {
+    const { shareUrl, pwd, path } = req.body || {}
+    res.json({ ok: true, data: await baiduTransfer({ shareUrl, pwd, path }) })
   } catch (err) {
     next(err)
   }

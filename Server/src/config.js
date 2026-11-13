@@ -178,6 +178,27 @@ export const config = {
   },
 
   /**
+   * 百度网盘（BaiduPCS-Go）—— 离线下载 / 转存
+   * ---------------------------------------------------------------------------
+   * 为什么用它：Linux/NAS 上**没有**官方"能离线下载"的客户端
+   * （百度官方 Linux 版只是同步盘；迅雷 Linux 版只有统信/麒麟的极简版；
+   * 迅雷 NAS 版连云盘空间都没有）。BaiduPCS-Go 的 `offlinedl` 直接吃磁力/电驴/http。
+   *
+   * 三项都要自己填，没有可猜的默认值：
+   *  · bin        二进制路径（Windows 是 BaiduPCS-Go.exe；NAS 上是 linux-amd64 那个）
+   *  · cookies    浏览器里整串 Cookie（含 BDUSS + STOKEN），登录用
+   *  · offlineDir 离线下载落到网盘的哪个目录
+   */
+  baidu: {
+    bin: '',
+    cookies: '',
+    /** 离线下载的保存目录（网盘内的路径，不是本地） */
+    offlineDir: '/我的资源/离线下载',
+    /** BaiduPCS-Go 自己的配置目录（放项目数据目录里，登录态跟着项目走） */
+    configDir: 'data/baidu',
+  },
+
+  /**
    * AI 能力（可选功能）—— OpenAI 兼容的 /chat/completions
    * ---------------------------------------------------------------------------
    * 默认按 DeepSeek 配：改 baseUrl + model 就能换成任何兼容网关

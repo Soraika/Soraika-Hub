@@ -13,3 +13,7 @@ scripts/tmp-*
 
 # 日志
 *.log
+
+# 第三方二进制（体积大、随平台不同，各人自己下）
+tools/
+data/baidu/

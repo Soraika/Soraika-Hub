@@ -25,6 +25,7 @@ export const SETTINGS_GROUPS = [
   { key: 'cache', label: '缓存与图片', hint: '首页排期缓存、海报出图与浏览器缓存' },
   { key: 'qb', label: '下载', hint: 'qBittorrent，下载功能接入后才用得上' },
   { key: 'xunlei', label: '迅雷', hint: '飞牛 NAS 上的迅雷应用，下载走它（改名只能走 qB）' },
+  { key: 'baidu', label: '百度网盘', hint: '离线与转存走它（磁力丢云端，再由网盘落回 NAS）' },
 ]
 
 /**
@@ -146,6 +147,12 @@ export const SETTINGS_FIELDS = [
   { path: 'xunlei.panAuth', env: 'XUNLEI_PAN_AUTH', group: 'xunlei', section: '迅雷', label: 'pan_auth', type: 'secret', advanced: true, hint: 'JWT，3 天过期，过期要换' },
   { path: 'xunlei.space', env: 'XUNLEI_SPACE', group: 'xunlei', section: '迅雷', label: '设备空间', type: 'text', advanced: true, placeholder: 'device_id#…', hint: '任务列表里的 space 字段' },
   { path: 'xunlei.downloadDir', env: 'XUNLEI_DOWNLOAD_DIR', group: 'xunlei', section: '归档', label: '落盘目录', type: 'text', advanced: true, hint: 'NAS 上的真实路径' },
+
+  // ── 百度网盘（BaiduPCS-Go）───────────────────────────────────────────────
+  /* 填了 bin 才算启用。cookies 是密钥（只写不回显），要含 BDUSS 与 STOKEN。 */
+  { path: 'baidu.bin', env: 'BAIDU_BIN', group: 'baidu', section: '客户端', label: '程序路径', type: 'text', advanced: true, placeholder: 'D:\\tools\\BaiduPCS-Go.exe', hint: 'BaiduPCS-Go 二进制' },
+  { path: 'baidu.cookies', env: 'BAIDU_COOKIES', group: 'baidu', section: '客户端', label: 'Cookie', type: 'secret', advanced: true, hint: '整串 Cookie，含 BDUSS' },
+  { path: 'baidu.offlineDir', env: 'BAIDU_OFFLINE_DIR', group: 'baidu', section: '归档', label: '离线目录', type: 'text', advanced: true, hint: '网盘内路径，不是本地' },
 ]
 
 /**
