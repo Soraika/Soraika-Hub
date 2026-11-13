@@ -20,6 +20,7 @@
  *   transfer <分享链接> <提取码>                转存
  */
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { config } from '../../config.js'
 import { fail } from '../../lib/errors.js'
@@ -27,7 +28,17 @@ import { logger } from '../../lib/logger.js'
 
 const NOT_CONFIGURED = '还没配置百度网盘（设置 → 百度网盘：二进制路径 + Cookie）'
 
-export const baiduConfigured = () => Boolean(config.baidu?.bin)
+/** 二进制放在项目里的默认位置（Docker 镜像里就是这条路径，开箱即用） */
+const DEFAULT_BIN = path.resolve('tools/baidupcs/BaiduPCS-Go')
+
+/** 实际用的二进制路径：设置页填了就用它，没填就看默认位置有没有 */
+export const baiduBin = () => {
+  const configured = String(config.baidu?.bin || '').trim()
+  if (configured) return configured
+  return existsSync(DEFAULT_BIN) ? DEFAULT_BIN : ''
+}
+
+export const baiduConfigured = () => Boolean(baiduBin())
 
 /**
  * 跑一条 BaiduPCS-Go 命令
@@ -36,7 +47,7 @@ export const baiduConfigured = () => Boolean(config.baidu?.bin)
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
 function run(args, { timeoutMs = 60000 } = {}) {
-  const bin = config.baidu?.bin
+  const bin = baiduBin()
   if (!bin) return Promise.reject(fail('BAD_REQUEST', NOT_CONFIGURED))
 
   /* 配置目录用环境变量指过去（`BaiduPCS-Go env` 里就叫 BAIDUPCS_GO_CONFIG_DIR）——

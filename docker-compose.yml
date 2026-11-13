@@ -1,0 +1,50 @@
+# Soraika's Hub —— 一条命令起起来
+#   docker compose up -d --build
+#
+# 设置页存在数据库里（settings 表），所以 .env 只需要「启动参数」；
+# 数据源地址 / AI key / qB / 迅雷 / 百度 全在网页设置页改，改完即时生效。
+services:
+  hub:
+    build:
+      context: .
+      args:
+        # 基础镜像：内地直连 Docker Hub 拉不动，默认走 daocloud 镜像。
+        # 有自己的加速器（或境外机器）就改成 node:22-bookworm-slim
+        BASE_IMAGE: docker.m.daocloud.io/library/node:22-bookworm-slim
+        # npm 源（默认 npmmirror）
+        NPM_REGISTRY: https://registry.npmmirror.com
+        # 顺手把百度离线用到的 BaiduPCS-Go 也打进去；下不动就注释掉，稍后挂载 tools/
+        BAIDUPCS_VERSION: "4.0.2"
+    image: soraika-hub:latest
+    container_name: soraika-hub
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    environment:
+      # 只有这三个是「进程起来之前就得知道」的，其余全部在网页设置页里改
+      # （数据源 / AI key / qB / 迅雷 / 百度 都存在 settings 表里，跟着 volume 走）
+      TZ: Asia/Shanghai
+      PORT: "3100"
+      DB_FILE: data/hub.db
+      LOG_LEVEL: info
+      # 后台队列默认跟着 API 进程一起跑（单容器最省事）；
+      # 想拆成独立进程：设置页关掉「跟随服务进程」，再起一个 worker 容器跑 node src/jobs/worker.js
+    volumes:
+      # 一个 volume 装全部状态：SQLite + 海报缓存 + 百度登录态
+      - hub-data:/app/data
+      # 想在宿主机上替换二进制（换版本 / 换架构）就打开这行
+      # - ./Server/tools/baidupcs:/app/tools/baidupcs:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  hub-data:

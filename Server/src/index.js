@@ -7,6 +7,8 @@
  *   · 失败：{ ok: false, error: { code, message, detail? } }，HTTP 状态码由错误码映射
  *   · 日志/业务都在 lib 与 api 层，这里只做「装配 + 兜底」
  */
+import { existsSync } from 'node:fs'
+import path from 'node:path'
 import express from 'express'
 import pinoHttp from 'pino-http'
 import { startWorker, stopWorker } from './jobs/worker.js'
@@ -52,12 +54,37 @@ app.use((req, res, next) => {
 
 app.use('/api', apiRouter)
 
+/* ── 前端静态文件（同一个进程同时当 web 服务器）────────────────────────────
+ * 开发时用 vite dev server（带 HMR、proxy），这里什么都不做；
+ * 生产/Docker 里把 Web/dist 一起塞进镜像，由这个进程托管 —— 同源，没有跨域、
+ * 不用再拉一个 nginx。目录可用 WEB_DIR 覆盖（默认取 ../Web/dist）。
+ * 找不到就静默跳过：只跑 API 也能正常工作（旧行为保持不变）。
+ */
+const WEB_DIR = path.resolve(process.env.WEB_DIR || path.join(process.cwd(), '..', 'Web', 'dist'))
+const hasWeb = existsSync(path.join(WEB_DIR, 'index.html'))
+if (hasWeb) {
+  app.use(express.static(WEB_DIR, { index: false, maxAge: '7d', setHeaders: (res, file) => {
+    /* index.html 不能被长缓存：否则更新后浏览器一直拿旧壳，白屏排查半天 */
+    if (file.endsWith('index.html')) res.setHeader('Cache-Control', 'no-cache')
+  } }))
+  logger.info({ webDir: WEB_DIR }, 'api.static ok')
+}
+
 /* 设置页存过的覆盖项要在**第一个请求进来之前**应用到 config ——
  * 之后路由/任务读到的就都是生效值（import db 时表已建好，所以这里能安全读库） */
 const overriddenCount = loadStoredSettings()
 
-// 没有匹配到任何路由
+/* 没有匹配到任何路由
+ * · GET 的页面请求 → 回 index.html（前端没有 router，但保留这条以防以后加）
+ * · 其它（尤其 /api/*）→ 照旧回 JSON 404，不要用 HTML 骗调用方
+ */
 app.use((req, res) => {
+  /* 只给「像页面」的请求回 index.html：带扩展名的（丢了的 js/css/图片）必须是 404，
+     否则浏览器会拿到一段 HTML 当 JS 执行，报错信息完全对不上真实原因。 */
+  const looksLikeFile = /\.[a-z0-9]{2,6}$/i.test(req.path)
+  if (hasWeb && req.method === 'GET' && !looksLikeFile && !req.path.startsWith('/api')) {
+    return res.sendFile(path.join(WEB_DIR, 'index.html'))
+  }
   res.status(404).json({
     ok: false,
     error: { code: 'NOT_FOUND', message: `没有这个接口：${req.method} ${req.originalUrl}` },

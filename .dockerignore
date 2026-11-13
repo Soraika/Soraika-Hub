@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+**/.git
+**/*.log
+
+# 运行时数据绝不进镜像（库、海报、登录态）
+Server/data
+Server/tools
+
+# 本地杂项
+**/.env
+**/.env.local
+**/tmp-*
+**/.vscode
+**/.idea
