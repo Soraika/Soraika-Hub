@@ -40,6 +40,7 @@
     <PosterImage
       class="card-poster"
       :src="poster"
+      :fallbacks="posterFallbacks"
       :alt="title"
       :ratio="posterRatio"
       :placeholder-text="posterPlaceholder"
@@ -92,6 +93,8 @@ const props = defineProps({
   title: { type: String, required: true },
   /** 海报图地址（占位阶段可为空，空则显示占位底纹） */
   poster: { type: String, default: '' },
+  /** 主图挂了时按顺序试的备选地址（后端給的降级链：镜像域名 → 代理） */
+  posterFallbacks: { type: Array, default: () => [] },
   /** 海报宽高比 */
   posterRatio: { type: String, default: '3 / 4' },
   /** 海报占位提示文字 */

@@ -56,6 +56,7 @@
             <PosterCard
               :title="item.title"
               :poster="item.poster"
+            :poster-fallbacks="item.posterFallbacks || []"
               :score="item.score"
               :score-text="item.scoreText"
               :rating-text="item.ratingText"

@@ -175,8 +175,12 @@ try {
     '命中先查磁盘（哈希名 → 旧 id 名），并把旧命名的文件迁移成哈希名',
   )
   check(
-    /downloadAndSave\(id, src\)/.test(imgSource) && /res\.redirect\(302, src\)/.test(imgSource),
-    '回源失败不是报错，而是 302 把原图交给浏览器（页面绝不空着）',
+    /downloadAndSaveAny\(id, row/.test(imgSource) && /res\.redirect\(302, primary\)/.test(imgSource),
+    '回源走**候选链**（库里那条 → 镜像 → Bangumi）；全挂才 302 交给浏览器（页面绝不空着）',
+  )
+  check(
+    /posterFallbacksOf/.test(readFileSync(new URL('../src/lib/format.js', import.meta.url), 'utf8')),
+    '卡片带降级链 posterFallbacks（主图 404 时前端换下一张，不会只剩占位底纹）',
   )
   check(
     /warmPosters\(rows\)/.test(homeSource) && /export function warmPosters/.test(posterSource),

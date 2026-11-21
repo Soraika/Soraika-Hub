@@ -75,6 +75,7 @@
               :key="item.id"
               :title="item.title"
               :poster="item.poster"
+            :poster-fallbacks="item.posterFallbacks || []"
               poster-placeholder="海报待生成"
               :score="item.score"
               :score-text="item.scoreText"

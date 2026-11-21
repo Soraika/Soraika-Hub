@@ -21,6 +21,9 @@ import { join, resolve } from 'node:path'
 import { fetchSubject } from './../api/sources/bgm.js'
 import { config } from './../config.js'
 import { setPosterSource } from './../db/anime.js'
+import { subjectsByFold } from './../db/subject.js'
+import { foldTitle } from './../domain/titles.js'
+import { candidateSources, staticCandidates } from './poster-sources.js'
 import { fail } from './../lib/errors.js'
 import { request } from './../lib/http-client.js'
 import { logger } from './../lib/logger.js'
@@ -109,14 +112,38 @@ export function findCached(id, src) {
 /** 同一个 id 的回源只跑一次（并发进来时共用同一个 Promise） */
 const inflight = new Map()
 
-/** 回源一张海报并校验是不是真图片（不落盘、不写库） */
-export async function fetchPoster(id, src) {
+/**
+ * 图源「刚刚 404 过」的黑名单（内存，10 分钟）
+ * ---------------------------------------------------------------------------
+ * 为什么需要：一条坏地址会在首页每次请求里都被重试一遍（测活要 1~3 秒），
+ * 结果是「每张图都慢」而不是「一张图不显示」。记下来直接跳到下一个源。
+ * 只记内存：图床修好了重启一次就恢复，不用管数据库。
+ */
+const BROKEN_TTL_MS = 10 * 60 * 1000
+const broken = new Map()
+const isBroken = (src) => {
+  const at = broken.get(src)
+  if (!at) return false
+  if (Date.now() - at < BROKEN_TTL_MS) return true
+  broken.delete(src)
+  return false
+}
+const markBroken = (src) => broken.set(src, Date.now())
+
+/**
+ * 回源一张海报并校验是不是真图片（不落盘、不写库）
+ * @param {number|string} id 只用于并发去重
+ * @param {string} src
+ * @param {{ timeoutMs?: number, retries?: number }} [options]
+ *   多源候选链里每次只给 6 秒、不重试：一条坏地址不该拖住后面的好地址
+ */
+export async function fetchPoster(id, src, { timeoutMs = 20000, retries = 2 } = {}) {
   const key = String(id)
   if (inflight.has(key)) return inflight.get(key)
   const task = request(src, {
     expect: 'buffer',
-    timeoutMs: 20000,
-    retries: 2, // 图床抖一下很常见：多试两次，最后仍失败就走「302 交浏览器」
+    timeoutMs,
+    retries, // 图床抖一下很常见：多试两次，最后仍失败就走「302 交浏览器」
     tip: '海报回源',
     headers: { Accept: 'image/*,*/*;q=0.8', ...(refererOf(src) ? { Referer: refererOf(src) } : {}) },
   })
@@ -134,34 +161,106 @@ export async function fetchPoster(id, src) {
 }
 
 /**
- * 回源 → 落盘 → 把文件名写回库
- * 连图一起返回（`buf` / `ext` / `rel`）：调用方要发图时**不用再回源一次** ——
- * 出图接口就是「下载并保存，然后直接把这份字节发出去」。
- * @returns {Promise<{buf:Buffer, ext:string, rel:string}>}
+ * 依次试候选源，第一个拿到真图片的胜出（**落盘 + 回写库**）
+ * ---------------------------------------------------------------------------
+ * 与 `downloadAndSave` 的区别：那个只认一条地址，这个走整条候选链
+ * （库里的地址 → 各镜像 → Bangumi 封面）。
+ *
+ * 命中之后**把胜出的地址写回 `poster_src`** —— 这一步是"自愈"：
+ * 下次首页拿到的直链就是能用的那条，不用再走一遍探测。
+ *
+ * @param {number} id 作品主键
+ * @param {{poster_src?: string|null, bgm_id?: string|number|null}} row
+ * @param {{ log?: object, slowMs?: number }} [options]
+ * @returns {Promise<{ buf: Buffer, ext: string, rel: string, src: string, tried: string[] } | null>}
  */
-export async function downloadAndSave(id, src) {
-  const { buf, ext } = await fetchPoster(id, src)
-  const rel = `${hashOf(src)}${ext}`
-  writeFileSync(join(cacheDir, rel), buf)
-  setPosterSource(id, { src, path: rel })
-  return { buf, ext, rel }
+export async function downloadAndSaveAny(id, row, { log = logger, timeoutMs = 6000 } = {}) {
+  const tried = []
+  const sources = await candidateSources(row, { resolveBgm: (item) => bgmCoverUrl(item, { log }) })
+  for (const src of sources) {
+    if (isBroken(src)) {
+      tried.push(`${src} (跳过:刚失败过)`)
+      continue
+    }
+    try {
+      const { buf, ext } = await fetchPoster(`${id}:${src}`, src, { timeoutMs, retries: 0 })
+      const rel = `${hashOf(src)}${ext}`
+      writeFileSync(join(cacheDir, rel), buf)
+      /* 图源变了（比如 Mikan 那条 404、改用 Bangumi 封面）→ 路径一起换，
+         顺手把旧缓存文件留着不管（按地址哈希命名，不会误命中） */
+      setPosterSource(id, { src, path: rel })
+      if (src !== row?.poster_src) {
+        log.info({ id, from: row?.poster_src || null, to: src, tried: tried.length }, 'img.src 换源成功')
+      }
+      return { buf, ext, rel, src, tried }
+    } catch (err) {
+      markBroken(src)
+      tried.push(`${src} (${String(err?.message || err).slice(0, 60)})`)
+    }
+  }
+  return null
 }
 
 /**
- * 库里没存图源时，问一次 Bangumi 要封面
+ * 问一次 Bangumi 要封面地址（**不写库**，调用方决定写不写）
  * ---------------------------------------------------------------------------
- * 扫描出来的行**只有 bgm_id、没有封面**（实测 2607/3237 条，占八成），不补就只能显示占位底纹。
- * 拿到就回写 `poster_src` —— 所以这条上游请求一辈子只花一次。
- * 失败返回 null（**不当错误**）：调用方照常给空地址，前端显示占位底纹。
+ * 与 `ensurePosterSrc` 的区别：那个「库里有地址就不问」；这里**强制问**
+ * —— 库里的地址可能已经 404（Mikan 换域名/清图），那时它是唯一的救命源。
+ *
+ * `lain.bgm.tv` 的封面路径带两层 hash（`/pic/cover/l/c9/f0/8_wK0z3.jpg`），
+ * 从 id 拼不出来，所以必须打一次 API。结果按 bgm_id 缓存 1 小时：
+ * 同一部作品在一次首页加载里可能被问多次（直链失败 → 代理 → 预热）。
  */
+const bgmCoverCache = new Map()
+const BGM_COVER_TTL_MS = 60 * 60 * 1000
+
+export async function bgmCoverUrl(row, { log = logger, ttlMs = BGM_COVER_TTL_MS } = {}) {
+  /* 没有 bgm_id 时先在**本地档案库**里按番名找一次（dump 里 3 万部动画的名字索引）：
+     实测有一批作品只有 mikan_id（映射还没补上），但它们的番名在全站索引里能唯一命中 ——
+     这一步纯 SQL、不发请求，命中了就不用干等映射补齐才有封面。 */
+  let bgmId = row?.bgm_id ? String(row.bgm_id) : ''
+  if (!bgmId) {
+    const title = row?.title_bgm || row?.title_mikan || row?.title_bgm_origin || ''
+    const fold = foldTitle(title)
+    if (fold) {
+      const hits = subjectsByFold(fold).filter((item) => item.bgm_id)
+      if (hits.length === 1) {
+        bgmId = String(hits[0].bgm_id)
+        log.debug?.({ id: row?.id, title, bgmId }, 'img 按番名找到条目（映射还没补）')
+      }
+    }
+  }
+  if (!bgmId) return null
+  const key = bgmId
+  const hit = bgmCoverCache.get(key)
+  if (hit && Date.now() - hit.at < ttlMs) return hit.url
+
+  if (hit?.pending) return hit.pending
+  const task = (async () => {
+    try {
+      const subject = await fetchSubject(bgmId)
+      const img = subject?.images || {}
+      const url = img.large || img.common || img.medium || img.small || null
+      if (url) bgmCoverCache.set(key, { at: Date.now(), url })
+      return url
+    } catch (err) {
+      log.warn({ bgmId, err: err?.message }, 'img 问 Bangumi 封面失败')
+      return null
+    }
+  })()
+  bgmCoverCache.set(key, { at: 0, url: null, pending: task })
+  const url = await task
+  if (url) bgmCoverCache.set(key, { at: Date.now(), url })
+  else bgmCoverCache.delete(key)
+  return url
+}
+
 export async function ensurePosterSrc(row) {
   if (!row) return null
   if (row.poster_src) return row.poster_src
   if (!row.bgm_id) return null
   try {
-    const subject = await fetchSubject(row.bgm_id)
-    const img = subject?.images || {}
-    const src = img.large || img.common || img.medium || img.small || null
+    const src = await bgmCoverUrl(row, { log: logger })
     if (src) {
       setPosterSource(row.id, { src })
       logger.info({ id: row.id, bgmId: row.bgm_id, source: 'bgm' }, 'img.src resolved')
@@ -199,9 +298,10 @@ export function warmPoster(row) {
   warmingCount++
   void (async () => {
     try {
-      const src = await ensurePosterSrc(row)
-      if (src) await downloadAndSave(row.id, src)
-      warmed.add(row.id)
+      /* 预热也走**候选链**（不是只认库里那条）：库里那条可能已经 404，
+         这时预热会换到镜像 / Bangumi 封面，并把可用地址写回库 —— 首页下次就对了 */
+      const hit = await downloadAndSaveAny(row.id, row, { log: logger })
+      if (hit) warmed.add(row.id)
     } catch (err) {
       logger.debug({ id: row.id, err: err.message }, 'img.warm fail')
     } finally {
@@ -221,3 +321,6 @@ export function warmPosters(rows = []) {
   }
   return n
 }
+
+/** 给接口层用的静态候选（不发请求、不打上游）：首页/列表的第二、第三张牌 */
+export const staticPosterCandidates = (row) => staticCandidates(row)

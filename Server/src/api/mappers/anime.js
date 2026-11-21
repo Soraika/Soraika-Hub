@@ -6,7 +6,7 @@
  * poster 同样走统一出图入口：/api/img/anime/{id}（缓存 / 防盗链 / 换源都在后端）。
  */
 import { config } from './../../config.js'
-import { DAY_META, compactNumber, parseTags, posterUrlOf, ratingText, scoreText, themeTags } from './../../lib/format.js'
+import { DAY_META, compactNumber, parseTags, posterFallbacksOf, posterUrlOf, ratingText, scoreText, themeTags } from './../../lib/format.js'
 import { primaryBase } from './../../lib/multi-source.js'
 import { seasonOf } from './../../domain/season.js'
 
@@ -50,6 +50,8 @@ export function toAnimeDetail(row) {
     title,
     titleOriginal,
     poster: posterUrlOf(row),
+    /* 主图 404 时的降级链（镜像域名 → 后端代理），前端按顺序换 src */
+    posterFallbacks: posterFallbacksOf(row),
     score: hasScore ? row.score : null,
     scoreText: hasScore ? scoreText(row.score) : '',
     ratingText: hasScore ? ratingText(total) : '',

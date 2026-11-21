@@ -79,6 +79,8 @@ const TAG_BLOCKLIST = new Set([
  * 返回可能是空数组（整部作品只有平台类标签）—— 要不要兜底由调用方决定：
  *   卡片：空就退化成「N 人在看」；面板：空才退回原始标签（标签区空着更没信息）。
  */
+import { staticCandidates as staticPosterCandidates } from './../cache/poster-sources.js'
+
 export function themeTags(tags, limit = 8) {
   return (tags || [])
     .filter((t) => t && !TAG_BLOCKLIST.has(t) && !/^\d+$/.test(t))
@@ -118,6 +120,30 @@ export const absoluteUrl = (base, path) =>
  * 十几张就是十几秒的等待），而且图源挂了我们才 302，用户先看到的是一片占位底纹。
  * 直链 + 后台预热是"看得见 + 存得下"两头都要。
  */
+/**
+ * 海报的**备选地址**（按顺序试，主图挂了才用）
+ * ---------------------------------------------------------------------------
+ * 用户报的问题：首页某张海报 404 就只剩占位底纹。原因是前端只拿到**一条**地址，
+ * 浏览器 `onerror` 之后没有下一步可走。
+ *
+ * 这里给的是一条降级链（都**不发请求**，纯字符串）：
+ *   ① 同一个 Mikan 图床的其它镜像域名（mikanime.tv / mikanani.me …）
+ *   ② `/api/img/anime/{id}` —— 后端代理：它会再试镜像，最后去问 Bangumi 要封面，
+ *      命中后还会把可用地址写回库（下一次①就对了）
+ * 前端 `PosterImage` 按顺序换 src，全部失败才显示占位底纹。
+ */
+export const posterFallbacksOf = (row) => {
+  if (!row?.id) return []
+  const primary = row.poster_path ? `/api/img/anime/${row.id}` : row.poster_src || ''
+  const list = []
+  for (const url of staticPosterCandidates({ poster_src: row.poster_src })) {
+    if (url && url !== primary && !list.includes(url)) list.push(url)
+  }
+  const proxy = `/api/img/anime/${row.id}`
+  if (!list.includes(proxy)) list.push(proxy)
+  return list
+}
+
 export const posterUrlOf = (row) => {
   if (!row?.id) return ''
   if (row.poster_path) return `/api/img/anime/${row.id}`

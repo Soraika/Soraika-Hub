@@ -33,7 +33,7 @@ import {
   MIN_BYTES,
   TYPE_BY_EXT,
   cacheDir,
-  downloadAndSave,
+  downloadAndSaveAny,
   ensurePosterSrc,
   hashOf,
   findCached,
@@ -67,19 +67,25 @@ imgRouter.get('/img/anime/:id', async (req, res, next) => {
       }
     }
 
-    // ② 定图源：库里存的优先（那是当初选定的那张），没有就问 Bangumi 要一次
-    const src = row.poster_src || (await ensurePosterSrc(row))
-    if (!src) throw fail('NOT_FOUND', `id=${id} 没有可用海报：库内与 Bangumi 均无封面`)
+    // ② 定图源：**一条候选链**（库里那条 → 各 Mikan 镜像 → Bangumi 封面）
+    //    不是"库里存了就用它"：那条地址可能已经 404（Mikan 换域名 / 老图被清）。
+    const primary = row.poster_src || (await ensurePosterSrc(row)) || null
+    if (!primary) throw fail('NOT_FOUND', `id=${id} 没有可用海报：库内与 Bangumi 均无封面`)
 
-    // ③ 回源 → 校验 → 落盘 → 回写（与列表/详情的后台预热共用同一套实现）
+    // ③ 逐个候选试 → 第一个真图片胜出 → 落盘 + 把胜出的地址写回库（自愈）
     try {
-      const { buf, ext } = await downloadAndSave(id, src)
-      res.setHeader('Content-Type', TYPE_BY_EXT[ext] || 'image/jpeg')
-      return res.send(buf)
+      const hit = await downloadAndSaveAny(id, row, { log: req.log ?? logger })
+      if (hit) {
+        res.setHeader('Content-Type', TYPE_BY_EXT[hit.ext] || 'image/jpeg')
+        return res.send(hit.buf)
+      }
+      throw fail('UPSTREAM', '所有候选图源都取不到（含镜像与 Bangumi 封面）')
     } catch (err) {
       // ④ 我们抓不动（防盗链 / 图床挂 / 图已失效）→ 把原图地址交给浏览器自己取
-      logger.warn({ id, src, err: err.message, action: 'redirect' }, 'img.fetch fail')
-      return res.redirect(302, src)
+      //    （浏览器带的是本站 Referer，偶尔反而能取到；取不到也只是裂图，
+      //      前端 PosterImage 的 onerror 会继续走 posterFallbacks → 最终兜到占位底纹）
+      logger.warn({ id, src: primary, err: err.message, action: 'redirect' }, 'img.fetch fail')
+      return res.redirect(302, primary)
     }
   } catch (err) {
     next(err)

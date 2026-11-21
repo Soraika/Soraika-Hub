@@ -120,6 +120,9 @@ export const SETTINGS_FIELDS = [
      属于**代码里的护栏**，不是使用者该调的旋钮 —— 放进设置页只会让人以为"调小可以少缓存"。 */
   { path: 'image.dir', env: 'IMAGE_CACHE_DIR', group: 'cache', section: '海报图片', label: '落盘目录', type: 'text', restart: true, advanced: true, hint: '相对服务端工作目录' },
   { path: 'image.maxAgeMs', env: 'IMAGE_MAX_AGE_MS', group: 'cache', section: '海报图片', label: '浏览器缓存', type: 'number', unit: 'ms', format: 'duration', min: 0, advanced: true },
+  /* 镜像域名：某张图在一条地址上 404 时换 host 再试（同一份图床的老域名/新域名）。
+     放高级里是因为**不填也能用**（代码里还有内置兜底表 + 排期源地址）。 */
+  { path: 'image.mirrors', env: 'IMAGE_MIRRORS', group: 'cache', section: '海报图片', label: '镜像域名', type: 'list', advanced: true, hint: '一行一个，某条地址 404 时换域名重试' },
 
   // ── 下载 ──
   { path: 'qb.base', env: 'QB_BASE_URL', group: 'qb', section: 'qBittorrent', label: '地址', type: 'url', placeholder: 'http://127.0.0.1:8080' },

@@ -13,7 +13,7 @@
     "series": "node src/jobs/series.js",
     "archive": "node src/jobs/import-archive.js",
     "dump": "node src/jobs/dump-update.js",
-    "verify": "node scripts/verify-home.mjs && node scripts/verify-detail.mjs && node scripts/verify-ai.mjs && node scripts/verify-downloads.mjs && node scripts/verify-settings.mjs && node scripts/verify-archive.mjs && node scripts/verify-qb-control.mjs && node scripts/verify-mcp.mjs",
+    "verify": "node scripts/verify-home.mjs && node scripts/verify-detail.mjs && node scripts/verify-ai.mjs && node scripts/verify-downloads.mjs && node scripts/verify-settings.mjs && node scripts/verify-archive.mjs && node scripts/verify-qb-control.mjs && node scripts/verify-poster.mjs && node scripts/verify-mcp.mjs",
     "verify:worker": "node scripts/verify-worker.mjs"
   },
   "keywords": [],

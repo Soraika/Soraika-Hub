@@ -56,6 +56,7 @@
               <PosterCard
                 :title="item.title"
                 :poster="item.poster"
+            :poster-fallbacks="item.posterFallbacks || []"
                 :badge="group.badge"
                 badge-tone="week"
                 :score="item.score"

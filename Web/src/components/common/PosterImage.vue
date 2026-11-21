@@ -2,15 +2,15 @@
   <div class="poster-image" :style="{ aspectRatio: ratio }">
     <!-- 有图源：先透明后淡入，避免「啪」地跳出 -->
     <img
-      v-if="src && !failed"
+      v-if="currentSrc && !failed"
       class="poster-img"
       :class="{ loaded }"
-      :src="src"
+      :src="currentSrc"
       :alt="alt"
       loading="lazy"
       decoding="async"
       @load="loaded = true"
-      @error="failed = true"
+      @error="onError"
     />
 
     <!-- 无图源 / 加载失败：占位底纹（不撑破布局） -->
@@ -24,7 +24,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { IconPhotoOff } from '@tabler/icons-vue'
 
 /**
@@ -37,6 +37,14 @@ import { IconPhotoOff } from '@tabler/icons-vue'
 const props = defineProps({
   /** 图片地址（当前阶段可由页面直接传外链） */
   src: { type: String, default: '' },
+  /**
+   * 备选地址（按顺序试）—— 主图挂了才用
+   * ---------------------------------------------------------------------
+   * 为什么要有：图源（Mikan 图床）会换域名、清老图，某一条地址 404 之后
+   * 如果只有一张牌，结果就是**整张卡片空着**。给一串候选（镜像域名 → 后端代理），
+   * 浏览器自己换着试，用户看到的就是"图慢了一点"，而不是"没有图"。
+   */
+  fallbacks: { type: Array, default: () => [] },
   /** 无障碍替代文本（一般传番名） */
   alt: { type: String, default: '' },
   /** 固定宽高比，默认 3:4 竖版海报 */
@@ -47,13 +55,37 @@ const props = defineProps({
 
 const loaded = ref(false)
 const failed = ref(false)
+/** 当前试到第几个（0 = 主图；成功就停在这里） */
+const index = ref(0)
+
+/** 候选链：主图 + 备选（去重、去空） */
+const chain = computed(() => {
+  const list = [props.src, ...(Array.isArray(props.fallbacks) ? props.fallbacks : [])]
+  return [...new Set(list.filter((u) => typeof u === 'string' && u))]
+})
+
+const currentSrc = computed(() => chain.value[index.value] || '')
+
+/**
+ * 一张失败就换下一张 —— 全部失败才显示占位
+ * 注意不能用 `failed = true` 直接收工：那正是"一个源挂了就没图"的老行为。
+ */
+function onError() {
+  if (index.value < chain.value.length - 1) {
+    index.value++
+    loaded.value = false
+    return
+  }
+  failed.value = true
+}
 
 // 复用组件实例换图时复位加载状态（列表筛选/翻页会复用同一实例）
 watch(
-  () => props.src,
+  () => [props.src, props.fallbacks],
   () => {
     loaded.value = false
     failed.value = false
+    index.value = 0
   }
 )
 </script>
