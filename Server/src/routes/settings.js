@@ -10,6 +10,8 @@
  *   GET    /api/dump/status           离线 dump 更新任务的实时状态（进度 / 上次结果 / 失败原因）
  *   POST   /api/dump/update           手动触发一次 dump 更新（`{ force }`；正在跑时返回已在跑）
  *   POST   /api/series/rebuild        重算全部系列（清 `series_checked_at`，worker 立刻接手）
+ *   GET    /api/map/status            映射扫描（补齐 mikan→bgm 身份）的实时状态
+ *   POST   /api/map/scan              手动触发一次映射扫描（先导已生成的 jsonl，再逐条补）
  * 业务在 api/pages/settings.js，这里只做参数整形与信封。
  */
 import { Router } from 'express'
@@ -23,7 +25,10 @@ import {
 } from './../api/pages/settings.js'
 import { getDumpJobState, startDumpUpdate } from './../jobs/dump-job.js'
 import { clearSeriesChecked } from './../db/anime.js'
+import { countMapAll } from './../db/map.js'
+import { countAnimeMissingBgm } from './../db/anime.js'
 import { getDumpState } from './../db/dump.js'
+import { getMapScanState, startMapScan, stopMapScan } from './../jobs/map-scan.js'
 import { getWorkerState } from './../jobs/worker.js'
 import { fail } from './../lib/errors.js'
 
@@ -176,6 +181,45 @@ settingsRouter.post('/series/rebuild', (req, res, next) => {
     const { series } = getWorkerState()
     req.log?.info?.({ reset }, 'series.rebuild queued')
     res.json({ ok: true, data: { reset, pending: series?.pending ?? null } })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * GET /api/map/status —— 映射扫描状态
+ * ---------------------------------------------------------------------------
+ * `job` 是这一趟（或上一趟）的进度；`counts` 是**库的现状**，两个都要给：
+ * 「扫完了但还有 300 部缺」和「扫到一半」是两回事，界面得能分开说。
+ */
+settingsRouter.get('/map/status', (req, res, next) => {
+  try {
+    res.json({
+      ok: true,
+      data: {
+        job: getMapScanState(),
+        counts: { map: countMapAll(), missingBgm: countAnimeMissingBgm() },
+      },
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/map/scan —— 手动触发
+ * ---------------------------------------------------------------------------
+ * `limit` 可选（只扫前 N 条，用来先小范围验证）；不传 = 扫到没有为止。
+ * 已经在跑时回 `started:false`（不是错误：连点两下是正常反应）。
+ */
+settingsRouter.post('/map/scan', (req, res, next) => {
+  try {
+    const limit = Number(req.body?.limit) || 0
+    const stop = req.body?.stop === true
+    if (stop) return res.json({ ok: true, data: { stopped: stopMapScan(), job: getMapScanState() } })
+    const { started, state } = startMapScan({ limit, trigger: 'manual', log: req.log })
+    req.log?.info?.({ started, limit }, 'mapscan.manual trigger')
+    res.json({ ok: true, data: { started, job: state } })
   } catch (err) {
     next(err)
   }

@@ -96,6 +96,41 @@ export const listScannedMikanIds = () => stmt.scannedIds.all().map((row) => row.
 /** 目前见过的最大 mikan id（尾部扫描的水位起点） */
 export const maxScannedMikanId = () => Number(stmt.maxMikanId.get()?.maxId) || 0
 
+/**
+ * 批量导入「别处生成的映射」（老版本导出的 `data/mikan-bgm-map.jsonl`）
+ * ---------------------------------------------------------------------------
+ * 为什么要有这条：`mikan_bgm_map` 是全库**唯一不可重建**的数据，而它是靠逐页扫描攒出来的
+ * （5400 个 mikan id × 1 次请求）。换库 / 换部署时如果只能重扫，代价是几十分钟到几个小时 ——
+ * 所以允许把已经生成的那份直接带过来。幂等：只补空的 bgm_id，不覆盖已解析出的值。
+ * @param {Array<{mikanId:string|number, bgmId?:string|number|null, title?:string}>} rows
+ * @returns {{inserted:number, filled:number, skipped:number}}
+ */
+export function importMapRows(rows = []) {
+  const out = { inserted: 0, filled: 0, skipped: 0 }
+  if (!rows?.length) return out
+  const before = new Set(listScannedMikanIds().map(String))
+  const now = Date.now()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    for (const row of rows) {
+      const mikanId = String(row?.mikanId ?? row?.mikan_id ?? '').trim()
+      if (!mikanId) continue
+      const bgmId = row?.bgmId ?? row?.bgm_id ?? null
+      const title = row?.title ?? row?.title_mikan ?? null
+      const existed = before.has(mikanId)
+      stmt.upsert.run(val(mikanId), val(bgmId), val(title), now, now)
+      if (!existed) out.inserted++
+      else if (bgmId) out.filled++
+      else out.skipped++
+    }
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+  return out
+}
+
 /** 扫描水位（没扫过就是 0） */
 export const getScanWatermark = () => Number(stmt.getScan.get()?.watermark) || 0
 

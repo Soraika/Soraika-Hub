@@ -36,8 +36,19 @@ const SIGNATURE_TTL_MS = 6 * 60 * 60 * 1000
 const signatureCache = new Map()
 
 /** 档案字段缺了就该现取：有 bgm_id 才可能补到东西（评分 / 标签 / 简介任一为空） */
+/**
+ * 「这条要不要现场补一次上游」
+ * ---------------------------------------------------------------------------
+ * 两个条件必须都算进来，以前只判了第一个：
+ *   · **没 bgm_id 但有 mikan_id** —— 排期进来了、身份没确认。这种行打开面板时
+ *     以前**完全不补**，于是永远没评分、永远没映射，用户看到的就是「这部没数据」。
+ *     现在现场去 Mikan 详情页解析 bgm_id（`enrichOne` 的 ① 分支），补到就落库。
+ *   · **有 bgm_id 但档案缺** —— 评分 / 标签 / 简介任一为空就去 Bangumi 补。
+ * 优先离线（值在库里就直接用），只有真缺才打上游 —— 这是「离线优先」，不是「只能离线」。
+ */
 const needsEnrich = (row) =>
-  Boolean(row?.bgm_id) && (row.score == null || row.tags == null || row.summary == null)
+  Boolean(row?.bgm_id || row?.mikan_id) &&
+  (!row.bgm_id || row.score == null || row.tags == null || row.summary == null)
 
 /**
  * 按作品主键取详情（缺字段现场补一次再返回）
@@ -57,7 +68,7 @@ export async function getAnimeDetail(id, { log = logger } = {}) {
     const outcome = await enrichOne(row, log)
     if (outcome === 'enriched') {
       row = findById(numId) ?? row // 补完读回来（这次响应就带上评分/标签/简介）
-      log.info({ id: numId }, 'anime.detail 现场补齐')
+      log.info({ id: numId, mikanId: row.mikan_id, bgmId: row.bgm_id }, 'anime.detail 现场补齐')
     }
   }
 

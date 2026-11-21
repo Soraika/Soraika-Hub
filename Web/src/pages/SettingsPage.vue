@@ -153,6 +153,8 @@
       <PromptEditor v-if="group.key === 'ai'" />
       <!-- 离线数据：dump 的**手动更新**放在这一组最后（它属于这个分组的动作，不是一个配置项） -->
       <DumpPanel v-if="group.key === 'dump'" />
+      <!-- 身份映射：与 dump 互补（dump 给档案内容，这张卡给 mikan↔bgm 身份） -->
+      <MapScanPanel v-if="group.key === 'dump'" />
       </template>
 
       <!-- ── 导入 / 分享：导出在上面，导入这里 ─────────────────────────── -->
@@ -223,6 +225,7 @@ import {
 } from '@tabler/icons-vue'
 import FieldControl from '@/components/settings/FieldControl.vue'
 import DumpPanel from '@/components/settings/DumpPanel.vue'
+import MapScanPanel from '@/components/settings/MapScanPanel.vue'
 import PromptEditor from '@/components/settings/PromptEditor.vue'
 import StateBlock from '@/components/ui/StateBlock.vue'
 import { useSettings } from '@/composables/useSettings'

@@ -439,6 +439,30 @@ try {
   check(rebuild.res.ok && typeof rebuild.body?.data?.reset === 'number', 'POST /api/series/rebuild → 200 且回报清空行数', `reset=${rebuild.body?.data?.reset}`)
   check(rebuild.body?.data?.reset >= 0, '清空行数是数字（空库时为 0，不是 null）')
 
+  /* ── 映射扫描（状态接口 + 空库触发；不打上游）──────────────────────────── */
+  console.log('\n— 映射扫描')
+  const mapStatus = await call('GET', '/api/map/status')
+  const mapJob = mapStatus.body?.data?.job
+  check(mapStatus.res.ok && mapJob && typeof mapJob.phase === 'string', 'GET /api/map/status → 200 且带 job 相位', mapJob?.phase)
+  check(
+    ['idle', 'importing', 'scanning', 'done', 'failed'].includes(mapJob.phase),
+    '相位是有限枚举（界面据此显示文案）',
+    mapJob.phase,
+  )
+  check(Number.isInteger(mapStatus.body.data.counts.missingBgm), '带「还缺 bgm 的作品数」（按钮旁边显示）', String(mapStatus.body.data.counts.missingBgm))
+  /* 空库触发：目标是 0 条 → 立刻 done，不会打上游（验收不该依赖网络） */
+  const mapScan = await call('POST', '/api/map/scan', { limit: 5 })
+  check(mapScan.res.ok && typeof mapScan.body?.data?.started === 'boolean', 'POST /api/map/scan → 200 且回报是否起来')
+  const mapDone = await (async () => {
+    for (let i = 0; i < 20; i++) {
+      const now = await call('GET', '/api/map/status')
+      if (!now.body?.data?.job?.running) return now.body.data.job
+      await new Promise((r) => setTimeout(r, 150))
+    }
+    return null
+  })()
+  check(mapDone?.phase === 'done' || mapDone?.phase === 'idle', '扫完（或空库直接完成）会停在 done', mapDone?.phase)
+
   console.log(failed ? `\n✗ 失败 ${failed} 项` : '\n✓ 全部通过')
   process.exitCode = failed ? 1 : 0
 } catch (err) {

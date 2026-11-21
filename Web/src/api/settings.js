@@ -65,3 +65,20 @@ export const startDumpUpdate = (force = false) => apiPost('/api/dump/update', { 
  * @returns {Promise<{ reset:number, pending:number|null }>} reset = 被清空重算的行数
  */
 export const rebuildSeries = () => apiPost('/api/series/rebuild', {}, { timeout: 30000 })
+
+/**
+ * 映射扫描状态（补齐 mikan→bgm 身份 + 档案）
+ * @returns {Promise<{ job:{phase:string,running:boolean,total:number,done:number,
+ *   resolved:number,noLink:number,failed:number,imported:object,mapCount:number,stillMissing:number},
+ *   counts:{ map:number, missingBgm:number } }>}
+ */
+export const fetchMapStatus = () => apiGet('/api/map/status', { timeout: 10000 })
+
+/**
+ * 手动触发映射扫描（发射后不管，之后轮询 status）
+ * @param {{ limit?: number }} [options] limit=0 表示扫到没有为止
+ */
+export const startMapScan = (options = {}) => apiPost('/api/map/scan', options, { timeout: 20000 })
+
+/** 叫停（正在处理的那一条会跑完） */
+export const stopMapScan = () => apiPost('/api/map/scan', { stop: true }, { timeout: 10000 })

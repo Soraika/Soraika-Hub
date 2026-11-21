@@ -510,6 +510,29 @@ export const listForFolderMatch = () =>
  * 清空是安全的：根名与命名风格不会被覆盖（`setSeriesMeta` 只补空），走链现在全离线（几毫秒一部）。
  * @returns {number} 被重置的行数
  */
+/**
+ * 「缺 bgm_id 但知道 mikan_id」的作品 —— 映射扫描/在线兜底的目标
+ * ---------------------------------------------------------------------------
+ * 这批行是「排期进来了、身份没确认」：没有 bgm_id 就没有评分/标签/简介，
+ * 系列链与归档目录也都算不出来。以前只有后台队列慢慢消化，而且**队列谓词是
+ * `bgm_checked_at` 的退避窗口**，用户点开详情页也不会当场补（见 api/pages/anime.js 的
+ * needsEnrich 注释）。扫描入口要的是一个明确的、可数的目标集。
+ */
+export const listAnimeMissingBgm = (limit = 500) =>
+  db
+    .prepare(
+      `SELECT id, mikan_id, bgm_id, title_mikan, year, season
+         FROM anime
+        WHERE mikan_id IS NOT NULL AND bgm_id IS NULL
+        ORDER BY id DESC
+        LIMIT ?`,
+    )
+    .all(val(limit))
+
+/** 缺 bgm_id 的作品总数（按钮旁边显示进度用） */
+export const countAnimeMissingBgm = () =>
+  db.prepare('SELECT COUNT(*) AS n FROM anime WHERE mikan_id IS NOT NULL AND bgm_id IS NULL').get()?.n ?? 0
+
 export const clearSeriesChecked = () => db.prepare('UPDATE anime SET series_checked_at = NULL').run().changes
 
 /** 按作品主键取（出图接口用） */
