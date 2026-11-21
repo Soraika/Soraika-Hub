@@ -151,6 +151,8 @@
       <!-- 提示词放在 AI 卡片下面：它是 AI 的外置配置（只读查看 + 恢复默认），
            不参与上面那套「分组保存」——改动直接写 data/prompts.json，立即生效。 -->
       <PromptEditor v-if="group.key === 'ai'" />
+      <!-- 离线数据：dump 的**手动更新**放在这一组最后（它属于这个分组的动作，不是一个配置项） -->
+      <DumpPanel v-if="group.key === 'dump'" />
       </template>
 
       <!-- ── 导入 / 分享：导出在上面，导入这里 ─────────────────────────── -->
@@ -220,6 +222,7 @@ import {
   IconWorld,
 } from '@tabler/icons-vue'
 import FieldControl from '@/components/settings/FieldControl.vue'
+import DumpPanel from '@/components/settings/DumpPanel.vue'
 import PromptEditor from '@/components/settings/PromptEditor.vue'
 import StateBlock from '@/components/ui/StateBlock.vue'
 import { useSettings } from '@/composables/useSettings'

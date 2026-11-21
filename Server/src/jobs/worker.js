@@ -32,7 +32,7 @@ import {
 } from './../db/queue.js'
 import { logger } from './../lib/logger.js'
 import { enrichOne, lastDailyBoundary, refreshStaleOne } from './enrich.js'
-import { updateDump } from './dump-update.js'
+import { getDumpJobState, startDumpUpdate } from './dump-job.js'
 import { fillSeriesFor } from './series.js'
 import { renameAllDownloads } from './../api/pages/downloads.js'
 
@@ -66,7 +66,18 @@ const workerState = {
 }
 
 /** 给 /api/health 用的只读快照（structuredClone：调用方拿到的是副本，改不动内部状态） */
-export const getWorkerState = () => structuredClone(workerState)
+export const getWorkerState = () => {
+  const snap = structuredClone(workerState)
+  /* dump 的实时相位来自 dump-job（手动触发的也在这里，workerState 只知道「到点了没」） */
+  const job = getDumpJobState()
+  snap.dump = { ...snap.dump, phase: job.phase, running: snap.dump.running || job.running, progress: job.progress }
+  /* 手动触发的那一趟不经过 worker，`importedAt` 只有 dump_state 里有 —— 以它为准，
+     否则 /api/health 会一直显示「从没导入过」，跟设置页对不上。 */
+  const stored = getDumpState()
+  snap.dump.importedAt = Math.max(Number(snap.dump.importedAt) || 0, Number(stored?.imported_at) || 0)
+  snap.dump.name = snap.dump.name || stored?.name || ''
+  return snap
+}
 
 let stopped = false
 let running = false
@@ -191,16 +202,20 @@ function maybeUpdateDump(log) {
   if (workerState.dump.checkedAt >= boundary) return
   if (Date.now() < workerState.dump.cooldownUntil) return
 
+  /* 真正的工作交给 dump-job（与设置页手动触发**共用一份状态与互斥**）：
+     这里只负责「到点了没」和失败退避。 */
+  const job = startDumpUpdate({ trigger: 'auto', log })
+  if (!job.started) return
   workerState.dump.running = true
   workerState.dump.at = config.bgm.dumpCheckAt
   void (async () => {
     try {
-      const res = await updateDump({ log })
+      const res = await job.done
       workerState.dump.checkedAt = Date.now()
       workerState.dump.lastError = null
       dumpFailStreak = 0
-      if (res.index?.name) workerState.dump.name = res.index.name
-      if (res.status === 'imported') workerState.dump.importedAt = Date.now()
+      if (res?.index?.name) workerState.dump.name = res.index.name
+      if (res?.status === 'imported') workerState.dump.importedAt = Date.now()
     } catch (err) {
       workerState.dump.checkedAt = Date.now()
       workerState.dump.lastError = err?.message || String(err)

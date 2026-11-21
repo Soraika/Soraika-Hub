@@ -197,6 +197,12 @@ html {
   color: var(--text-secondary);
   font-weight: 600;
 }
+/* 失败胶囊（长任务失败这类需要一眼看出「出了问题」的标记） */
+.pill-danger {
+  background: color-mix(in srgb, var(--status-danger) 14%, transparent);
+  color: var(--status-danger);
+  font-weight: 600;
+}
 
 /* 卡片内区块标题（面板的简介/字幕组/资源、设置页的分组…都用它）——
    统一一份，避免每个组件各写一遍字号与颜色，最后左边界参差、层级不一致。 */

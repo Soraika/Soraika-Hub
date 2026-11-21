@@ -190,11 +190,25 @@ export async function getDownloads({ fresh = false } = {}) {
   }
   if (!qbConfigured()) return empty
 
-  const [versions, transfer, torrents] = await Promise.all([
-    qbVersions(),
-    qbTransfer().catch(() => null), // 传输信息拿不到不该让整页失败
-    qbTorrents({ fresh }),
-  ])
+  /* 配了地址但连不上（qB 重启 / 只允许白名单 IP / 换网络）时**不要 500**：
+     下载页整页都拿不到数据、前端只能显示「加载失败，请检查网络连接」——
+     用户分不清是「服务坏了」还是「qB 没连上」。这里回 200 + `connected:false` + 原因，
+     界面照常渲染外壳，只在顶部说明一句。 */
+  let versions = null
+  let torrents = null
+  try {
+    versions = await qbVersions()
+  } catch (err) {
+    logger.warn({ err: err?.message }, 'downloads.qb unreachable')
+    return {
+      ...empty,
+      configured: true,
+      connected: false,
+      error: err?.message || '连不上 qBittorrent',
+    }
+  }
+  const transfer = await qbTransfer().catch(() => null) // 传输信息拿不到不该让整页失败
+  torrents = await qbTorrents({ fresh })
 
   /** 作品 id → 该作品的种子（Map 保持 qB 返回顺序，卡片顺序稳定） */
   const byAnime = new Map()
@@ -281,6 +295,7 @@ export async function getDownloads({ fresh = false } = {}) {
 
   return {
     configured: true,
+    connected: true,
     versions,
     transfer,
     counts: {

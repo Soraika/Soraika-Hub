@@ -340,7 +340,14 @@ check(
 )
 check(rowOf('2').tags === '["恋爱","校园"]', 'deflate 条目（subject.jsonlines）也读对了', rowOf('2').tags)
 
-console.log('\n— 自动更新（索引多源 / digest 跳过 / Range 续传 / sha256）')
+console.log('\n— 自动更新（索引多源 / digest 跳过 / Range 续传 / sha256 / 挂起换镜像）')
+/* 下载这一段为什么起**真的本机 HTTP 服务**而不是 mock fetch：
+ * 下载实现已经改用 node:http（不能用 fetch —— undici 在「边写盘边暂停响应流」时会在
+ * socket 回调里抛 assert(!this.paused)，try/catch 拦不住，整个进程直接退出，
+ * 见 api/sources/bgm-dump.js 的注释）。既然不走 fetch，mock fetch 就测不到真代码 ——
+ * 宁可起一个十几行的本机服务，把 Range / 416 / 502 / 挂起 全部按真实协议跑一遍。
+ * 索引那几个小请求仍然走 fetch（几十 KB），所以索引仍用 fetch stub。 */
+const http = await import('node:http')
 const { config } = await import('./../src/config.js')
 const { fetchDumpIndex, downloadDump } = await import('./../src/api/sources/bgm-dump.js')
 const { checkDump } = await import('./../src/jobs/dump-update.js')
@@ -350,24 +357,69 @@ const digest = createHash('sha256').update(zipBuf).digest('hex')
 const dlDir = mkdtempSync(join(tmpdir(), 'bgm-dl-'))
 config.sources.pickFastest = false // 顺序确定，便于断言
 config.bgm.dumpDir = dlDir
-config.bgm.dumpMirrors = ['{url}', 'https://mirror.test/{url}']
-config.bgm.dumpIndex = ['https://idx.bad/latest.json', 'https://idx.test/latest.json']
+
+/** 本机「假镜像」：支持 Range / 416 / 502 / 只吐 10 字节然后挂住 */
+const served = { bytes: 0, ranges: [], fail502: 0 }
+const fakeMirror = http.createServer((req, res) => {
+  const url = new URL(req.url, 'http://x')
+  if (url.pathname === '/stall.zip') {
+    res.writeHead(200, { 'content-length': String(zipBuf.length) })
+    res.write(zipBuf.subarray(0, 10)) // 给个文件头就不动了
+    return
+  }
+  if (served.fail502 > 0) {
+    served.fail502--
+    res.writeHead(502, { 'content-length': '4' })
+    res.end('nope')
+    return
+  }
+  const range = req.headers.range || ''
+  served.ranges.push(range || null)
+  let start = 0
+  const m = /bytes=(\d+)-/.exec(range)
+  if (m) start = Number(m[1])
+  if (start >= zipBuf.length) {
+    res.writeHead(416, { 'content-range': `bytes */${zipBuf.length}` })
+    res.end()
+    return
+  }
+  const body = zipBuf.subarray(start)
+  res.writeHead(start ? 206 : 200, {
+    'content-length': String(body.length),
+    ...(start ? { 'content-range': `bytes ${start}-${zipBuf.length - 1}/${zipBuf.length}` } : {}),
+  })
+  const flush = (i = 0) => {
+    if (i >= body.length) return res.end()
+    const chunk = body.subarray(i, i + 65536)
+    served.bytes += chunk.length
+    res.write(chunk, () => flush(i + 65536))
+  }
+  flush()
+})
+/** 另一个只回 502 的镜像（用来验「换下一个」；两个独立端口，不靠状态位） */
+const badMirror = http.createServer((req, res) => {
+  res.writeHead(502, { 'content-length': '4' })
+  res.end('nope')
+})
+await new Promise((r) => fakeMirror.listen(0, '127.0.0.1', r))
+await new Promise((r) => badMirror.listen(0, '127.0.0.1', r))
+const mirrorBase = `http://127.0.0.1:${fakeMirror.address().port}`
+const badBase = `http://127.0.0.1:${badMirror.address().port}`
 
 const asset = {
   name: 'dump-test.zip',
   size: zipBuf.length,
   digest,
-  url: 'https://dl.test/dump-test.zip',
+  url: `${mirrorBase}/dump-test.zip`,
   createdAt: '2026-11-03T21:04:03Z',
 }
-const calls = []
+config.bgm.dumpMirrors = ['{url}']
+config.bgm.dumpIndex = ['https://idx.bad/latest.json', 'https://idx.test/latest.json']
+
 let indexFails = 1
-let mirrorBroken = false
 const realFetch = globalThis.fetch
 globalThis.fetch = async (url, init = {}) => {
   const target = String(url)
-  const range = init.headers?.Range || null
-  calls.push({ url: target, range })
   if (target.includes('latest.json')) {
     if (target.includes('idx.bad') && indexFails-- > 0) return new Response('boom', { status: 500 })
     // 索引的真实格式：browser_download_url（fetchDumpIndex 会归一成 url）
@@ -382,16 +434,7 @@ globalThis.fetch = async (url, init = {}) => {
       { status: 200, headers: { 'content-type': 'application/json' } },
     )
   }
-  if (target.includes('mirror.test') && mirrorBroken) return new Response('nope', { status: 502 })
-  if (range) {
-    const start = Number(/bytes=(\d+)-/.exec(range)?.[1] || 0)
-    if (start >= zipBuf.length) return new Response('', { status: 416 })
-    return new Response(zipBuf.subarray(start), {
-      status: 206,
-      headers: { 'content-range': `bytes ${start}-${zipBuf.length - 1}/${zipBuf.length}` },
-    })
-  }
-  return new Response(zipBuf, { status: 200 })
+  return realFetch(url, init)
 }
 
 try {
@@ -402,17 +445,15 @@ try {
   const first = await checkDump({ log: silent })
   check(first.hasNew === true, '从没导入过 → 认为有新版')
   saveDumpState({ digest, name: asset.name, imported_at: Date.now() })
-  const before = calls.filter((call) => call.url.includes('dl.test')).length
+  const bytesBefore = served.bytes
   const again = await checkDump({ log: silent })
-  const after = calls.filter((call) => call.url.includes('dl.test')).length
-  check(again.hasNew === false && after === before, 'digest 相同 → 不下载（省 450MB）', `download calls ${after - before}`)
+  check(again.hasNew === false && served.bytes === bytesBefore, 'digest 相同 → 不下载（省 450MB）', `downloaded ${served.bytes - bytesBefore} B`)
 
   // 续传：先在 .part 里放前 100 字节，再下
   const partFile = join(dlDir, `${asset.name}.part`)
   writeFileSync(partFile, zipBuf.subarray(0, 100))
   const resumed = await downloadDump({ asset: { ...asset, digest }, dir: dlDir, log: silent })
-  const resumeCall = calls.filter((call) => call.url.includes('dl.test')).at(-1)
-  check(resumeCall?.range === 'bytes=100-', '已有 .part → 发 Range 从断点续传', String(resumeCall?.range))
+  check(served.ranges.at(-1) === 'bytes=100-', '已有 .part → 发 Range 从断点续传', String(served.ranges.at(-1)))
   check(
     statSync(resumed.file).size === zipBuf.length && !existsSync(partFile),
     '续传后文件完整，.part 改名成正式文件',
@@ -433,56 +474,39 @@ try {
   }
   check(/sha256 不符/.test(digestError) && !existsSync(partFile) && !existsSync(resumed.file), 'sha256 不符 → 报错并删除文件', digestError)
 
-  // 镜像失败 → 换下一个
-  mirrorBroken = true
+  /* 镜像 502 → 换下一个。用**两个独立端口**：坏的只回 502，好的照常服务。
+     注意 mirrors 里的模板只要有 {url} 就会被替换，没有占位符就原样使用 ——
+     所以「好镜像」写死完整地址即可。 */
+  config.bgm.dumpMirrors = [`${badBase}/dump-test.zip`, `${mirrorBase}/dump-test.zip`]
   const fallback = await downloadDump({ asset: { ...asset, digest }, dir: dlDir, log: silent })
-  check(fallback.url.includes('dl.test') && !fallback.url.includes('mirror.test'), '镜像 502 → 换下一个镜像成功', fallback.url)
+  check(statSync(fallback.file).size === zipBuf.length, '镜像 502 → 自动换下一个地址，照样下完', `${statSync(fallback.file).size} B`)
+  check(fallback.url.includes(mirrorBase), '最终用的是好镜像（不是坏的）', fallback.url)
+  config.bgm.dumpMirrors = ['{url}']
 
-  /* 代理挂起（只发几个字节就不动了）：无进度闸 → 中断换镜像，.part 保留续传。
+  /* 代理挂起（只发几个字节就不动了）：无进度闸 → 主动断开，.part 保留续传。
      实测过 gh-proxy 会这样卡住 500KB —— 没有这道闸就得等 30 分钟总超时。 */
   process.env.BGM_DUMP_STALL_MS = '300'
   const stallDir = mkdtempSync(join(tmpdir(), 'bgm-stall-'))
-  const fetchWithStall = globalThis.fetch
-  let stallCalls = 0
-  globalThis.fetch = async (url, init = {}) => {
-    if (String(url).includes('stall.test')) {
-      stallCalls++
-      let ctrl
-      const stream = new ReadableStream({
-        start(controller) {
-          ctrl = controller
-          controller.enqueue(zipBuf.subarray(0, 10)) // 先给文件头 10 字节，然后永远不 close
-        },
-      })
-      // 真 fetch 在 abort 时会让 body 报错；mock 也要照做，否则 for-await 会永远等下去
-      init.signal?.addEventListener('abort', () => {
-        try {
-          ctrl.error(new Error('aborted'))
-        } catch {
-          /* 已经关掉了 */
-        }
-      })
-      return new Response(stream, { status: 200 })
-    }
-    return fetchWithStall(url, init)
-  }
   try {
-    config.bgm.dumpMirrors = ['https://stall.test/{url}', '{url}']
     const startedAt = Date.now()
-    const stalled = await downloadDump({ asset: { ...asset, digest }, dir: stallDir, log: silent })
+    let stallError = ''
+    try {
+      await downloadDump({ asset: { ...asset, url: `${mirrorBase}/stall.zip` }, dir: stallDir, log: silent })
+    } catch (err) {
+      stallError = err.message
+    }
     const ms = Date.now() - startedAt
-    check(stallCalls === 1, '挂起的镜像只试一次就放弃（不会干等 30 分钟）', `calls=${stallCalls}`)
-    check(ms < 5000, `无进度 300ms 后自动换镜像 → ${ms}ms`)
-    check(stalled.url.includes('dl.test') && !stalled.url.includes('stall.test'), '挂起的镜像被换掉，用下一个下完')
-    check(statSync(stalled.file).size === zipBuf.length, '换镜像后从断点续传，文件仍然完整', `${statSync(stalled.file).size}/${zipBuf.length}`)
+    check(/没有收到数据/.test(stallError), '挂起 300ms → 主动中断并说清原因', stallError.slice(0, 60))
+    check(ms < 5000, `无进度 300ms 后就放弃（不会干等 30 分钟）→ ${ms}ms`)
+    check(existsSync(join(stallDir, `${asset.name}.part`)), '.part 保留（下次从断点续传）')
   } finally {
-    globalThis.fetch = fetchWithStall
     delete process.env.BGM_DUMP_STALL_MS
-    config.bgm.dumpMirrors = ['{url}', 'https://mirror.test/{url}']
     rmSync(stallDir, { recursive: true, force: true })
   }
 } finally {
   globalThis.fetch = realFetch
+  await new Promise((r) => fakeMirror.close(r))
+  await new Promise((r) => badMirror.close(r))
   rmSync(dlDir, { recursive: true, force: true })
 }
 

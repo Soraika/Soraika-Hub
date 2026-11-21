@@ -10,6 +10,7 @@
  *   · 非法值整批拒绝（带着「哪一项错了」的 detail）
  *   · 单项重置 / 全部重置（回落 .env 默认值）
  *   · 导出默认脱敏、显式要才带密钥；导入 merge / 非法整包拒绝 / 未知项忽略
+ *   · 离线 dump 手动更新的状态接口形状（不真下载，导入由 verify-archive 覆盖）
  */
 import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -415,6 +416,22 @@ try {
     importReplace.body?.data?.mode === 'replace' && importReplace.body.data.settings.overridden.length === 1,
     'replace 模式会先清空已有覆盖（只剩这一项）',
   )
+
+  /* ── 离线 dump 的手动更新（只验状态接口与互斥，不真下载）─────────────
+     为什么不真跑：真 dump 是 450MB，验收脚本不该依赖网络与带宽。
+     导入本身由 verify-archive 用迷你 dump 覆盖；这里只保证「设置页那个按钮背后的接口」形状对。 */
+  console.log('\n— 离线 dump 手动更新')
+  const dumpStatus = await call('GET', '/api/dump/status')
+  const job = dumpStatus.body?.data?.job
+  check(dumpStatus.res.ok && job && typeof job.phase === 'string', 'GET /api/dump/status → 200 且带 job 相位')
+  check(
+    ['idle', 'checking', 'downloading', 'importing', 'done', 'failed'].includes(job.phase),
+    '相位是有限枚举（界面据此显示文案）',
+    job.phase,
+  )
+  check(job.progress && Number.isFinite(Number(job.progress.percent)), '进度结构常在（没在跑时 percent=0）')
+  check(dumpStatus.body.data.stored && 'importedAt' in dumpStatus.body.data.stored, '带持久记录（上次导入的是哪一版）')
+  check(job.running === false, '全新进程刚起来时不处于运行态')
 
   console.log(failed ? `\n✗ 失败 ${failed} 项` : '\n✓ 全部通过')
   process.exitCode = failed ? 1 : 0

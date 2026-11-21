@@ -42,8 +42,26 @@ export async function checkDump({ log = logger } = {}) {
  * 完整更新：检查 → 下载（需要时）→ 导入 → 记状态
  * @param {{ force?: boolean, keepZip?: boolean, dryRun?: boolean, log?: object }} [options]
  */
-export async function updateDump({ force = false, keepZip, dryRun = false, log = logger } = {}) {
+export async function updateDump({
+  force = false,
+  keepZip,
+  dryRun = false,
+  log = logger,
+  /** 阶段回调（手动触发时给界面显示进度用）：checking / downloading / importing */
+  onPhase,
+  /** 下载进度回调（bytes / total）—— 只在真有下载时被调用 */
+  onProgress,
+} = {}) {
   const startedAt = Date.now()
+  const phase = (name) => {
+    try {
+      onPhase?.(name)
+    } catch {
+      /* 回调出错不该影响导入 */
+    }
+  }
+
+  phase('checking')
   const { index, hasNew } = await checkDump({ log })
   if (!hasNew && !force) {
     return { status: 'up-to-date', index, ms: Date.now() - startedAt }
@@ -52,10 +70,12 @@ export async function updateDump({ force = false, keepZip, dryRun = false, log =
   const dir = resolve(process.cwd(), config.bgm?.dumpDir || 'data/dump')
   const cached = join(dir, index.name)
   // 上次下载成功但导入失败时，zip 还在 → 直接复用，别再拉 450MB
+  phase('downloading')
   const zip = existsSync(cached)
     ? (log.info({ zip: cached }, 'dump.download cached'), cached)
-    : (await downloadDump({ asset: index, dir, log })).file
+    : (await downloadDump({ asset: index, dir, log, onProgress })).file
 
+  phase('importing')
   const imported = await runArchiveImport({ dir: zip, dryRun, log })
   if (!dryRun) {
     saveDumpState({

@@ -38,6 +38,16 @@
         @retry="$emit('reload')"
       />
 
+      <!-- 配了地址但连不上：与「没配」分开说 —— 前者要去查 qB 是否在跑 / 地址是否可达，
+           后者才要去填设置。混成一句「还没有连上 qBittorrent」会让人反复去改设置。 -->
+      <section v-else-if="connected === false" class="notice notice-warn">
+        <p class="notice-title">qBittorrent 连不上</p>
+        <p class="notice-text">
+          地址已经填了（设置 → 下载），但现在连不过去：{{ qbError || '请求失败' }}。
+          常见原因：qB 没在用、地址 / 端口写错、或 qB 只允许白名单 IP 访问。
+        </p>
+      </section>
+
       <!-- 没配 qB：这里给的是「下一步做什么」，不是错误 -->
       <section v-else-if="!configured" class="notice">
         <p class="notice-title">还没有连上 qBittorrent</p>
@@ -134,6 +144,9 @@ const props = defineProps({
 defineEmits(['open-anime', 'reload'])
 
 const configured = computed(() => Boolean(props.data?.configured))
+/** 配了地址但连不上（后端 200 + connected:false）：与「没配」分开显示 */
+const connected = computed(() => props.data?.connected)
+const qbError = computed(() => props.data?.error || '')
 const items = computed(() => props.data?.items ?? [])
 const unmatched = computed(() => props.data?.unmatched ?? [])
 const counts = computed(() => props.data?.counts ?? {})
@@ -315,6 +328,13 @@ function speedText(bytes) {
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius);
   background: var(--bg-card);
+}
+.notice-warn {
+  border-color: color-mix(in srgb, var(--status-warning) 40%, transparent);
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
+}
+.notice-warn .notice-title {
+  color: var(--status-warning);
 }
 .notice-title {
   margin: 0 0 6px;

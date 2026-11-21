@@ -147,5 +147,25 @@ async function shutdown(signal) {
   process.exit(0)
 }
 
+/**
+ * 进程级兜底：这类错误 try/catch 是拦不住的
+ * ---------------------------------------------------------------------------
+ * 实测踩过：undici 在 socket 事件回调里同步 `assert(!this.paused)` 失败 ——
+ * 那是**事件回调里的同步抛错**，任何 await/try 都包不住，Node 直接退出。
+ * 这类问题不该让「服务整个消失、日志只剩一行 assert」：
+ *   · uncaughtException：记 error 日志（带 stack）后**继续跑**。单次请求/单次下载的
+ *     内部状态坏掉，不等于整个进程该停；停机与否交给健康检查与运维判断。
+ *   · unhandledRejection：只记日志（Node 默认在 22 上会退出，先兜住）。
+ * 注意：继续跑的前提是「状态没坏」。真正的内存耗尽之类还是会死，那种停就停。
+ * 下载本身已经改用 node:http 实现（见 api/sources/bgm-dump.js 的注释），
+ * 这条兜底是为了「以后别再遇到同类问题时只剩一行 assert」。
+ */
+process.on('uncaughtException', (err) => {
+  logger.error({ err: err?.stack || String(err), kind: 'uncaughtException' }, 'process.uncaught 已被兜底，进程继续')
+})
+process.on('unhandledRejection', (reason) => {
+  logger.error({ err: reason?.stack || String(reason), kind: 'unhandledRejection' }, 'process.unhandledRejection')
+})
+
 process.on('SIGINT', () => void shutdown('SIGINT'))
 process.on('SIGTERM', () => void shutdown('SIGTERM'))

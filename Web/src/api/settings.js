@@ -6,6 +6,8 @@
  *   · PUT  /api/settings        保存 `{ values: { path: value } }`；某项传 null = 还原该项为默认
  *   · POST /api/settings/reset  重置（paths 空数组 = 全部）
  *   · 导出走浏览器直接下载（后端给 Content-Disposition），所以这里只提供 URL
+ *   · GET  /api/dump/status     离线 dump 更新任务状态（进度 / 上次结果）
+ *   · POST /api/dump/update     手动触发一次更新（发射后不管，之后轮询 status）
  */
 import { apiGet, apiPost, apiPut } from './http'
 
@@ -33,3 +35,23 @@ export const exportUrl = (includeSecrets = false) => `/api/settings/export${incl
  * @returns {Promise<{ path:string, target:string, ok:boolean, status:number, ms:number, reason:string }>}
  */
 export const testSetting = (path, value) => apiPost('/api/settings/test', { path, value }, { timeout: 15000 })
+
+/* ── 离线 dump（Bangumi 全站数据）────────────────────────────────────────────
+ * 手动更新是**长任务**（下载 450MB + 导入），所以接口只负责「起一个任务」，
+ * 进度靠轮询状态拿 —— 不做 SSE/WebSocket，一个按钮不值得那套。
+ */
+
+/**
+ * 更新任务状态
+ * @returns {Promise<{ job:{ phase:string, running:boolean, progress:{bytes:number,total:number,percent:number},
+ *   result:object|null, lastError:string|null, skipped:boolean, latestName:string },
+ *   stored:{ name:string, size:number, importedAt:number, checkedAt:number } }>}
+ */
+export const fetchDumpStatus = () => apiGet('/api/dump/status', { timeout: 10000 })
+
+/**
+ * 手动触发更新
+ * @param {boolean} [force] true = 这一版导过也重灌（改了导入逻辑之后用）
+ * @returns {Promise<{ started:boolean, job:object }>} 已在跑时 started=false（不是错误）
+ */
+export const startDumpUpdate = (force = false) => apiPost('/api/dump/update', { force }, { timeout: 15000 })

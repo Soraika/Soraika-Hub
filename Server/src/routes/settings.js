@@ -7,6 +7,8 @@
  *   GET    /api/settings/export       导出 JSON 文件（默认脱敏；?secrets=1 才带密钥，界面上有警告）
  *   POST   /api/settings/test         「测试连接」：拿某个地址发一次请求（在**后端**测，浏览器有 CORS）
  *   POST   /api/settings/import       `{ payload: <导出的 JSON>, mode: 'merge'|'replace' }`
+ *   GET    /api/dump/status           离线 dump 更新任务的实时状态（进度 / 上次结果 / 失败原因）
+ *   POST   /api/dump/update           手动触发一次 dump 更新（`{ force }`；正在跑时返回已在跑）
  * 业务在 api/pages/settings.js，这里只做参数整形与信封。
  */
 import { Router } from 'express'
@@ -18,6 +20,8 @@ import {
   testEndpoint,
   updateSettings,
 } from './../api/pages/settings.js'
+import { getDumpJobState, startDumpUpdate } from './../jobs/dump-job.js'
+import { getDumpState } from './../db/dump.js'
 import { fail } from './../lib/errors.js'
 
 export const settingsRouter = Router()
@@ -100,6 +104,53 @@ settingsRouter.post('/settings/import', (req, res, next) => {
       throw fail('BAD_REQUEST', "mode 只能是 'merge'（合并，默认）或 'replace'（清空已有的再导入）")
     }
     res.json({ ok: true, data: importSettings(payload, { mode: mode || 'merge', log: req.log }) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * GET /api/dump/status —— 离线数据这一块的全部状态
+ * ---------------------------------------------------------------------------
+ * 一次给全，界面不用拼三个接口：
+ *   · job      这一趟（或上一趟）的阶段与进度；进程重启后是 idle
+ *   · stored   持久记录：上次导入的是哪一版、什么时候（`dump_state`）
+ * 注意 up-to-date 不是失败：hasNew=false 时 phase 仍是 done、skipped=true。
+ */
+settingsRouter.get('/dump/status', (req, res, next) => {
+  try {
+    const stored = getDumpState()
+    res.json({
+      ok: true,
+      data: {
+        job: getDumpJobState(),
+        stored: {
+          name: stored?.name || '',
+          size: Number(stored?.size) || 0,
+          importedAt: Number(stored?.imported_at) || 0,
+          checkedAt: Number(stored?.checked_at) || 0,
+        },
+      },
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/dump/update —— 手动触发
+ * ---------------------------------------------------------------------------
+ * 为什么返回 200 而不是 202/409：这是「发射后不管」的任务，界面接着轮询 status。
+ * 已经在跑的时候**不报错**，回 `started:false` —— 用户连点两下的正常反应，
+ * 弹一个红色错误只会让人以为坏了。
+ * `force:true` = 就算这一版已经导过也重灌一遍（改了导入逻辑之后要这么用）。
+ */
+settingsRouter.post('/dump/update', (req, res, next) => {
+  try {
+    const force = req.body?.force === true
+    const { started, state } = startDumpUpdate({ force, trigger: 'manual', log: req.log })
+    req.log?.info?.({ started, force }, 'dump.manual trigger')
+    res.json({ ok: true, data: { started, job: state } })
   } catch (err) {
     next(err)
   }

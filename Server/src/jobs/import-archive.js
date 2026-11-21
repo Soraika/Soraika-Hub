@@ -163,8 +163,8 @@ export async function runArchiveImport({
       if (!match) return
       const subjectId = Number(match[1])
       if (!wantedIds.has(subjectId)) return
-      // `"type":0` 后面紧跟 `,` 或 `}`，避免把 10 / 0.5 之类误当正篇
-      if (!/"type":0[,}]/.test(line)) return
+      // `"type":0` 后面紧跟 `,` 或 `}`（允许空格），避免把 10 / 0.5 之类误当正篇
+      if (!/"type"\s*:\s*0\s*[,}]/.test(line)) return
       episodeCounts.set(subjectId, (episodeCounts.get(subjectId) || 0) + 1)
     },
     { raw: true },
@@ -227,7 +227,10 @@ export async function runArchiveImport({
 
       /* 全站动画（type=2）一律收进索引 —— 不看它在不在库里。
          行首那一段就带着 type，先用正则判，只有命中的才 JSON.parse（1002MB 里绝大多数不是动画） */
-      const isAnime = /"type":2[,}]/.test(line.slice(0, 40))
+      /* 允许冒号/逗号两侧有空格：真实 dump 是紧凑写法（`"type":2,`），但
+         `JSON.stringify` 造出来的测试数据是 `"type": 2,` —— 两条都得认，
+         否则「自己造的 dump 能过、别处的 dump 导不进索引」这种坑只会在线上发现。 */
+      const isAnime = /"type"\s*:\s*2\s*[,}]/.test(line.slice(0, 48))
       if (isAnime) {
         animeIds.add(id)
         if (!subject) {
@@ -301,13 +304,13 @@ export async function runArchiveImport({
     const relStats = await readJsonLinesFrom(
       openEntry(source, RELATION_FILE),
       (line) => {
-        const type = Number(/"relation_type":(\d+)/.exec(line)?.[1])
+        const type = Number(/"relation_type"\s*:\s*(\d+)/.exec(line)?.[1])
         if (!keptTypes.has(type)) return
-        const sid = Number(/"subject_id":(\d+)/.exec(line)?.[1])
-        const rid = Number(/"related_subject_id":(\d+)/.exec(line)?.[1])
+        const sid = Number(/"subject_id"\s*:\s*(\d+)/.exec(line)?.[1])
+        const rid = Number(/"related_subject_id"\s*:\s*(\d+)/.exec(line)?.[1])
         if (!Number.isFinite(sid) || !Number.isFinite(rid)) return
         if (!animeIds.has(sid) || !animeIds.has(rid)) return
-        const ord = Number(/"order":(\d+)/.exec(line)?.[1]) || 0
+        const ord = Number(/"order"\s*:\s*(\d+)/.exec(line)?.[1]) || 0
         relBatch.push([sid, type, rid, ord])
         if (relBatch.length >= BATCH_SIZE) flushRel()
       },

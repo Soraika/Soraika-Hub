@@ -233,9 +233,19 @@ try {
   /* ── qB 状态 ────────────────────────────────────────────────────────── */
   const status = await get('/api/qb/status')
   check(status.res.status === 200 && status.body?.ok === true, 'GET /api/qb/status → 200 且信封正常')
-  const configured = Boolean(status.body?.data?.configured)
-  console.log(configured ? '  （qB 已配置，跑真数据断言）' : '  （qB 未配置：只验空结构）')
-  if (configured) {
+  /* 「配了地址」不等于「连得上」：本机 / CI 上没有 qB 时，或 qB 只允许白名单 IP 时
+     （实测：从这台机器打 NAS 的 8080 会 403），真数据断言没法跑。
+     这时候**不该红** —— 把这类断言降级成结构断言，并明确打印原因；
+     否则每次换机器跑验收都得先架一套 qB，脚本就没人跑了。 */
+  const declaredConfigured = Boolean(status.body?.data?.configured)
+  const reachable = declaredConfigured && Boolean(status.body?.data?.versions?.app)
+  const configured = reachable
+  if (declaredConfigured && !reachable) {
+    console.log('  （qB 配了地址但连不上 → 403/超时；本机没有 qB 属正常，退回结构断言）')
+  } else {
+    console.log(reachable ? '  （qB 已配置且连得上，跑真数据断言）' : '  （qB 未配置：只验空结构）')
+  }
+  if (reachable) {
     const v = status.body.data.versions || {}
     check(Boolean(v.app && v.api), `两个版本都回（应用 ${v.app} / WebAPI ${v.api}）`)
     check(/^v?\d+\.\d+/.test(v.app), `应用版本是版本号形状 → ${v.app}`)
@@ -268,7 +278,12 @@ try {
   /* ── 卡片墙 ────────────────────────────────────────────────────────── */
   const list = await get('/api/downloads')
   const d = list.body?.data || {}
-  check(list.res.status === 200 && d.configured === configured, `GET /api/downloads → 200（configured=${d.configured}）`)
+  /* configured 用「配了地址」的那个值：连不上时接口仍然 returns configured:true + connected:false，
+     这是有意的（页面照常渲染外壳 + 顶部说明一句，而不是整页「加载失败」） */
+  check(
+    list.res.status === 200 && d.configured === declaredConfigured,
+    `GET /api/downloads → 200（configured=${d.configured} / connected=${d.connected}）`,
+  )
   check(['counts', 'items', 'unmatched'].every((k) => k in d), '返回带 counts / items / unmatched 三块')
   check(Array.isArray(d.items) && Array.isArray(d.unmatched), 'items 与 unmatched 都是数组')
 
@@ -348,18 +363,24 @@ try {
   const missingRename = await post('/api/downloads/rename', { animeId: 99999999 })
   check(missingRename.res.status === 404 && missingRename.body?.error?.code === 'NOT_FOUND', '重命名：不存在的作品 → 404')
 
-  /* 自动重命名队列：默认 dry-run（只给计划，不写 qB） */
+  /* 自动重命名队列：默认 dry-run（只给计划，不写 qB）。
+     连不上 qB 时这个动作接口本来就该报错（它要读种子列表才能算计划）——
+     那种情况下不做断言，避免「本机没 qB」被当成代码坏了。 */
   const allDry = await post('/api/downloads/rename-all', { limit: 3 })
-  check(
-    allDry.res.ok && allDry.body?.data?.dryRun === true && Array.isArray(allDry.body.data.plan),
-    '重命名队列：dry-run 返回计划（默认不写 qB）',
-  )
-  check(Number.isInteger(allDry.body?.data?.skippedCount), '重命名队列：给出跳过计数（合集 / 多文件 / 已符合）')
+  if (!reachable && allDry.res.status >= 400) {
+    console.log('  （qB 连不上 → 改名队列按预期报错，跳过这两条断言）')
+  } else {
+    check(
+      allDry.res.ok && allDry.body?.data?.dryRun === true && Array.isArray(allDry.body.data.plan),
+      '重命名队列：dry-run 返回计划（默认不写 qB）',
+    )
+    check(Number.isInteger(allDry.body?.data?.skippedCount), '重命名队列：给出跳过计数（合集 / 多文件 / 已符合）')
+  }
 
   /* ── 设置页「测试连接」要回两个版本 ─────────────────────────────────── */
   const settingsTest = await post('/api/settings/test', { path: 'qb.base' })
   const t = settingsTest.body?.data
-  if (configured && t?.ok) {
+  if (reachable && t?.ok) {
     check(Boolean(t.versions?.app), `测试连接带回应用版本 → ${t.versions.app}`)
     check(Boolean(t.versions?.api), `测试连接带回 WebAPI 版本 → ${t.versions.api}`)
     check(String(t.detail).includes('WebAPI'), `设置页那一行能直接显示两个版本 → ${t.detail}`)
