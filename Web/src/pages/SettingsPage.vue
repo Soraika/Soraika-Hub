@@ -155,6 +155,8 @@
       <DumpPanel v-if="group.key === 'dump'" />
       <!-- 身份映射：与 dump 互补（dump 给档案内容，这张卡给 mikan↔bgm 身份） -->
       <MapScanPanel v-if="group.key === 'dump'" />
+      <!-- MCP：开关是这一组的字段，端点/令牌/客户端片段是「拿到手就能用」的部分 -->
+      <McpPanel v-if="group.key === 'mcp'" />
       </template>
 
       <!-- ── 导入 / 分享：导出在上面，导入这里 ─────────────────────────── -->
@@ -217,6 +219,7 @@ import {
   IconCloudDownload,
   IconDatabase,
   IconDownload,
+  IconPlugConnected,
   IconRefresh,
   IconRestore,
   IconTerminal2,
@@ -226,6 +229,7 @@ import {
 import FieldControl from '@/components/settings/FieldControl.vue'
 import DumpPanel from '@/components/settings/DumpPanel.vue'
 import MapScanPanel from '@/components/settings/MapScanPanel.vue'
+import McpPanel from '@/components/settings/McpPanel.vue'
 import PromptEditor from '@/components/settings/PromptEditor.vue'
 import StateBlock from '@/components/ui/StateBlock.vue'
 import { useSettings } from '@/composables/useSettings'
@@ -250,6 +254,7 @@ const GROUP_ICONS = {
   worker: IconClockHour4,
   cache: IconDatabase,
   qb: IconDownload,
+  mcp: IconPlugConnected,
 }
 
 const {

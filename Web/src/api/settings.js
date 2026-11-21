@@ -96,3 +96,25 @@ export const enumerateSeasons = (range = {}) => apiPost('/api/map/enumerate', ra
 
 /** 叫停（正在处理的那一条会跑完） */
 export const stopMapScan = () => apiPost('/api/map/scan', { stop: true }, { timeout: 10000 })
+
+/* ── MCP 服务（把动画库与下载控制交给 agent）──────────────────────────────────
+ * 开关本身是设置项（group=mcp，保存后重启生效），这里只管「拿到手就能用」：
+ *   · GET  /api/mcp/status  端点 / 令牌（SK 样式）/ 工具清单 / 调用统计 / 三份客户端片段
+ *   · POST /api/mcp/token   重新生成令牌（旧的立刻失效，破坏性操作，界面上要二次确认）
+ *   · POST /api/mcp/ping    自检：后端用自己的 HTTP 打一次 /mcp 的 initialize
+ * 自检必须走后端 —— 浏览器直连 /mcp 会被 CORS 挡掉，测不出真结果。
+ */
+
+/**
+ * @returns {Promise<{ enabled:boolean, allowWrite:boolean, endpoint:string, token:string,
+ *   tools:Array<{name:string,title:string,description:string,write:boolean}>,
+ *   stats:{calls:number,toolCalls:number,lastCallAt:number|null},
+ *   clients:Array<{name:string,kind:'shell'|'json'|'yaml',snippet:string}> }>}
+ */
+export const fetchMcpStatus = () => apiGet('/api/mcp/status', { timeout: 10000 })
+
+/** 重新生成令牌（返回新令牌明文 —— 界面要立刻显示出来，否则人就拿不到了） */
+export const regenerateMcpToken = () => apiPost('/api/mcp/token', {}, { timeout: 15000 })
+
+/** 自检：`data.ok=false` 时 `data.error` 是中文原因（不是异常，别当请求失败） */
+export const pingMcp = () => apiPost('/api/mcp/ping', {}, { timeout: 20000 })

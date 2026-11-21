@@ -86,14 +86,15 @@ try {
 
   /* ── 「必要项」的判定：不填就用不了 / 必须按环境改的才常显，其余一律折叠 ──
      这条断言是防膨胀用的：以后谁往常显里塞"调参项"，这里会直接红。
-     13 = 数据源 2 + AI 4 + 后台 2 + 下载 2 + 离线包 3（开关/自动更新/检查时刻）。
-     离线包那三项是"功能开关"，不是调参 —— 藏进高级会让整张卡在基础模式下消失
-     （`useSettings` 会把没有可见字段的分组过滤掉）。 */
+     15 = 数据源 2 + AI 4 + 后台 2 + 下载 2 + 离线包 3（开关/自动更新/检查时刻）+ MCP 2（开关/写权限）。
+     「离线包」与「MCP」那几项都是**功能开关**，不是调参 —— 藏进高级会让整张卡在基础模式下
+     消失（`useSettings` 会把没有可见字段的分组过滤掉），而"要不要对外开这个口子"
+     恰恰是使用者必须自己拍板的一项。 */
   const corePaths = settings.fields.filter((f) => !f.advanced).map((f) => f.path)
   check(
-    corePaths.length <= 13 &&
+    corePaths.length <= 15 &&
       corePaths.every((p) =>
-        /^(mikan\.bases|bgm\.bases|bgm\.(useDump|dumpAuto|dumpCheckAt)|ai\.(provider|apiKey|model|baseUrl)|worker\.(dailyAt|fetchSubgroups)|qb\.(base|apiKey))$/.test(p),
+        /^(mikan\.bases|bgm\.bases|bgm\.(useDump|dumpAuto|dumpCheckAt)|ai\.(provider|apiKey|model|baseUrl)|worker\.(dailyAt|fetchSubgroups)|qb\.(base|apiKey)|mcp\.(enabled|allowWrite))$/.test(p),
       ),
     `基础层就是必要配置那几项 → ${corePaths.join(' / ')}`,
   )

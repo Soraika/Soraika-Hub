@@ -157,15 +157,52 @@ CREATE TABLE IF NOT EXISTS bgm_subject (
   summary           TEXT,
   score             REAL,
   rating_total      INTEGER,
-  tags              TEXT,            -- JSON 数组（meta_tags 优先，最多 8 个）
+  tags              TEXT,            -- JSON 数组（meta_tags 优先，最多 8 个）—— 展示用
   watching          INTEGER,
   platform          INTEGER,         -- 1=TV 2=OVA 3=剧场版 5=Web（dump 的 platform 码）
   first_air_date    TEXT,            -- YYYY-MM-DD
   total_episodes    INTEGER,
   synced_at         INTEGER,         -- 档案上次写入时间（**只表示档案**）
-  source            TEXT             -- 'api' / 'dump'
+  source            TEXT,            -- 'api' / 'dump'
+
+  -- ── 以下为「全站动画档案」用（dump 导入时每部动画都写）───────────────
+  -- 这张表原来是「库里那几千条的档案缓存」，现在同时是**全站动画库**：
+  -- dump 里 type=2 的条目一律落进来（实测 31312 行 / 文本约 40MB）。
+  -- 为什么放这张表而不是新开一张：`v_anime` 已经在 JOIN 它，多一张表等于
+  -- 每条读取路径都要多一个分支；而"在不在排期里"由 `anime` 表决定，档案表多几万行不打扰任何人。
+  -- 有了它，MCP / 推荐 / 相似度全都可以只查本地库，一条上游请求都不用发。
+  type              INTEGER,         -- 1 书籍 / 2 动画 / 3 音乐 / 4 游戏 / 6 三次元
+  bgm_rank          INTEGER,         -- BGM 排名（越小越热门；没有排名为 NULL）
+  nsfw              INTEGER,         -- 1 = R18（推荐时要能排除）
+  in_series         INTEGER,         -- 1 = BGM 标记「属于某个系列」
+  score_details     TEXT,            -- JSON {“1”:56,…,“10”:3141} 各档人数
+  favorite          TEXT,            -- JSON {wish,done,doing,on_hold,dropped}（done ≈ 看过人数）
+  tags_all          TEXT,            -- JSON [{name,count}] 全量标签（倒排表在同名 bgm_tag）
+  staff             TEXT,            -- JSON {导演,动画制作,系列构成,…}（从 infobox 抽出来）
+  aliases           TEXT,            -- JSON 数组（infobox 的「别名」块，中日英罗马字混着）
+  infobox           TEXT,            -- 原始 infobox 文本（wiki 属性块；staff 抽不全时兜底）
+  name_fold         TEXT             -- 归一化名字（全角→半角/去空白/剥分卷后缀/小写）
 );
 CREATE INDEX IF NOT EXISTS idx_subject_score ON bgm_subject(score);
+-- 推荐/相似度排序：先按类型过滤再按评分倒序（全站动画 3 万行，索引比扫表快一个量级）
+CREATE INDEX IF NOT EXISTS idx_subject_type_score ON bgm_subject(type, score);
+-- 归档目录名 / 搜索框找作品（等值 + 前缀）
+CREATE INDEX IF NOT EXISTS idx_subject_fold ON bgm_subject(name_fold);
+-- 按放送年份筛（推荐「2020 年以后的高分番」）
+CREATE INDEX IF NOT EXISTS idx_subject_date ON bgm_subject(first_air_date);
+
+-- ── 标签倒排（`bgm_subject.tags_all` 的规范化副本）──────────────────────
+-- 为什么不直接用 JSON：推荐要按标签求交集/计权，JSON 只能全表扫 + 自己解析，
+-- 3 万行 × 十几个标签在 SQL 里做集合运算会慢一个量级。倒排之后「有这几个标签的高分动画」
+-- 就是一次 `WHERE name IN (...)` 的索引查询。
+-- 只存出现次数 >= TAG_MIN_COUNT 的（噪音标签——比如某一集的梗——对推荐没意义，还占空间）。
+CREATE TABLE IF NOT EXISTS bgm_tag (
+  bgm_id TEXT NOT NULL,
+  name   TEXT NOT NULL,
+  count  INTEGER,
+  PRIMARY KEY (bgm_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_bgm_tag_name ON bgm_tag(name, count);
 
 -- ============================================================================
 -- 离线 dump 的「关系」与「链上还没入库的条目」（系列链的数据源）

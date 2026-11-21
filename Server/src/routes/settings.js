@@ -32,6 +32,9 @@ import { countAnimeMissingBgm } from './../db/anime.js'
 import { getDumpState } from './../db/dump.js'
 import { getMapScanState, startMapScan, startSeasonEnum, startSweep, stopMapScan, sweepWatermark } from './../jobs/map-scan.js'
 import { getWorkerState } from './../jobs/worker.js'
+import { ensureToken, getMcpStatus, rotateToken } from './../mcp/status.js'
+import { parseJsonRpcPing } from './../mcp/ping.js'
+import { config } from './../config.js'
 import { fail } from './../lib/errors.js'
 
 export const settingsRouter = Router()
@@ -53,7 +56,11 @@ settingsRouter.put('/settings', (req, res, next) => {
       throw fail('BAD_REQUEST', 'body 需要是 { values: { "配置项": 值 } }')
     }
     if (!Object.keys(values).length) throw fail('BAD_REQUEST', 'values 是空的，没什么可保存')
-    res.json({ ok: true, data: updateSettings(values, { log: req.log }) })
+    const data = updateSettings(values, { log: req.log })
+    /* 启用 MCP 但没令牌 → 当场生成一个：用户不需要理解令牌机制也能直接用起来 */
+    const touchedMcp = 'mcp.enabled' in values || 'mcp.token' in values
+    if (touchedMcp && config.mcp?.enabled && !config.mcp?.token) ensureToken({ log: req.log })
+    res.json({ ok: true, data })
   } catch (err) {
     next(err)
   }
@@ -260,6 +267,36 @@ settingsRouter.post('/map/enumerate', (req, res, next) => {
     const { started, state } = startSeasonEnum({ fromYear, toYear, trigger: 'manual', log: req.log })
     req.log?.info?.({ started, fromYear, toYear }, 'mapscan.enumerate trigger')
     res.json({ ok: true, data: { started, job: state } })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/* ── MCP ─────────────────────────────────────────────────────────────────── */
+
+/** GET /api/mcp/status —— 设置页那张卡片的全部数据 */
+settingsRouter.get('/mcp/status', (req, res, next) => {
+  try {
+    res.json({ ok: true, data: getMcpStatus(req) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/** POST /api/mcp/token —— 重新生成令牌（旧令牌立即失效） */
+settingsRouter.post('/mcp/token', (req, res, next) => {
+  try {
+    const token = rotateToken({ log: req.log })
+    res.json({ ok: true, data: { token } })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/** POST /api/mcp/ping —— 自检：后端自己按客户端方式打一次 /mcp 的 initialize */
+settingsRouter.post('/mcp/ping', async (req, res, next) => {
+  try {
+    res.json({ ok: true, data: await parseJsonRpcPing() })
   } catch (err) {
     next(err)
   }

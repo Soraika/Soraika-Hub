@@ -17,6 +17,7 @@ import { config } from './config.js'
 import { db } from './db/index.js'
 import { toApiError } from './lib/errors.js'
 import { logger } from './lib/logger.js'
+import { createMcpRouter } from './mcp/server.js'
 import { apiRouter } from './routes/index.js'
 
 const app = express()
@@ -53,6 +54,10 @@ app.use((req, res, next) => {
 })
 
 app.use('/api', apiRouter)
+
+/* MCP 服务（JSON-RPC over HTTP）—— 挂在 /api 之外：客户端配置里就是 http://host/mcp。
+   未启用时路由照样存在，但一律回 404（不告诉未授权者这里有个 MCP 服务）。 */
+app.use(createMcpRouter())
 
 /* ── 前端静态文件（同一个进程同时当 web 服务器）────────────────────────────
  * 开发时用 vite dev server（带 HMR、proxy），这里什么都不做；
@@ -94,6 +99,15 @@ app.use((req, res) => {
 // 统一错误处理：ApiError 按错误码映射状态码，其余归 INTERNAL
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
+  /* body 不是合法 JSON：这是**调用方的错**，别报成 500。
+     express.json() 抛的是 SyntaxError + type='entity.parse.failed'，
+     不特判就会落进 INTERNAL（客户端拿 500 时会去查服务端日志，白忙） */
+  if (err?.type === 'entity.parse.failed') {
+    return res.status(400).json({
+      ok: false,
+      error: { code: 'BAD_REQUEST', message: `请求体不是合法 JSON：${String(err.message || '').slice(0, 120)}` },
+    })
+  }
   const apiError = toApiError(err)
   if (apiError.status >= 500) {
     // 用请求级 logger：同一次请求的日志靠 requestId 串起来

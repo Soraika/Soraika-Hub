@@ -124,6 +124,20 @@ const MIGRATIONS = {
     // v2：链（确定性）与起名（AI）分开记 —— 根名改成"点开系列时才补"
     { column: 'series_named_at', ddl: 'INTEGER' },
   ],
+  // 档案表 v3：从「库里几千条的缓存」扩成「全站动画档案」（dump 里 type=2 全量落库）
+  bgm_subject: [
+    { column: 'type', ddl: 'INTEGER' },
+    { column: 'bgm_rank', ddl: 'INTEGER' },
+    { column: 'nsfw', ddl: 'INTEGER' },
+    { column: 'in_series', ddl: 'INTEGER' },
+    { column: 'score_details', ddl: 'TEXT' },
+    { column: 'favorite', ddl: 'TEXT' },
+    { column: 'tags_all', ddl: 'TEXT' },
+    { column: 'staff', ddl: 'TEXT' },
+    { column: 'aliases', ddl: 'TEXT' },
+    { column: 'infobox', ddl: 'TEXT' },
+    { column: 'name_fold', ddl: 'TEXT' },
+  ],
   // 关系表 v2：每条 id 的「1 跳关系问过没有」—— 决定走链时要不要为它打一次上游
   bgm_stub: [
     { column: 'relations_checked_at', ddl: 'INTEGER' },

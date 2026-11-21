@@ -24,14 +24,16 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { applyArchiveBatch, clearSeriesChecked, listBgmTargets, stats } from './../db/anime.js'
 import { clearRelationEdges, clearRelations, insertRelations, insertStubs, markStubRelationsChecked } from './../db/relation.js'
-import { upsertSubjects } from './../db/subject.js'
+import { clearTags, setCatalogEpisodes, upsertFullSubjects, upsertSubjects } from './../db/subject.js'
 import {
   DUMP_FILES,
   RELATION_FILE,
   RELATION_TYPES_KEPT,
   archivePatch,
+  fullSubjectRow,
   leadingId,
   readJsonLinesFrom,
+  tagRowsOf,
 } from './../domain/bgm-archive.js'
 import { logger } from './../lib/logger.js'
 import { listZipEntries, openZipEntry } from './../lib/unzip.js'
@@ -86,6 +88,10 @@ const emptyResult = (before) => ({
   relations: 0,
   /** 写进 bgm_stub 的「链上条目」数（名字 / 类型 / 日期） */
   stubs: 0,
+  /** 写进 bgm_subject 的**完整档案**行数（全站动画，供 MCP / 推荐用） */
+  archiveRows: 0,
+  /** 写进 bgm_tag 的标签倒排行数 */
+  tagRows: 0,
   badLines: 0,
   missingInDump: 0,
   ms: 0,
@@ -154,36 +160,37 @@ export async function runArchiveImport({
      只在 dump **带着关系表**时才清：老 dump 没有这张表时不该把已有关系抹掉。 */
   if (!dryRun && relationFileAvailable) clearRelations()
 
-  /* ① 章节数：type 0 = 正篇（特别篇 / OP / ED 不算），数出来就是总集数 */
-  const episodeCounts = new Map()
-  const epStats = await readJsonLinesFrom(
-    openEntry(source, DUMP_FILES.episode),
-    (line) => {
-      const match = /"subject_id":(\d+)/.exec(line)
-      if (!match) return
-      const subjectId = Number(match[1])
-      if (!wantedIds.has(subjectId)) return
-      // `"type":0` 后面紧跟 `,` 或 `}`（允许空格），避免把 10 / 0.5 之类误当正篇
-      if (!/"type"\s*:\s*0\s*[,}]/.test(line)) return
-      episodeCounts.set(subjectId, (episodeCounts.get(subjectId) || 0) + 1)
-    },
-    { raw: true },
-  )
-
-  /* ② 档案字段 + 全站动画索引
+  /* ① 档案 + 全站动画库（一趟扫完）
      -----------------------------------------------------------------
-     两件事一次扫完：
-       · 库里的行：补评分/标签/简介/首播日/总集数（老行为，不变）
-       · **全站 type=2（动画）全部收进 `bgm_stub`** —— 这不是"给链上条目建骨架"的副产品，
-         而是有意的：dump 就是全站动画索引，有了它
-           ① 关系表可以做「两端都是动画」的完整过滤（不再按库内成员裁剪 → 链不再断）
-           ② 下载页拿磁盘目录名就能认出库里没有的老番（见 db/relation.js#matchByFolderIndex）
-         全站动画约几万条，几 MB，比"猜"便宜得多。 */
-  let batch = []
-  /** 同一批也写进 `bgm_subject`（档案表）：anime 留给排期/展示，档案可整表重灌 */
-  let subjectBatch = []
-  /** 链上「还没入库」的条目：名字/类型/日期，建骨架行与排剧场版季位要用 */
+     这一趟做五件事：
+       a. 全站 type=2 一律算「动画」，收进 `animeIds`（关系表过滤要用）
+       b. **每部动画都写一条完整档案进 `bgm_subject`**（简介 / 标签全量 / 评分分布 /
+          收藏数 / 排名 / staff / 别名 / infobox 原文）
+       c. 标签倒排进 `bgm_tag`（只留出现次数够的，噪音标签对推荐没意义）
+       d. 名字索引进 `bgm_stub`（关系链与下载页认作品用）
+       e. 库里已有的行记进 `pendingLibrary` —— 章节数要等下一趟才有，不能立刻写
+
+     为什么 b 从「只补库里那几千条」改成「全站都写」
+     -----------------------------------------------------------------
+     用户要的是「agent 能更高效地推荐番剧」，而推荐的本质是**在全集里筛**：
+     只知道库里有什么，就只能推荐已有的；全站 31312 部动画在手，
+     才能回答「评分 8 分以上的机战原创」「跟这部同一个动画公司的」这类问题。
+     代价实测很小（文本约 40MB、导入多几秒），换来的是推荐 / 搜索 / 相似度全部离线。
+     注意：这**不影响** `anime` 表「主表只由排期落」的铁律 —— 档案表多几万行不打扰排期。 */
+  let fullBatch = []
+  let tagBatch = []
   let stubBatch = []
+  /** 库里已有 bgm_id 的行：dump 记录先留着，等章节数出来再一起写 */
+  const pendingLibrary = []
+
+  const flushFull = () => {
+    if (!fullBatch.length) return
+    if (!dryRun) upsertFullSubjects(fullBatch, tagBatch, { onlyMissing })
+    result.archiveRows += fullBatch.length
+    result.tagRows += tagBatch.length
+    fullBatch = []
+    tagBatch = []
+  }
   const flushStubs = () => {
     if (!stubBatch.length) return
     if (!dryRun) {
@@ -194,18 +201,9 @@ export async function runArchiveImport({
     result.stubs += stubBatch.length
     stubBatch = []
   }
-  const flush = () => {
-    flushStubs()
-    if (!batch.length) return
-    if (!dryRun) {
-      applyArchiveBatch(batch, { checkedAt: markChecked ? Date.now() : null })
-      upsertSubjects(subjectBatch)
-    }
-    result.patched += batch.length
-    result.subjects = (result.subjects || 0) + subjectBatch.length
-    batch = []
-    subjectBatch = []
-  }
+
+  /* 标签倒排整表重灌：每部动画都会把标签写回来，先清掉旧行才不会留下「已下架番的标签」 */
+  if (!dryRun) clearTags()
 
   const subStats = await readJsonLinesFrom(
     openEntry(source, DUMP_FILES.subject),
@@ -225,9 +223,9 @@ export async function runArchiveImport({
       if (!Number.isFinite(id)) return
       const target = targets.get(String(id))
 
-      /* 全站动画（type=2）一律收进索引 —— 不看它在不在库里。
-         行首那一段就带着 type，先用正则判，只有命中的才 JSON.parse（1002MB 里绝大多数不是动画） */
-      /* 允许冒号/逗号两侧有空格：真实 dump 是紧凑写法（`"type":2,`），但
+      /* 全站动画（type=2）一律收 —— 不看它在不在库里。
+         行首那一段就带着 type，先用正则判，只有命中的才 JSON.parse（1002MB 里绝大多数不是动画）。
+         允许冒号/逗号两侧有空格：真实 dump 是紧凑写法（`"type":2,`），但
          `JSON.stringify` 造出来的测试数据是 `"type": 2,` —— 两条都得认，
          否则「自己造的 dump 能过、别处的 dump 导不进索引」这种坑只会在线上发现。 */
       const isAnime = /"type"\s*:\s*2\s*[,}]/.test(line.slice(0, 48))
@@ -242,6 +240,12 @@ export async function runArchiveImport({
           }
         }
         if (subject) {
+          const full = fullSubjectRow(subject)
+          if (full) {
+            fullBatch.push(full)
+            tagBatch.push(...tagRowsOf(full))
+            if (fullBatch.length >= BATCH_SIZE) flushFull()
+          }
           stubBatch.push({
             bgmId: String(id),
             type: 2,
@@ -260,10 +264,58 @@ export async function runArchiveImport({
         return
       }
       if (!subject) subject = JSON.parse(line)
-      const patch = archivePatch(subject, { episodes: episodeCounts.get(id) ?? null })
-      batch.push({ id: target.id, ...patch })
+      pendingLibrary.push({ target, subject, isAnime })
+    },
+    { raw: true },
+  )
+  flushFull()
+  flushStubs()
+
+  /* ② 章节数：**全站动画**都数（`summary` 里的「话数」是计划数，实际播出以章节表为准）
+     -------------------------------------------------------------------------
+     这一趟以前只数库里那几千条（`wantedIds`），全量入库之后要数到 `animeIds` 全部：
+     话数是推荐能不能用的关键字段（「找一部 12 集以内的」），少了它只能靠 infobox 的
+     计划话数（长篇常见「话数=∞」或空着）。 */
+  const episodeCounts = new Map()
+  const epStats = await readJsonLinesFrom(
+    openEntry(source, DUMP_FILES.episode),
+    (line) => {
+      const match = /"subject_id":(\d+)/.exec(line)
+      if (!match) return
+      const subjectId = Number(match[1])
+      if (!animeIds.has(subjectId) && !wantedIds.has(subjectId)) return
+      // `"type":0` 后面紧跟 `,` 或 `}`（允许空格），避免把 10 / 0.5 之类误当正篇
+      if (!/"type"\s*:\s*0\s*[,}]/.test(line)) return
+      episodeCounts.set(subjectId, (episodeCounts.get(subjectId) || 0) + 1)
+    },
+    { raw: true },
+  )
+
+  /* 话数回填（只增不减：周更快照可能落后于上游登记，改小会让「缺哪集」失真） */
+  if (!dryRun && episodeCounts.size) setCatalogEpisodes(episodeCounts)
+
+  /* 库里那几行：档案字段 + 集数一起写（`anime` 表是给排期/展示看的，字段少） */
+  let batch = []
+  let subjectBatch = []
+  const flush = () => {
+    if (!batch.length) return
+    if (!dryRun) {
+      applyArchiveBatch(batch, { checkedAt: markChecked ? Date.now() : null })
+      // 非动画条目（dump 里 type≠2 但库里挂着它）：完整行不在①里写过，这里补一次
+      if (subjectBatch.length) upsertSubjects(subjectBatch)
+    }
+    result.patched += batch.length
+    result.subjects = (result.subjects || 0) + subjectBatch.length
+    batch = []
+    subjectBatch = []
+  }
+  for (const item of pendingLibrary) {
+    const episodes = episodeCounts.get(Number(item.subject?.id)) ?? null
+    const patch = archivePatch(item.subject, { episodes })
+    batch.push({ id: item.target.id, ...patch })
+    if (!item.isAnime) {
       subjectBatch.push({
-        bgm_id: target.bgm_id,
+        bgm_id: item.target.bgm_id,
         title_bgm: patch.title_cn,
         title_bgm_origin: patch.title_bgm_origin,
         summary: patch.summary,
@@ -276,10 +328,9 @@ export async function runArchiveImport({
         total_episodes: patch.total_episodes,
         source: 'dump',
       })
-      if (batch.length >= BATCH_SIZE) flush()
-    },
-    { raw: true },
-  )
+    }
+    if (batch.length >= BATCH_SIZE) flush()
+  }
   flush()
 
   /* ③ 关系表（可选文件）—— **整表按「两端都是动画」落库，不再按库内成员裁剪**

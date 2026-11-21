@@ -26,6 +26,7 @@ export const SETTINGS_GROUPS = [
   { key: 'qb', label: '下载', hint: 'qBittorrent，下载功能接入后才用得上' },
   { key: 'xunlei', label: '迅雷', hint: '飞牛 NAS 上的迅雷应用，下载走它（改名只能走 qB）' },
   { key: 'baidu', label: '百度网盘', hint: '离线与转存走它（磁力丢云端，再由网盘落回 NAS）' },
+  { key: 'mcp', label: 'MCP', hint: '把动画库与下载控制交给 agent（Claude / Cursor / Hermes 都能接）' },
 ]
 
 /**
@@ -153,6 +154,19 @@ export const SETTINGS_FIELDS = [
   { path: 'baidu.bin', env: 'BAIDU_BIN', group: 'baidu', section: '客户端', label: '程序路径', type: 'text', advanced: true, placeholder: 'D:\\tools\\BaiduPCS-Go.exe', hint: 'BaiduPCS-Go 二进制' },
   { path: 'baidu.cookies', env: 'BAIDU_COOKIES', group: 'baidu', section: '客户端', label: 'Cookie', type: 'secret', advanced: true, hint: '整串 Cookie，含 BDUSS' },
   { path: 'baidu.offlineDir', env: 'BAIDU_OFFLINE_DIR', group: 'baidu', section: '归档', label: '离线目录', type: 'text', advanced: true, hint: '网盘内路径，不是本地' },
+
+  // ── MCP（让 agent 读库 + 控下载）─────────────────────────────────────────
+  /* 只有两个开关放基础层，其余是调参：
+     · 「启用服务」= 要不要对外开这个口子（默认关：装了不配就不暴露）
+     · 「允许写入」= 加种/暂停/删除/改名。**默认关**，因为让模型动你正在下载的东西
+       不是"功能"而是风险；只读（搜索/推荐/看进度）随便用。
+     令牌故意**不进基础层**：它由服务自动生成，用户不需要理解它 ——
+     需要抄走的时候去 MCP 卡片里复制（那里会显示完整值）。 */
+  { path: 'mcp.enabled', env: 'MCP_ENABLED', group: 'mcp', section: '服务', label: '启用 MCP 服务', type: 'boolean', hint: 'agent 可用令牌访问本库' },
+  { path: 'mcp.allowWrite', env: 'MCP_ALLOW_WRITE', group: 'mcp', section: '服务', label: '允许写入', type: 'boolean', hint: '允许加种、暂停、删除、改名' },
+  { path: 'mcp.token', env: 'MCP_TOKEN', group: 'mcp', section: '服务', label: '访问令牌', type: 'secret', advanced: true, hint: '留空则首次启用时自动生成' },
+  { path: 'mcp.maxResults', env: 'MCP_MAX_RESULTS', group: 'mcp', section: '服务', label: '单次返回上限', type: 'number', unit: '条', min: 1, max: 100, advanced: true, hint: '太大会塞满 agent 上下文' },
+  { path: 'mcp.timeoutMs', env: 'MCP_TIMEOUT_MS', group: 'mcp', section: '服务', label: '请求超时', type: 'number', unit: 'ms', format: 'duration', min: 1000, advanced: true },
 ]
 
 /**

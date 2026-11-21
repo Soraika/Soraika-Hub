@@ -29,6 +29,7 @@
  */
 import { createReadStream } from 'node:fs'
 import { StringDecoder } from 'node:string_decoder'
+import { foldTitle } from './titles.js'
 
 /** dump 里我们用得到的两个文件（其余 person / character 等与本项目无关） */
 export const DUMP_FILES = Object.freeze({
@@ -225,4 +226,196 @@ export function archivePatch(subject, { episodes = null } = {}) {
     title_bgm_origin: subject?.name || null,
     platform: Number(subject?.platform) || null,
   }
+}
+
+/* ── 全站动画档案（bgm_subject 扩成「全站动画库」之后的新字段）─────────────
+ *
+ * 为什么要把 infobox 也存下来
+ * ---------------------------------------------------------------------------
+ * dump 的 `infobox` 是一段 MediaWiki 属性块（不是 JSON），里面是人类真正在意的信息：
+ *
+ *   {{Infobox animanga/TVAnime
+ *   |中文名= Code Geass 反叛的鲁路修R2
+ *   |别名={
+ *   [叛逆的鲁路修R2]
+ *   [Code Geass: Hangyaku no Lelouch R2]
+ *   }
+ *   |话数= 25
+ *   |放送开始= 2008年4月6日
+ *   |导演= 谷口悟朗
+ *   |动画制作= サンライズ
+ *   |系列构成= 大河内一楼
+ *   …
+ *
+ * 以前只从里面取了「话数」，其余全丢 —— 而 agent 做推荐时「导演是谁 / 谁做的 / 哪年」
+ * 恰恰是最有用的筛选维度（"帮我找几部跟这部同一个动画公司的高分番"）。
+ * 解析成 JSON 之后，一条 SQL 就能筛（也便于 MCP 直接返回结构化结果），
+ * 原文另存一份（`infobox` 列），解析漏了还能兜底。
+ */
+
+/** `tags_all` 最多留几个标签（展示只取 8 个，但推荐要更多；30 个足够覆盖口味） */
+export const TAG_STORE_LIMIT = 30
+
+/** 进 `bgm_tag` 倒排表的最小出现次数 —— 只有一个人打的标签对推荐没意义 */
+export const TAG_ROW_MIN_COUNT = 5
+
+/** infobox 里值得结构化出来的键（其余仍然原文留在 `infobox` 列里） */
+export const STAFF_KEYS = Object.freeze([
+  '中文名',
+  '话数',
+  '放送开始',
+  '放送结束',
+  '放送星期',
+  '导演',
+  '副导演',
+  '系列构成',
+  '脚本',
+  '剧本',
+  '原作',
+  '原案',
+  '人物设定',
+  '人物原案',
+  '机械设定',
+  '音乐',
+  '动画制作',
+  '製作',
+  '企划',
+  '制片人',
+  '美术监督',
+  '色彩设计',
+  '摄影监督',
+  '音响监督',
+  '播放电视台',
+  '官方网站',
+  'Copyright',
+])
+
+/**
+ * 解析 dump 的 infobox 文本 → `{ 键: 值 }`
+ * ---------------------------------------------------------------------------
+ * 格式只有两条规则：`|键= 值`；多行值用 `{ … }` 包起来，里面一行一个 `[条目]`。
+ * 解析不了（格式变了）就返回空对象 —— 调用方仍会把原文存进 `infobox` 列，不至于丢数据。
+ */
+export function parseInfobox(text) {
+  if (typeof text !== 'string' || !text) return {}
+  const out = {}
+  let key = null
+  let buf = []
+  const commit = () => {
+    if (key) {
+      const value = buf.join('\n').replace(/^\{|\}$/g, '').trim()
+      const clean = value
+        .split(/\r?\n/)
+        .map((line) => line.replace(/^\s*\[|\]\s*$/g, '').trim())
+        .filter(Boolean)
+        .join('、')
+      if (clean) out[key] = clean.length > 400 ? `${clean.slice(0, 400)}…` : clean
+    }
+    key = null
+    buf = []
+  }
+  for (const line of text.replace(/\r\n/g, '\n').split('\n')) {
+    const match = /^\s*\|\s*([^=|]{1,40})=([\s\S]*)$/.exec(line)
+    if (match) {
+      commit()
+      key = match[1].trim()
+      buf = [match[2]]
+      continue
+    }
+    if (/^\s*\}/.test(line)) {
+      commit()
+      continue
+    }
+    if (key) buf.push(line)
+  }
+  commit()
+  return out
+}
+
+/** infobox 里的「别名」→ 字符串数组（中日英罗马字混着，全是别名） */
+export function infoboxAliases(map) {
+  const raw = map?.别名
+  if (!raw) return []
+  return [...new Set(String(raw).split(/[、\n]/).map((s) => s.trim()).filter(Boolean))].slice(0, 12)
+}
+
+/** 只留 `STAFF_KEYS` 里有的键（值已经截断过） */
+function pickStaff(map) {
+  const out = {}
+  for (const key of STAFF_KEYS) {
+    if (map[key]) out[key] = map[key]
+  }
+  return out
+}
+
+/** infobox 的「话数」→ 数字（值形如 `25` / `12话` / `全25话`） */
+function episodesFromInfobox(map) {
+  const n = Number(/(\d{1,4})/.exec(String(map?.['话数'] || ''))?.[1])
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/** 全量标签（含出现次数），按次数倒序 */
+export function allTags(subject, limit = TAG_STORE_LIMIT) {
+  const list = Array.isArray(subject?.tags) ? subject.tags : []
+  return list
+    .map((tag) => (typeof tag === 'string' ? { name: tag, count: null } : { name: tag?.name, count: Number(tag?.count) || null }))
+    .filter((tag) => tag.name)
+    .slice(0, limit)
+}
+
+/**
+ * 一条 dump 记录 → `bgm_subject` 的**完整行**（全站动画库用）
+ * ---------------------------------------------------------------------------
+ * 与 `archivePatch()` 的分工：
+ *   · `archivePatch()` 只产出「展示需要的 9 个字段」，写 `anime` 表（排期+展示）
+ *   · 这里产出**所有能拿到的字段**，写 `bgm_subject`（全站动画档案，给 MCP / 推荐用）
+ * 两者字段名刻意保持一致（title_bgm / score / tags / …），写库函数可以共用。
+ *
+ * @param {object} subject dump 的一行
+ * @param {{ episodes?: number|null }} [extra] `episodes` = 该条目 type=0 的章节数（优先于 infobox 的话数）
+ */
+export function fullSubjectRow(subject, { episodes = null } = {}) {
+  const id = Number(subject?.id)
+  if (!Number.isFinite(id)) return null
+  const infoboxMap = parseInfobox(subject?.infobox)
+  const tagsAll = allTags(subject)
+  const staff = pickStaff(infoboxMap)
+  const aliases = infoboxAliases(infoboxMap)
+  const titleCn = subject?.name_cn || null
+  const titleOrigin = subject?.name || null
+  const score = Number(subject?.score)
+  const total = Number(episodes) || episodesFromInfobox(infoboxMap)
+  return {
+    bgm_id: String(id),
+    title_bgm: titleCn || titleOrigin,
+    title_bgm_origin: titleOrigin,
+    summary: subject?.summary || null,
+    score: Number.isFinite(score) && score > 0 ? score : null,
+    rating_total: ratingTotalOf(subject?.score_details),
+    tags: archiveTags(subject),
+    watching: Number(subject?.favorite?.doing) > 0 ? Number(subject.favorite.doing) : null,
+    platform: Number(subject?.platform) || null,
+    first_air_date: subject?.date || null,
+    total_episodes: total,
+    type: Number(subject?.type) || null,
+    bgm_rank: Number(subject?.rank) > 0 ? Number(subject.rank) : null,
+    nsfw: subject?.nsfw ? 1 : 0,
+    in_series: subject?.series ? 1 : 0,
+    score_details: subject?.score_details || null,
+    favorite: subject?.favorite || null,
+    tags_all: tagsAll.length ? tagsAll : null,
+    staff: Object.keys(staff).length ? staff : null,
+    aliases: aliases.length ? aliases : null,
+    infobox: subject?.infobox || null,
+    name_fold: foldTitle(titleCn || titleOrigin || '') || null,
+    source: 'dump',
+  }
+}
+
+/** 一条完整行 → `bgm_tag` 的行（只留够热门的标签） */
+export function tagRowsOf(row) {
+  const tags = Array.isArray(row?.tags_all) ? row.tags_all : []
+  return tags
+    .filter((tag) => Number(tag.count) >= TAG_ROW_MIN_COUNT)
+    .map((tag) => ({ bgm_id: row.bgm_id, name: tag.name, count: Number(tag.count) || null }))
 }
