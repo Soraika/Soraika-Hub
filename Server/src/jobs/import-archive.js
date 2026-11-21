@@ -22,8 +22,8 @@ import { existsSync, statSync } from 'node:fs'
 import { createReadStream } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { applyArchiveBatch, listBgmTargets, stats } from './../db/anime.js'
-import { clearRelations, insertRelations, insertStubs, markStubRelationsChecked } from './../db/relation.js'
+import { applyArchiveBatch, clearSeriesChecked, listBgmTargets, stats } from './../db/anime.js'
+import { clearRelationEdges, clearRelations, insertRelations, insertStubs, markStubRelationsChecked } from './../db/relation.js'
 import { upsertSubjects } from './../db/subject.js'
 import {
   DUMP_FILES,
@@ -105,6 +105,7 @@ export async function runArchiveImport({
   onlyMissing = false,
   dryRun = false,
   markChecked = true,
+  resetSeries = true,
   log = logger,
 } = {}) {
   const startedAt = Date.now()
@@ -128,55 +129,32 @@ export async function runArchiveImport({
     if (Number.isFinite(id)) wantedIds.add(id)
   }
 
+  /**
+   * 全站动画 id（type=2）。关系表要用它做「两端都是动画」的过滤 ——
+   * 这是系列链能完整的关键：以前只留「有一端在库」的边，链中间那几跳被整段丢掉。
+   */
+  const animeIds = new Set()
+
   log.info({ source: source.kind === 'zip' ? source.file : source.dir, targets: targets.size, onlyMissing, dryRun }, 'archive.start')
-  if (!targets.size) return { ...emptyResult(before), dir: dir, ms: Date.now() - startedAt }
+  /* 库里一条 bgm_id 都没有也要继续：索引与关系表是**全站**的，与库里有几条无关 */
+  if (!targets.size) log.warn({}, 'archive.no-targets 库里没有 bgm_id，只导索引与关系表')
 
   /** 统计收口（关系 / 章节 / 档案三趟都写它） */
   const result = { ...emptyResult(before), dir }
 
-  /* ① 关系表（可选文件）：只留「和库里的 bgm_id 有关」且类型在系列链白名单里的行。
-     整表 72MB 是全站关系，与本项目无关；顺手把「链上还没入库」的 id 收进 stubIds，
-     下一步扫 subject 时把它们的名字/类型/日期一起存下来（建骨架行、排剧场版季位要用）。 */
+  /* 关系表在不在，决定这一趟是不是「整表重灌」 */
   const relationFileAvailable =
     source.kind === 'zip'
       ? source.entries.some((entry) => entry.name === RELATION_FILE || entry.name.endsWith(`/${RELATION_FILE}`))
       : existsSync(join(source.dir, RELATION_FILE))
-  const stubIds = new Set()
-  if (relationFileAvailable) {
-    if (!dryRun) clearRelations()
-    const keptTypes = new Set(RELATION_TYPES_KEPT)
-    let relBatch = []
-    const flushRel = () => {
-      if (!relBatch.length) return
-      if (!dryRun) insertRelations(relBatch)
-      result.relations += relBatch.length
-      relBatch = []
-    }
-    const relStats = await readJsonLinesFrom(
-      openEntry(source, RELATION_FILE),
-      (line) => {
-        const sid = Number(/"subject_id":(\d+)/.exec(line)?.[1])
-        const type = Number(/"relation_type":(\d+)/.exec(line)?.[1])
-        const rid = Number(/"related_subject_id":(\d+)/.exec(line)?.[1])
-        if (!Number.isFinite(sid) || !Number.isFinite(rid)) return
-        if (!keptTypes.has(type)) return
-        if (!wantedIds.has(sid) && !wantedIds.has(rid)) return
-        const ord = Number(/"order":(\d+)/.exec(line)?.[1]) || 0
-        relBatch.push([sid, type, rid, ord])
-        stubIds.add(sid)
-        stubIds.add(rid)
-        if (relBatch.length >= BATCH_SIZE) flushRel()
-      },
-      { raw: true },
-    )
-    flushRel()
-    result.badLines += relStats.bad
-    log.info({ relations: result.relations, stubs: stubIds.size }, 'archive.relations')
-  } else {
-    log.info({ file: RELATION_FILE }, 'archive.relations skip（dump 里没有这张表，走链仍打上游）')
-  }
 
-  /* ② 章节数：type 0 = 正篇（特别篇 / OP / ED 不算），数出来就是总集数 */
+  /* 整表重灌：关系边 + 名字索引都清掉重来。
+     **必须在第一趟之前**做 —— 档案段会重新填满 `bgm_stub`（全站动画名字索引），
+     关系段如果那时才清就会把索引一起清空（曾经踩过：stub 的 type/name 全成 NULL）。
+     只在 dump **带着关系表**时才清：老 dump 没有这张表时不该把已有关系抹掉。 */
+  if (!dryRun && relationFileAvailable) clearRelations()
+
+  /* ① 章节数：type 0 = 正篇（特别篇 / OP / ED 不算），数出来就是总集数 */
   const episodeCounts = new Map()
   const epStats = await readJsonLinesFrom(
     openEntry(source, DUMP_FILES.episode),
@@ -192,7 +170,15 @@ export async function runArchiveImport({
     { raw: true },
   )
 
-  /* ③ 档案字段：先按行首 id 筛，命中的才 JSON.parse（60 万行里只有几千行要解析） */
+  /* ② 档案字段 + 全站动画索引
+     -----------------------------------------------------------------
+     两件事一次扫完：
+       · 库里的行：补评分/标签/简介/首播日/总集数（老行为，不变）
+       · **全站 type=2（动画）全部收进 `bgm_stub`** —— 这不是"给链上条目建骨架"的副产品，
+         而是有意的：dump 就是全站动画索引，有了它
+           ① 关系表可以做「两端都是动画」的完整过滤（不再按库内成员裁剪 → 链不再断）
+           ② 下载页拿磁盘目录名就能认出库里没有的老番（见 db/relation.js#matchByFolderIndex）
+         全站动画约几万条，几 MB，比"猜"便宜得多。 */
   let batch = []
   /** 同一批也写进 `bgm_subject`（档案表）：anime 留给排期/展示，档案可整表重灌 */
   let subjectBatch = []
@@ -238,11 +224,12 @@ export async function runArchiveImport({
       }
       if (!Number.isFinite(id)) return
       const target = targets.get(String(id))
-      const isStub = stubIds.has(id)
-      if (!target && !isStub) return
 
-      /* 链上的条目（可能不在库里）：只取名字 / 类型 / 日期，给系列链用 */
-      if (isStub) {
+      /* 全站动画（type=2）一律收进索引 —— 不看它在不在库里。
+         行首那一段就带着 type，先用正则判，只有命中的才 JSON.parse（1002MB 里绝大多数不是动画） */
+      const isAnime = /"type":2[,}]/.test(line.slice(0, 40))
+      if (isAnime) {
+        animeIds.add(id)
         if (!subject) {
           try {
             subject = JSON.parse(line)
@@ -254,7 +241,7 @@ export async function runArchiveImport({
         if (subject) {
           stubBatch.push({
             bgmId: String(id),
-            type: Number(subject.type) || null,
+            type: 2,
             name: subject.name || null,
             nameCn: subject.name_cn || null,
             date: subject.date || null,
@@ -292,6 +279,65 @@ export async function runArchiveImport({
   )
   flush()
 
+  /* ③ 关系表（可选文件）—— **整表按「两端都是动画」落库，不再按库内成员裁剪**
+     -------------------------------------------------------------------------
+     以前这里写的是 `if (!wantedIds.has(sid) && !wantedIds.has(rid)) return`，只留
+     「至少一端在库」的边。系列链是 A—B—C 这种链，中间那段 A—B **两端都不在库**就被丢了 →
+     从库里那部向外走链走不动 → 系列只剩下半截（实测《无职转生》第二季第2部分被当成第 1 部，
+     后面的季位整体错一位）。
+     现在：动画 id 全集在 ② 里已经收集好，两端都在集合里的边就是**这个项目的完整关系图**，
+     照单全收（全站关系 76MB，其中两端都是动画的只是一小部分）。
+     这样 `relatedOf()` 对任何一部动画都有答案，走链**一次上游都不用打**。 */
+  if (relationFileAvailable) {
+    if (!dryRun) clearRelationEdges()
+    const keptTypes = new Set(RELATION_TYPES_KEPT)
+    let relBatch = []
+    const flushRel = () => {
+      if (!relBatch.length) return
+      if (!dryRun) insertRelations(relBatch)
+      result.relations += relBatch.length
+      relBatch = []
+    }
+    const relStats = await readJsonLinesFrom(
+      openEntry(source, RELATION_FILE),
+      (line) => {
+        const type = Number(/"relation_type":(\d+)/.exec(line)?.[1])
+        if (!keptTypes.has(type)) return
+        const sid = Number(/"subject_id":(\d+)/.exec(line)?.[1])
+        const rid = Number(/"related_subject_id":(\d+)/.exec(line)?.[1])
+        if (!Number.isFinite(sid) || !Number.isFinite(rid)) return
+        if (!animeIds.has(sid) || !animeIds.has(rid)) return
+        const ord = Number(/"order":(\d+)/.exec(line)?.[1]) || 0
+        relBatch.push([sid, type, rid, ord])
+        if (relBatch.length >= BATCH_SIZE) flushRel()
+      },
+      { raw: true },
+    )
+    flushRel()
+    result.badLines += relStats.bad
+
+    /* 全站关系表 = 每一部动画的 1 跳关系都有答案（哪怕一行都没有）→ 以后一律不打上游。
+       不标的话，没关系的那几部会每轮白打一次 BGM。 */
+    if (!dryRun) markStubRelationsChecked([...animeIds])
+    log.info(
+      { anime: animeIds.size, relations: result.relations, stubs: result.stubs },
+      'archive.relations',
+    )
+  } else {
+    log.warn({ file: RELATION_FILE }, 'archive.relations skip（dump 里没有这张表，走链仍打上游）')
+  }
+
+  /*
+   * ④ 关系图重灌了 → 已经算过系列的番必须重算，否则库里躺的还是旧季位。
+   * 以前这一步缺了，所以「导完 dump 系列还是不对」—— 队列谓词是 `series_checked_at IS NULL`，
+   * 算过一次就再也不会被捞起来。清空之后 worker 下一轮会把它们重走一遍（走链现在全离线，很快）。
+   * 根名/命名风格不会被覆盖（setSeriesMeta 只补空），AI 也只会在缺根名时才被调用。
+   */
+  if (!dryRun && resetSeries) {
+    result.seriesReset = clearSeriesChecked()
+    log.info({ rows: result.seriesReset }, 'archive.series reset')
+  }
+
   result.episodes = episodeCounts.size
   result.missingInDump = targets.size - result.matched
   result.badLines += epStats.bad + subStats.bad
@@ -314,7 +360,7 @@ export async function runArchiveImport({
     },
     dryRun ? 'archive.dry-run' : 'archive.done',
   )
-  if (result.episodes === 0) {
+  if (result.episodes === 0 && targets.size) {
     log.warn({ source: source.kind === 'zip' ? source.file : source.dir }, 'archive.no-episodes 没数到任何正篇 —— 检查 dump 版本/文件名')
   }
   return result
@@ -343,6 +389,7 @@ if (isCli) {
         onlyMissing: flag('only-missing'),
         dryRun: flag('dry-run'),
         markChecked: !flag('no-checked'),
+        resetSeries: !flag('no-reset-series'),
       })
     }
   } catch (err) {

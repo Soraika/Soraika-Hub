@@ -488,6 +488,30 @@ export const findByMikanId = (mikanId) => stmt.byMikanId.get(val(mikanId)) ?? nu
 export const findByBgmId = (bgmId) => stmt.byBgmId.get(val(bgmId)) ?? null
 /** 按番名（中文名或原名，完全相等）找 —— 下载页把老种子认回作品用 */
 export const findByTitle = (title) => stmt.byTitle.get(val(title), val(title)) ?? null
+/**
+ * 下载页「归档目录名 → 作品」的匹配底料（一次性取全表）
+ * ---------------------------------------------------------------------------
+ * 只取认名字要用的列。为什么不放进 SQL 里做模糊匹配：比较规则（全角/分卷后缀/系列根名）
+ * 是纯函数（domain/downloads.js 的 matchFolders），放库里就没法单测了；
+ * 全表几百到几千行，取回来在内存里比一次比写一堆 LIKE 更快也更好解释。
+ */
+export const listForFolderMatch = () =>
+  db
+    .prepare(
+      `SELECT id, title_bgm, title_mikan, title_bgm_origin, series_id, series_root_title
+         FROM v_anime`,
+    )
+    .all()
+/**
+ * 系列链要整体重算：把所有作品的 `series_checked_at` 清空
+ * ---------------------------------------------------------------------------
+ * 什么时候需要：dump 的关系表重灌之后。队列谓词是 `series_checked_at IS NULL`，
+ * 算过一次就再也不会被捞起来 —— 不清空的话，导完 dump 库里躺的还是旧季位。
+ * 清空是安全的：根名与命名风格不会被覆盖（`setSeriesMeta` 只补空），走链现在全离线（几毫秒一部）。
+ * @returns {number} 被重置的行数
+ */
+export const clearSeriesChecked = () => db.prepare('UPDATE anime SET series_checked_at = NULL').run().changes
+
 /** 按作品主键取（出图接口用） */
 export const findById = (id) => stmt.byId.get(val(id)) ?? null
 /** 出图接口落地本地缓存后回写路径 */

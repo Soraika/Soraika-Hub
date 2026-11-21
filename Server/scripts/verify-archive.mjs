@@ -249,8 +249,12 @@ check(needArchive() === 1, '补完之后只差 dump 里没有的那条', String(
 
 /* ── 关系表：系列链从此 0 次上游请求 ─────────────────────────────────────── */
 console.log('\n— 关系表（系列链的数据源）')
-check(first.relations === 4, '只存「和库里有关 + 类型在白名单」的行', `relations=${first.relations}`)
-check(countRelations() === 4, '整表重灌（每次导入先清空再灌）', `rows=${countRelations()}`)
+/* 口径变了：以前是「和库里有关」，现在是「**两端都是动画**」——
+   只按库内成员裁剪会把整条链的中间几跳丢掉（A—B—C 里 A—B 两端都不在库就没了），
+   结果系列只剩半截、季位错一位。 */
+check(first.relations === 3, '两端都是动画的关系才落库（不再按库内成员裁剪）', `relations=${first.relations}`)
+check(countRelations() === 3, '整表重灌（每次导入先清空再灌）', `rows=${countRelations()}`)
+check(stubOf('3')?.type === 2 && stubOf('3')?.name_cn === '不该出现', '库里没有的动画也进索引（下载页靠它认老番）', JSON.stringify(stubOf('3')))
 const rel1 = relatedOf('1')
 check(rel1.some((r) => r.id === '3' && r.relation === '续集'), '3 = 续集（数字含义是拿 API 对照出来的）', JSON.stringify(rel1))
 check(rel1.some((r) => r.id === '20' && r.relation === '番外篇'), '6 = 番外篇')

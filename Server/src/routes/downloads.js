@@ -235,15 +235,25 @@ downloadsRouter.get('/xunlei/tasks', async (req, res, next) => {
 })
 
 /**
- * GET /api/qb/status —— 设置页「已连接」那一行 & 下载页顶部
- * 没配时不报错：`{ configured:false }` 让界面显示引导文案（报错反而像服务坏了）
+ * GET /api/qb/status —— 设置页「已连接」那一行 & 下载页顶部 & 面板「下载」按钮是否可点
+ * 三种状态分开报，不要混：
+ *   · 没配           → `{ configured:false }`（界面给引导，不报错）
+ *   · 配了且连得上   → `{ configured:true, connected:true, versions, transfer }`
+ *   · 配了但连不上   → `{ configured:true, connected:false, error }`，**仍然是 200**
+ * 最后一条为什么是 200：qB 重启、换 IP 都是常态，接口本身没坏。以前这里抛 502，
+ * 前端 catch 之后只能把 qbReady 当成 false，界面就显示「还没连上 qBittorrent」——
+ * 用户刚填好地址、明明连得上也会看到这句，分不清是「没配」还是「真断了」。
  */
 downloadsRouter.get('/qb/status', async (req, res, next) => {
+  if (!qbConfigured()) return res.json({ ok: true, data: { configured: false, connected: false } })
   try {
-    if (!qbConfigured()) return res.json({ ok: true, data: { configured: false } })
     const [versions, transfer] = await Promise.all([qbVersions(), qbTransfer().catch(() => null)])
-    res.json({ ok: true, data: { configured: true, versions, transfer } })
+    res.json({ ok: true, data: { configured: true, connected: true, versions, transfer } })
   } catch (err) {
-    next(err)
+    req.log?.warn?.({ err: err?.message }, 'qb.status unreachable')
+    res.json({
+      ok: true,
+      data: { configured: true, connected: false, error: err?.message || '连不上 qBittorrent' },
+    })
   }
 })

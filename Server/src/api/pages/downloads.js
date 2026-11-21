@@ -10,13 +10,15 @@
  *   · `addDownloads()`      → 资源列表勾选后加种（归档目录 + 标签在这里定）
  */
 import { config } from './../../config.js'
-import { findById, findByMikanId, findByTitle, rssIdOfSubgroup } from './../../db/anime.js'
+import { ensureBgmStub, findById, findByMikanId, findByTitle, listForFolderMatch, rssIdOfSubgroup } from './../../db/anime.js'
+import { matchByFolderIndex } from './../../db/relation.js'
 import {
   archiveDirOf,
   buildTags,
   episodeOf,
   episodeOrder,
   kindOf,
+  matchFolders,
   mikanIdOf,
   missingEpisodesOf,
   percentOf,
@@ -197,8 +199,63 @@ export async function getDownloads({ fresh = false } = {}) {
   /** 作品 id → 该作品的种子（Map 保持 qB 返回顺序，卡片顺序稳定） */
   const byAnime = new Map()
   const unmatched = new Map()
+
+  /* 第一趟先用**确定性**的方式认（标签里的 mikan id / 番名完全相等）；
+     认不出的顺手把「归档目录名」记下来，第二趟统一做归一化匹配 ——
+     一次取全表、一次建索引，比每个种子都查一次库便宜，也比逐条猜更可解释。 */
+  const pending = []
+  const resolved = new Map()
   for (const t of torrents) {
     const row = resolveAnime(t)
+    if (row) resolved.set(t.hash, row)
+    else pending.push(t)
+  }
+  if (pending.length) {
+    const folderOf = (t) => splitSavePath(t.save_path, config.qb?.saveRoot).title
+    const folders = pending.map(folderOf).filter(Boolean)
+
+    /* 第二趟第一步：在**库内**按归一化名字找（含系列根名兜底） */
+    if (folders.length) {
+      const hit = matchFolders(folders, listForFolderMatch())
+      for (const t of pending) {
+        const title = folderOf(t)
+        const row = title ? hit.get(title) : null
+        if (row) resolved.set(t.hash, row)
+      }
+    }
+
+    /* 第二趟第二步：库里没有的，去 **dump 建的全站动画索引**里找。
+       ------------------------------------------------------------------
+       为什么要这一步：`anime` 只由 Mikan 排期写入，所以 2020 年前的老番、剧场版、
+       冷门作在库里根本没有行 —— 文件明明在盘上，却只能进「未识别」。dump 全量导入后
+       `bgm_stub` 有全站动画（名字 + 首播日），拿它兜底就能认出来；
+       认出来之后**建骨架行进库**（`ensureBgmStub`：只有 bgm_id + 名字，没有 mikan_id /
+       year / season，所以不会污染首页排期），卡片就有了海报和标题。
+       —— 这就是「导入 dump 同步更新数据库」在下载页这一侧的落点。 */
+    const stillPending = pending.filter((t) => !resolved.has(t.hash))
+    if (stillPending.length) {
+      const restFolders = stillPending.map(folderOf).filter(Boolean)
+      const indexHit = matchByFolderIndex(restFolders)
+      let created = 0
+      for (const t of stillPending) {
+        const title = folderOf(t)
+        const found = title ? indexHit.get(title) : null
+        if (!found) continue
+        const row = ensureBgmStub({
+          bgmId: found.bgmId,
+          title: found.nameCn || found.name,
+          titleCn: found.nameCn || null,
+        })
+        if (!row) continue
+        resolved.set(t.hash, row)
+        if (row.title_mikan == null && row.year == null) created++
+      }
+      if (created) logger.info({ created }, 'downloads.match by dump index（新建骨架行）')
+    }
+  }
+
+  for (const t of torrents) {
+    const row = resolved.get(t.hash) ?? null
     if (row) {
       if (!byAnime.has(row.id)) byAnime.set(row.id, { row, list: [] })
       byAnime.get(row.id).list.push(t)

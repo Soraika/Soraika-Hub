@@ -12,6 +12,7 @@
  */
 import { db } from './index.js'
 import { inverseRelationNameOf, relationCodeOf, relationNameOf } from './../domain/bgm-archive.js'
+import { foldTitle, stripVolumeSuffix } from './../domain/titles.js'
 
 const stmt = {
   clear: db.prepare('DELETE FROM bgm_relation'),
@@ -21,14 +22,21 @@ const stmt = {
      VALUES (?, ?, ?, ?)`,
   ),
   insertStub: db.prepare(
-    `INSERT INTO bgm_stub (bgm_id, type, name, name_cn, date, source)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO bgm_stub (bgm_id, type, name, name_cn, date, source, name_fold)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(bgm_id) DO UPDATE SET
-       type    = COALESCE(excluded.type, bgm_stub.type),
-       name    = COALESCE(excluded.name, bgm_stub.name),
-       name_cn = COALESCE(excluded.name_cn, bgm_stub.name_cn),
-       date    = COALESCE(excluded.date, bgm_stub.date)`,
+       type      = COALESCE(excluded.type, bgm_stub.type),
+       name      = COALESCE(excluded.name, bgm_stub.name),
+       name_cn   = COALESCE(excluded.name_cn, bgm_stub.name_cn),
+       date      = COALESCE(excluded.date, bgm_stub.date),
+       name_fold = COALESCE(excluded.name_fold, bgm_stub.name_fold)`,
   ),
+  /** 归档目录名 → BGM 条目（全站动画索引；`name_fold` 走索引，等值查询） */
+  byFold: db.prepare(
+    `SELECT bgm_id, name, name_cn, date FROM bgm_stub
+      WHERE type = 2 AND name_fold IN (SELECT value FROM json_each(?))`,
+  ),
+  countAnime: db.prepare('SELECT COUNT(*) AS n FROM bgm_stub WHERE type = 2'),
   count: db.prepare('SELECT COUNT(*) AS n FROM bgm_relation'),
   countStubs: db.prepare('SELECT COUNT(*) AS n FROM bgm_stub'),
   stub: db.prepare('SELECT * FROM bgm_stub WHERE bgm_id = ?'),
@@ -69,6 +77,25 @@ export function clearRelations() {
   }
 }
 
+/**
+ * 只清关系边（保留 `bgm_stub` 里的名字/类型索引）
+ * ---------------------------------------------------------------------------
+ * 为什么要分开：导入时 `bgm_stub` 会先被**档案段**填满全站动画（名字/类型/日期），
+ * 关系段如果连它一起清，索引就全成 NULL 了 —— 实测正是这样：31312 条 stub
+ * 的 type/name 全空，于是 `relatedOf()` 把每一条都当成「非动画」丢掉，链永远是 1 个节点。
+ * 整表重灌（含清 stub）只在导入**最开始**做一次。
+ */
+export function clearRelationEdges() {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    stmt.clear.run()
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+}
+
 /** 批量写关系（rows: `[subjectId, relationType, relatedId, ord]`） */
 export function insertRelations(rows) {
   if (!rows?.length) return
@@ -88,7 +115,15 @@ export function insertStubs(rows) {
   db.exec('BEGIN IMMEDIATE')
   try {
     for (const row of rows) {
-      stmt.insertStub.run(row.bgmId, row.type ?? null, row.name ?? null, row.nameCn ?? null, row.date ?? null, row.source || 'dump')
+      stmt.insertStub.run(
+        row.bgmId,
+        row.type ?? null,
+        row.name ?? null,
+        row.nameCn ?? null,
+        row.date ?? null,
+        row.source || 'dump',
+        foldTitle(row.nameCn || row.name || '') || null,
+      )
     }
     db.exec('COMMIT')
   } catch (err) {
@@ -173,14 +208,22 @@ export function saveRelationsFromApi(bgmId, list = [], { selfType = 2 } = {}) {
   for (const item of list || []) {
     const other = String(item?.id ?? '').trim()
     if (!other) continue
-    stubRows.push([other, Number(item.type) || null, item.name || null, item.nameCn || null, null, 'api'])
+    stubRows.push([
+      other,
+      Number(item.type) || null,
+      item.name || null,
+      item.nameCn || null,
+      null,
+      'api',
+      foldTitle(item.nameCn || item.name || '') || null,
+    ])
     const code = relationCodeOf(item.relation)
     if (code) relRows.push([Number(self), code, Number(other), 0])
   }
   db.exec('BEGIN IMMEDIATE')
   try {
     // 自己也要有一条 stub（否则反向读取时 other_type 为空 → 会被「只认动画」挡掉）
-    stmt.insertStub.run(self, Number(selfType) || 2, null, null, null, 'api')
+    stmt.insertStub.run(self, Number(selfType) || 2, null, null, null, 'api', null)
     for (const row of stubRows) stmt.insertStub.run(...row)
     for (const row of relRows) stmt.insertRelation.run(...row)
     stmt.touchChecked.run(self, now)
@@ -190,3 +233,63 @@ export function saveRelationsFromApi(bgmId, list = [], { selfType = 2 } = {}) {
     throw err
   }
 }
+
+/**
+ * 拿磁盘上的归档目录名，到 **BGM 全站动画索引** 里找条目
+ * ---------------------------------------------------------------------------
+ * 为什么不再只查 `anime` 表：`anime` 只由 Mikan 排期写入，所以 2020 年前的老番、
+ * 剧场版、冷门作在库里根本没有行 —— 文件明明在盘上，却只能进「未识别」。
+ * dump 全量导入后 `bgm_stub` 有全站动画（含名字/首播日），拿它兜底就能认出来，
+ * 认出来之后再建骨架行进库（见 api/pages/downloads.js），卡片就有了。
+ *
+ * 两把钥匙都试：原样归一化 + 剥掉分卷后缀后归一化（「…第2部分」/「…」互认）。
+ * @param {string[]} folders
+ * @returns {Map<string, {bgmId:string, name:string, nameCn:string, date:string}>} 目录名 → 条目
+ */
+export function matchByFolderIndex(folders = []) {
+  const list = [...new Set((folders || []).filter(Boolean))]
+  if (!list.length) return new Map()
+  /** 两把钥匙 → 目录名，反查结果时用 */
+  const keys = new Map()
+  for (const folder of list) {
+    const a = foldTitle(folder)
+    const b = foldTitle(stripVolumeSuffix(folder))
+    if (a) keys.set(a, folder)
+    if (b && b !== a) keys.set(b, folder)
+  }
+  if (!keys.size) return new Map()
+
+  let rows = []
+  try {
+    rows = stmt.byFold.all(JSON.stringify([...keys.keys()]))
+  } catch {
+    return new Map() // json_each 不可用（老 SQLite）→ 当作没命中，走原来的「未识别」
+  }
+  /** 一个 key 命中多个条目：名字完全相同的不同作品 → 模棱两可，不认 */
+  const byKey = new Map()
+  for (const row of rows) {
+    for (const k of [foldTitle(row.name_cn || row.name || ''), foldTitle(stripVolumeSuffix(row.name_cn || row.name || ''))]) {
+      if (!k || !keys.has(k)) continue
+      if (!byKey.has(k)) byKey.set(k, [])
+      byKey.get(k).push(row)
+    }
+  }
+  const out = new Map()
+  for (const [key, hits] of byKey) {
+    const unique = new Set(hits.map((r) => String(r.bgm_id)))
+    if (unique.size !== 1) continue
+    const folder = keys.get(key)
+    if (out.has(folder)) continue
+    const row = hits[0]
+    out.set(folder, {
+      bgmId: String(row.bgm_id),
+      name: row.name || '',
+      nameCn: row.name_cn || '',
+      date: row.date || '',
+    })
+  }
+  return out
+}
+
+/** 全站动画索引的条目数（导入报告 / 健康检查用） */
+export const countAnimeIndex = () => stmt.countAnime.get()?.n ?? 0

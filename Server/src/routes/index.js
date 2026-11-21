@@ -6,7 +6,7 @@ import { Router } from 'express'
 import { countAll, countSubgroupDict, stats } from './../db/anime.js'
 import { dbFile } from './../db/index.js'
 import { countGaveUp, countMissingBgm } from './../db/queue.js'
-import { countRelations, countStubs } from './../db/relation.js'
+import { countAnimeIndex, countRelations, countStubs } from './../db/relation.js'
 import { getWorkerState } from './../jobs/worker.js'
 import { SETTINGS_GROUPS } from './../lib/settings.js'
 import { aiCacheStats } from './../api/pages/ai.js'
@@ -41,6 +41,8 @@ apiRouter.get('/health', (req, res) => {
         /** dump 关系表 / 链上条目：> 0 就说明系列链可以完全离线走（0 次上游请求） */
         relations: countRelations(),
         stubs: countStubs(),
+        /** dump 里的全站动画条目数（> 0 说明 dump 导过，下载页能认库里没有的老番） */
+        animeIndex: countAnimeIndex(),
       },
       /** 后台守护进程状态快照（未启动时 running=false） */
       worker: getWorkerState(),

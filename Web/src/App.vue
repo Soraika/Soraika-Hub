@@ -29,7 +29,7 @@
       :download-ready="qbReady"
       @close="closeAnime"
       @retry="retryAnime"
-      @open="openAnime"
+      @open="onOpenAnime"
       @downloaded="onDownloaded"
       @go-season="onGoSeason"
     />
@@ -112,6 +112,8 @@ const {
  */
 watch(activeNav, (nav) => {
   closeAnime()
+  // 设置页刚改完 qB 地址就切回来：这里补查一次，否则按钮还是旧的「没连上」
+  refreshQbReady()
   // 只有待在下载页才轮询（切走立刻停，别让后台一直打 qB）
   if (nav === 'downloads') {
     if (!downloads.data.value) downloads.load()
@@ -122,18 +124,34 @@ watch(activeNav, (nav) => {
 })
 
 /**
- * qB 通道是否可用 —— 启动查一次，用来决定面板里的「下载」按钮能不能点。
- * 查不到就当没配（按钮变灰并给说明），不影响其它功能。
+ * qB 通道是否可用 —— 决定面板里的「下载」按钮能不能点。
+ * ---------------------------------------------------------------------------
+ * 只在挂载时查一次是不够的：设置页刚填好地址，回到首页点海报，SPA 并不会重新加载，
+ * qbReady 还停在 false，按钮就一直灰着写「还没连上 qBittorrent」——可它明明连得上。
+ * 所以在这三个时机重新确认（都只花十几毫秒，比一直显示错的状态便宜）：
+ *   ① 挂载 ② 每次切页 ③ 每次打开详情面板（就是按「下载」前那一刻）
+ * 接口自己挂了（后端没起 / 网络断）时**保持上一次的判断**，不要把「连不上后端」
+ * 误报成「没配 qB」——那是完全不同的事。
  */
 const qbReady = ref(false)
-onMounted(async () => {
+
+async function refreshQbReady() {
   try {
     const status = await fetchQbStatus()
-    qbReady.value = Boolean(status?.configured)
+    // 配了但连不上（后端 200 + connected:false）同样算「不可以点」，但要记住原因
+    qbReady.value = Boolean(status?.configured && status?.connected !== false)
   } catch {
-    qbReady.value = false
+    /* 保持上一次的判断 */
   }
-})
+}
+
+onMounted(refreshQbReady)
+
+/** 打开面板 = 马上要用「下载」按钮，这时确认一次最有用 */
+function onOpenAnime(payload) {
+  refreshQbReady()
+  openAnime(payload)
+}
 
 /**
  * 面板「资源」区的来源：`mikan` = 未下载的资源列表，`downloads` = 已经下载的文件
@@ -190,7 +208,7 @@ const pageProps = computed(() => {
       // 首页点海报 → 面板读没下载的资源（Mikan 现取）
       onOpenAnime: (item) => {
         panelSource.value = 'mikan'
-        openAnime(item.id)
+        onOpenAnime(item.id)
       },
       // 顶栏搜索：跳到搜索页并把词带过去（页面一挂载就是结果，不用再敲一次）
       onSearch: (value) => {
@@ -222,7 +240,7 @@ const pageProps = computed(() => {
       // 结果点海报：和首页一致，读没下载的资源
       onOpenAnime: (item) => {
         panelSource.value = 'mikan'
-        openAnime(item.id)
+        onOpenAnime(item.id)
       },
     }
   }
@@ -237,7 +255,7 @@ const pageProps = computed(() => {
       // 下载页点海报 → 面板读已经下载的文件（同一个面板，换数据源）
       onOpenAnime: (item) => {
         panelSource.value = 'downloads'
-        openAnime(item.id)
+        onOpenAnime(item.id)
       },
       // 刷新要跳过后端 4 秒缓存（用户点它就是要看最新状态）
       onReload: () => downloads.load({ fresh: true }),

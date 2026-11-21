@@ -373,3 +373,7 @@ export function buildTags({ mikanId = '', subgroup = '' } = {}) {
   if (subgroup) tags.push(`sg:${String(subgroup).replace(/,/g, '，')}`)
   return tags.join(',')
 }
+
+/* 归档目录名 → 作品的匹配规则搬到 domain/titles.js（db / 导入 / 下载页三处共用一套）。
+   这里 re-export，原有 import 不用改。 */
+export { foldTitle, matchFolders, stripVolumeSuffix } from './titles.js'

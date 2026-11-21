@@ -196,6 +196,10 @@ CREATE TABLE IF NOT EXISTS bgm_stub (
   name_cn  TEXT,
   date     TEXT,         -- 首播/上映日（剧场版系列按它排季位）
   source   TEXT,         -- 'dump'（将来也可能有 'api'）
+  -- 归一化名字（全角→半角、去空白、统一波浪号、剥分卷后缀、小写）。
+  -- 下载页拿磁盘上的归档目录名找作品时按它比：dump 全量导入后这张表就是「BGM 全站动画索引」，
+  -- 库里没有的作品也能认出来。写时算好、建索引，读时一次等值查询（不做内存全表扫）。
+  name_fold TEXT,
   -- 这条 id 的「1 跳关系」是否已经问过（dump 导入或在线补过）：
   -- 有它就不必再打上游 —— 包括「确实没有关系」这种情况（否则每条没关系的作品会反复打）
   relations_checked_at INTEGER
@@ -207,6 +211,9 @@ CREATE TABLE IF NOT EXISTS bgm_stub (
 -- Mikan 的动画 id 是**递增**的，新番只会在尾部出现；老 id 大量是 404。
 -- 所以日常只扫「水位之后」：连续 N 个空页就停（说明还没到下一季），不用遍历 5400 个。
 -- ============================================================================
+-- 归档目录名 → BGM 条目的一次等值查询（下载页认库里没有的老番用，见 bgm_stub.name_fold）
+CREATE INDEX IF NOT EXISTS idx_bgm_stub_fold ON bgm_stub(name_fold);
+
 CREATE TABLE IF NOT EXISTS mikan_scan (
   id         INTEGER PRIMARY KEY CHECK (id = 1),
   watermark  INTEGER NOT NULL,   -- 已确认过的最大 mikan id

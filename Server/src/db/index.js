@@ -125,7 +125,11 @@ const MIGRATIONS = {
     { column: 'series_named_at', ddl: 'INTEGER' },
   ],
   // 关系表 v2：每条 id 的「1 跳关系问过没有」—— 决定走链时要不要为它打一次上游
-  bgm_stub: [{ column: 'relations_checked_at', ddl: 'INTEGER' }],
+  bgm_stub: [
+    { column: 'relations_checked_at', ddl: 'INTEGER' },
+    // 归一化名字：归档目录名找作品用（dump 全量导入后这张表就是 BGM 动画索引）
+    { column: 'name_fold', ddl: 'TEXT' },
+  ],
 }
 
 function ensureColumns() {
