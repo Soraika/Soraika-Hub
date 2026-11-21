@@ -1,7 +1,7 @@
 <template>
-  <section class="dump-panel">
+  <section class="card-surface dump-card">
     <header class="dump-head">
-      <h2 class="dump-title"><IconCloudDownload :size="16" /> 手动更新</h2>
+      <h2 class="dump-title"><IconCloudDownload :size="19" /> 离线数据 · 手动更新</h2>
       <span class="pill" :class="pillClass">{{ pillText }}</span>
       <p class="dump-hint">
         Bangumi 每周三更新一版全站数据（约 450MB）。导一次就能把档案、系列关系、全站动画索引全部对齐 ——
@@ -47,11 +47,11 @@
       </p>
 
       <div class="dump-actions">
-        <button class="mini-btn primary" type="button" :disabled="busy" @click="start(false)">
+        <button class="dump-btn primary" type="button" :disabled="busy" @click="start(false)">
           <IconRefresh :size="13" /> {{ busy ? '进行中…' : '检查并更新' }}
         </button>
         <button
-          class="mini-btn"
+          class="dump-btn"
           type="button"
           :disabled="busy"
           title="忽略「这版已导过」，重新下载并导入一遍（改了导入逻辑之后用）"
@@ -185,10 +185,10 @@ onBeforeUnmount(stopPoll)
 </script>
 
 <style scoped>
-.dump-panel {
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
+/* 与 PromptEditor 同一套做法：分组卡片之后的**独立卡片**（不参与上面那套分组保存）。
+   这里不是分组内小节 —— 手动更新是一个动作，塞进设置卡里会让人以为它跟「保存」有关。 */
+.dump-card {
+  padding: 20px 24px 18px;
 }
 /* 组内小节：标题比卡片标题小一号，与 .section-title 同一观感 */
 .dump-head {
@@ -196,7 +196,9 @@ onBeforeUnmount(stopPoll)
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 4px 10px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
 }
 .dump-title {
   display: flex;
@@ -204,8 +206,8 @@ onBeforeUnmount(stopPoll)
   gap: 6px;
   font-family: var(--font-body);
   color: var(--text-primary);
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: 0.98rem;
+  font-weight: 700;
 }
 .dump-title svg {
   color: var(--accent);
@@ -283,5 +285,37 @@ onBeforeUnmount(stopPoll)
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+/* 按钮样式写在这里：SettingsPage 的 .mini-btn 是 scoped，组件里拿不到 */
+.dump-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: color var(--dur-fast), border-color var(--dur-fast);
+}
+.dump-btn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.dump-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.dump-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-invert);
+}
+.dump-btn.primary:hover:not(:disabled) {
+  color: var(--text-invert);
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
 }
 </style>
