@@ -147,7 +147,13 @@ export async function getAnimeSeries(id, { log = logger } = {}) {
   // 单成员系列不值得显示「系列」chip（点开只有它自己）→ 与「没算过」一样返回 null
   if (members.length < 2) return null
   // 根名 / 命名风格只写在「代表行」上（代表行的 id 就是 series_id）
-  const representative = members.find((m) => m.id === row.series_id)
+  /* 代表行 = series_id 指的那一行（约定：根名 / 命名风格写在它身上）。
+     兜底两个：① 那一行已不在库（骨架行被清）→ 找第一个有根名的；
+     ② 都没有 → null，前端显示「同系列」。 */
+  const representative =
+    members.find((m) => m.id === row.series_id) ||
+    members.find((m) => m.series_root_title || m.naming_style) ||
+    null
 
   /*
    * 根名 / 命名风格：**点开才算**（设计稿 §4.1）。

@@ -433,6 +433,12 @@ try {
   check(dumpStatus.body.data.stored && 'importedAt' in dumpStatus.body.data.stored, '带持久记录（上次导入的是哪一版）')
   check(job.running === false, '全新进程刚起来时不处于运行态')
 
+  /* ── 重算系列（清 series_checked_at）──────────────────────────────────── */
+  console.log('\n— 重算系列')
+  const rebuild = await call('POST', '/api/series/rebuild', {})
+  check(rebuild.res.ok && typeof rebuild.body?.data?.reset === 'number', 'POST /api/series/rebuild → 200 且回报清空行数', `reset=${rebuild.body?.data?.reset}`)
+  check(rebuild.body?.data?.reset >= 0, '清空行数是数字（空库时为 0，不是 null）')
+
   console.log(failed ? `\n✗ 失败 ${failed} 项` : '\n✓ 全部通过')
   process.exitCode = failed ? 1 : 0
 } catch (err) {

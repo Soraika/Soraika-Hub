@@ -9,6 +9,7 @@
  *   POST   /api/settings/import       `{ payload: <导出的 JSON>, mode: 'merge'|'replace' }`
  *   GET    /api/dump/status           离线 dump 更新任务的实时状态（进度 / 上次结果 / 失败原因）
  *   POST   /api/dump/update           手动触发一次 dump 更新（`{ force }`；正在跑时返回已在跑）
+ *   POST   /api/series/rebuild        重算全部系列（清 `series_checked_at`，worker 立刻接手）
  * 业务在 api/pages/settings.js，这里只做参数整形与信封。
  */
 import { Router } from 'express'
@@ -21,7 +22,9 @@ import {
   updateSettings,
 } from './../api/pages/settings.js'
 import { getDumpJobState, startDumpUpdate } from './../jobs/dump-job.js'
+import { clearSeriesChecked } from './../db/anime.js'
 import { getDumpState } from './../db/dump.js'
+import { getWorkerState } from './../jobs/worker.js'
 import { fail } from './../lib/errors.js'
 
 export const settingsRouter = Router()
@@ -151,6 +154,28 @@ settingsRouter.post('/dump/update', (req, res, next) => {
     const { started, state } = startDumpUpdate({ force, trigger: 'manual', log: req.log })
     req.log?.info?.({ started, force }, 'dump.manual trigger')
     res.json({ ok: true, data: { started, job: state } })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/series/rebuild —— 重算全部系列
+ * ---------------------------------------------------------------------------
+ * 什么时候需要：`series_checked_at` 是「算过就别再算」的队列谓词，所以**算错的结果会一直躺着**。
+ * 典型：某一季先入库、自成一系列（series_id 指向它自己），后来前作入库时因为「首写优先」
+ * 被挡在外面 → 同一部作品裂成两个系列，前端只显示人多的那个 → 用户看到「S01 是第二季」。
+ * 修好合并逻辑之后，这些旧行不会自动重算（都 checked 过了），必须清一次。
+ *
+ * 只清 `series_checked_at`（不动 series_id / 季位）：worker 下一轮会重新走链，
+ * 链是最强证据，裂片会被合并、季位整体重排。清空是安全的 —— 根名 / 命名风格只补空。
+ */
+settingsRouter.post('/series/rebuild', (req, res, next) => {
+  try {
+    const reset = clearSeriesChecked()
+    const { series } = getWorkerState()
+    req.log?.info?.({ reset }, 'series.rebuild queued')
+    res.json({ ok: true, data: { reset, pending: series?.pending ?? null } })
   } catch (err) {
     next(err)
   }

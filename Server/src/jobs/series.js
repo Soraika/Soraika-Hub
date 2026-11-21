@@ -246,7 +246,24 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
 
   const rep = pickRepresentative(chain, libMap)
   const repRow = rep ? libMap.get(rep.id) : null
-  const seriesId = repRow?.series_id || repRow?.id || row.id
+  /**
+   * series_id 的取法：**优先复用链上任何已在库成员已有的 series_id**
+   * -------------------------------------------------------------------------
+   * 以前只看代表行（`repRow?.series_id || repRow?.id`）。这个值一旦是「代表行自己的 id」，
+   * 就会随「谁先入库」而变：某一季先入库并算过一次 → series_id = 它自己；
+   * 后来前作入库时代表行变成前作 → series_id = 前作 → 与旧值不同 →
+   * `writeMember` 的「首写优先」把新成员挡在外面 → 同一部作品裂成两个系列，
+   * 一个 3 人、一个 1 人。前端「系列」只显示 ≥2 人的那个，于是看到的就是
+   * **S01 是第二季**（第一季凭空消失），实测《药屋少女的呢喃》就是这样。
+   * 复用之后 series_id 稳定，后来者自动并入同一系列，`renumber` 再把季位重排一遍。
+   */
+  const libChain = [...chain.map((n) => n.id), ...extras.map((e) => e.id)]
+    .map((id) => libMap.get(id))
+    .filter(Boolean)
+  const inheritedSeriesId = libChain.map((r) => r.series_id).find((v) => v != null) ?? null
+  const seriesId = inheritedSeriesId ?? repRow?.id ?? row.id
+  /** 复用了别人的 series_id → 这条系列可能已经有一份旧季位，本趟必须整体重排 */
+  const renumber = inheritedSeriesId != null
 
   /* ③ 根名/风格：随便哪个成员身上有就复用（**零 AI 调用**）；一个都没有才问 AI。
      不能只看代表行 —— 补了骨架行之后代表行会变成新行，它身上没有根名。 */
@@ -275,10 +292,17 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
    * 否则后算的会把对方的 `series_id` / `series_index` 覆盖成混合状态（实测踩过：
    * 混出「两个 index=1」的系列）。这里只记录冲突，不报错 —— 属于可接受的数据现实。
    */
-  const writeMember = (libRow, meta, { position = false } = {}) => {
-    if (libRow.series_id && String(libRow.series_id) !== String(seriesId)) {
+  const writeMember = (libRow, meta, { position = false, force = false } = {}) => {
+    if (!force && libRow.series_id && String(libRow.series_id) !== String(seriesId)) {
       conflicts.push({ id: libRow.id, kept: libRow.series_id, wanted: seriesId })
       return
+    }
+    /* force = 这一行就在本次的**正传链**上：链是最强证据，它的旧 series_id 一定是裂片
+       （历史遗留：某一季先入库、自成一系列）。礼让只会让裂片永久存在 —— 实测
+       《药屋少女的呢喃》裂成「第二季 1 人系」+「第三季 2 人系」，前端两个都不完整。
+       番外（extras）仍然礼让：它们本来就可能被两条链同时挂着。 */
+    if (force && libRow.series_id && String(libRow.series_id) !== String(seriesId)) {
+      conflicts.push({ id: libRow.id, merged: libRow.series_id, into: seriesId })
     }
     // 正传链位 / 番外类别 → **覆盖**写（重排季位要生效）；根名等 → COALESCE 写（不抹掉已有值）
     try {
@@ -331,6 +355,10 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
    * 需要整体重排时（链上补进了新的头部）走一次性修复：清空该系列的系列字段让它重算，
    * 第一趟走链会把季位一次性写对。
    */
+  /* 复用已有 series_id 时先把整条系列的季位清空：季位上有部分唯一索引，
+     不先清就会撞约束（`idx_anime_series_pos`），结果是「想重排却一条都没写进去」。 */
+  if (renumber) resetSeriesPositions(seriesId)
+
   for (const node of chain) {
     const libRow = libMap.get(node.id)
     if (!libRow) continue
@@ -345,6 +373,9 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
             seriesRelation: position === 1 ? null : '续集', // 链头没有「相对前驱」的关系
             seriesCheckedAt: now,
           },
+      // 重排时**覆盖**写（否则 COALESCE 语义会让旧季位留下来，等于没重排）；
+      // force：正传链上的行允许改写它旧的 series_id（裂片合并）
+      { ...(renumber ? { position: true } : {}), force: true },
     )
   }
   for (const item of extras) {
@@ -374,12 +405,23 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
     repRow?.title_bgm_origin ||
     ''
   if (repRow) {
-    writeMember(repRow, {
+    const styleMeta = {
       // 全剧场版系列强制 volume：归档目录是「哆啦A梦剧场版/01 大雄的恐龙」，不是 S01
       namingStyle: movieOnly ? 'volume' : ai.namingStyle || rootRow?.naming_style,
       seriesRootTitle: rootName,
       seriesCheckedAt: now,
-    })
+    }
+    writeMember(repRow, styleMeta)
+    /* 复用了别人的 series_id 时，「代表行」是 series_id 指的那一行（不是你算出来的链头）。
+       根名 / 风格要**两边都写**，否则读取端按 `id === series_id` 找代表行会拿到空值
+       （实测：链头写上了「药屋少女的呢喃」，前端却显示「同系列」）。COALESCE 语义不会抹掉已有值。 */
+    if (String(seriesId) !== String(repRow.id)) {
+      try {
+        setSeriesMeta(Number(seriesId), { ...styleMeta, seriesId })
+      } catch {
+        /* series_id 对应的行可能已不在库（骨架行被清）→ 忽略，读取端还有兜底 */
+      }
+    }
   }
   // 全剧场版系列：按**整条系列**重排（本次走链没看到的成员也要归位，见函数注释）
   if (movieOnly) await renumberMovieSeries(seriesId, { log })
@@ -394,6 +436,7 @@ async function fillSeriesOnce(row, { log = logger } = {}) {
       extras: extras.length,
       inLibrary: libMap.size,
       stubs: stubs.length,
+      renumbered: renumber,
       movieOnly,
       namingStyle: movieOnly ? 'volume' : ai.namingStyle || rootRow?.naming_style || null,
       rootTitle: rootName,

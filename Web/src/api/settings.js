@@ -55,3 +55,13 @@ export const fetchDumpStatus = () => apiGet('/api/dump/status', { timeout: 10000
  * @returns {Promise<{ started:boolean, job:object }>} 已在跑时 started=false（不是错误）
  */
 export const startDumpUpdate = (force = false) => apiPost('/api/dump/update', { force }, { timeout: 15000 })
+
+/**
+ * 重算全部系列（清 `series_checked_at`，后台 worker 立刻接手）
+ * ---------------------------------------------------------------------------
+ * 为什么需要这个按钮：系列是「算过就不重算」的，所以**算错的结果会一直留着**。
+ * 典型症状：点开某一部，系列里少了第一季（S01 变成第二季）。用这个重跑一遍，
+ * 走链会按上游关系把裂开的几季合并、季位重排。
+ * @returns {Promise<{ reset:number, pending:number|null }>} reset = 被清空重算的行数
+ */
+export const rebuildSeries = () => apiPost('/api/series/rebuild', {}, { timeout: 30000 })

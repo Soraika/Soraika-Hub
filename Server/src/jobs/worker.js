@@ -277,22 +277,41 @@ async function loop(log) {
     // AI 没配就整段跳过；失败按连续失败次数指数退避（5s→10s→… 最多 10 分钟），
     // 免得上游抖动时一秒打三次 AI 白花钱。
     if (config.ai.enabled && Date.now() >= seriesCooldownUntil) {
-      const seriesRow = claimNextSeriesPending()
-      if (seriesRow) {
-        const outcome = await fillSeriesFor(seriesRow, { log })
-        workerState.series.processed++
-        if (outcome === 'done') {
-          workerState.series.done++
-          seriesFailStreak = 0
-          seriesCooldownUntil = 0
-        } else {
+      /* 一轮算**几条**而不是一条
+         ---------------------------------------------------------------
+         每条的成本主要是「一次 AI 调用」，串行等它返回时 CPU 全空着 ——
+         实测串行 ~10 条/分钟，1177 条要两小时（用户点了「重算系列」看到进度几乎不动）。
+         并发之后瓶颈才回到 AI 本身。默认 3：与设置页 ai.concurrency 的默认值一致，
+         再高只会在 AI 客户端内部排队，收益递减。 */
+      const SERIES_PER_ROUND = Math.max(1, Math.min(6, Number(config.ai.concurrency) || 3))
+      const batch = []
+      for (let i = 0; i < SERIES_PER_ROUND; i++) {
+        const next = claimNextSeriesPending()
+        if (!next) break
+        batch.push(next)
+      }
+      if (batch.length) {
+        // fillSeriesFor 内部自己 try/catch（失败返回 'skipped'），这里不会再抛
+        const outcomes = await Promise.all(batch.map((seriesRow) => fillSeriesFor(seriesRow, { log })))
+        let failed = 0
+        outcomes.forEach((outcome, index) => {
+          workerState.series.processed++
+          if (outcome === 'done') {
+            workerState.series.done++
+            return
+          }
           // 'skipped'（AI 这次失败）/ 'ai-disabled' / 'no-bgm'：都放回队列，下轮再看
           workerState.series.skipped++
-          releaseSeries(seriesRow.id)
-          if (outcome === 'skipped') {
-            seriesFailStreak++
-            seriesCooldownUntil = Date.now() + Math.min(600000, 5000 * 2 ** seriesFailStreak)
-          }
+          failed++
+          releaseSeries(batch[index].id)
+        })
+        /* 退避只在**整批都没成**时触发：一批里有进展说明上游是好的，不该因为个别失败而卡住整轮 */
+        if (failed && failed === batch.length) {
+          seriesFailStreak++
+          seriesCooldownUntil = Date.now() + Math.min(600000, 5000 * 2 ** seriesFailStreak)
+        } else if (failed < batch.length) {
+          seriesFailStreak = 0
+          seriesCooldownUntil = 0
         }
         workerState.series.pending = countSeriesPending()
         workerState.series.doneTotal = countSeriesDone()

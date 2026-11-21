@@ -61,6 +61,26 @@
         </button>
         <span v-if="busy" class="dump-note">可以离开这个页面，任务在后台继续跑</span>
       </div>
+
+      <!-- 配套动作：dump 换了一版之后，系列链可能算出新的成员/顺序。
+           系列是「算过就不重算」的，所以旧的（甚至裂开的）结果不会自己更新 ——
+           这里给一个显式重算入口，并在旁边说清它解决的是什么。 -->
+      <div class="dump-sub">
+        <div class="dump-sub-head">
+          <h3 class="dump-sub-title">重算系列</h3>
+          <span v-if="pendingSeries != null" class="dump-sub-meta">待算 {{ pendingSeries }} 部</span>
+        </div>
+        <p class="dump-note">
+          按上传关系重新走一遍链并重排季位。用在你发现「系列里少了一季」或「S01 是第二季」时 ——
+          那是旧结果留下来的裂片，重算会把它们合并。根名不会被覆盖。
+        </p>
+        <div class="dump-actions">
+          <button class="dump-btn" type="button" :disabled="rebuilding" @click="rebuild">
+            <IconRecycle :size="13" /> {{ rebuilding ? '已排队…' : '重算系列' }}
+          </button>
+          <span v-if="rebuildNote" class="dump-note ok">{{ rebuildNote }}</span>
+        </div>
+      </div>
     </template>
   </section>
 </template>
@@ -76,15 +96,19 @@
  * 轮询在组件卸载时清掉 —— 否则切页之后还在后台打接口。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { IconCloudDownload, IconRefresh, IconRestore } from '@tabler/icons-vue'
+import { IconCloudDownload, IconRecycle, IconRefresh, IconRestore } from '@tabler/icons-vue'
 import StateBlock from '@/components/ui/StateBlock.vue'
-import { fetchDumpStatus, startDumpUpdate } from '@/api/settings'
+import { fetchDumpStatus, rebuildSeries, startDumpUpdate } from '@/api/settings'
 
 const POLL_MS = 2000
 
 const status = ref(null)
 const loading = ref(true)
 const error = ref('')
+const rebuilding = ref(false)
+const rebuildNote = ref('')
+/** 系列队列还剩多少（/api/health 里 worker.series.pending，重算后看它掉下去就是进度） */
+const pendingSeries = ref(null)
 let timer = null
 
 const job = computed(() => status.value?.job || { phase: 'idle', progress: {}, running: false })
@@ -148,6 +172,27 @@ async function load() {
     error.value = err?.message || '读取失败'
   } finally {
     loading.value = false
+  }
+  // 系列队列进度：单独取（health 是公共接口，失败不影响上面这块）
+  try {
+    const res = await fetch('/api/health').then((r) => r.json())
+    pendingSeries.value = res?.data?.worker?.series?.pending ?? null
+  } catch {
+    pendingSeries.value = null
+  }
+}
+
+async function rebuild() {
+  rebuilding.value = true
+  rebuildNote.value = ''
+  try {
+    const out = await rebuildSeries()
+    rebuildNote.value = `已排队 ${out.reset} 部，后台会自己跑完`
+    pendingSeries.value = out.pending ?? pendingSeries.value
+  } catch (err) {
+    error.value = err?.message || '重算失败'
+  } finally {
+    rebuilding.value = false
   }
 }
 
@@ -317,5 +362,29 @@ onBeforeUnmount(stopPoll)
   color: var(--text-invert);
   border-color: var(--accent-hover);
   background: var(--accent-hover);
+}
+
+/* 配套动作小节（与上面的「更新」分开：一个是拉数据，一个是修已有数据） */
+.dump-sub {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+.dump-sub-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.dump-sub-title {
+  font-family: var(--font-body);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.dump-sub-meta {
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
 }
 </style>
