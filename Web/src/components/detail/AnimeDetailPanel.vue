@@ -1026,22 +1026,34 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     top: 0;
     bottom: 0;
     right: 0;
-    width: 100vw !important;
+    width: 100% !important;
     min-width: 0 !important;
-    max-width: 100vw;
-    height: 100vh;
+    max-width: 100%;
+    height: 100%;
     z-index: 90;
     transform: translateX(100%);
     transition: transform var(--dur) var(--ease-out);
+    /* 抽屉铺满时不要那根左边线（它只在桌面「挤窄主区」时有意义） */
+    border-left: 0;
   }
   .panel.open {
     transform: translateX(0);
     box-shadow: none;
   }
+  /* 内容层必须跟着铺满：它平时是固定 --panel-w（桌面 340px）——
+     手机 390px 宽时就会剩下一条 50px 的空带，看着像"面板没贴到右边"。
+     这也是唯一一处**不能**保留固定宽度的地方：宽度动画在手机上不存在（改成位移了）。 */
+  .panel-inner {
+    width: 100%;
+    /* 顶部多留一点给关闭按钮，底部留出 iPhone 的 home indicator */
+    padding: calc(20px + env(safe-area-inset-top, 0px)) 16px calc(28px + env(safe-area-inset-bottom, 0px));
+  }
   /* 关闭按钮要够大、够好点 */
-  .panel :deep(.close-btn) {
+  .close-btn {
     width: 36px;
     height: 36px;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    right: 12px;
   }
 }
 </style>
