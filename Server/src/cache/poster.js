@@ -174,30 +174,56 @@ export async function fetchPoster(id, src, { timeoutMs = 20000, retries = 2 } = 
  * @param {{ log?: object, slowMs?: number }} [options]
  * @returns {Promise<{ buf: Buffer, ext: string, rel: string, src: string, tried: string[] } | null>}
  */
-export async function downloadAndSaveAny(id, row, { log = logger, timeoutMs = 6000 } = {}) {
+export async function downloadAndSaveAny(id, row, { log = logger, timeoutMs = 6000, mirrorTimeoutMs = 4000 } = {}) {
   const tried = []
-  const sources = await candidateSources(row, { resolveBgm: (item) => bgmCoverUrl(item, { log }) })
-  for (const src of sources) {
+  const statics = staticCandidates(row)
+
+  /* Bangumi 封面**与镜像探测并行**去拿：
+     串行的话最坏情况是「3 个镜像各超时 4s + Bangumi 一次 15s」= 30 秒以上（容器里实测 35s），
+     并行之后等的是两者里慢的那个，不是和。 */
+  const bgmPromise = row?.bgm_id ? bgmCoverUrl(row, { log }).catch(() => null) : Promise.resolve(null)
+
+  const attempt = async (src, timeout) => {
+    const { buf, ext } = await fetchPoster(`${id}:${src}`, src, { timeoutMs: timeout, retries: 0 })
+    const rel = `${hashOf(src)}${ext}`
+    writeFileSync(join(cacheDir, rel), buf)
+    /* 图源变了（比如 Mikan 那条 404、改用 Bangumi 封面）→ 路径一起换，
+       顺手把旧缓存文件留着不管（按地址哈希命名，不会误命中） */
+    setPosterSource(id, { src, path: rel })
+    if (src !== row?.poster_src) {
+      log.info({ id, from: row?.poster_src || null, to: src, tried: tried.length }, 'img.src 换源成功')
+    }
+    return { buf, ext, rel, src, tried }
+  }
+
+  /* ① 静态候选（库里那条 + 各镜像）：镜像给更短的超时 —— 同一个图床换 host，
+     4 秒还不回基本就是不通，没必要等 6 秒 */
+  for (const src of statics) {
     if (isBroken(src)) {
       tried.push(`${src} (跳过:刚失败过)`)
       continue
     }
     try {
-      const { buf, ext } = await fetchPoster(`${id}:${src}`, src, { timeoutMs, retries: 0 })
-      const rel = `${hashOf(src)}${ext}`
-      writeFileSync(join(cacheDir, rel), buf)
-      /* 图源变了（比如 Mikan 那条 404、改用 Bangumi 封面）→ 路径一起换，
-         顺手把旧缓存文件留着不管（按地址哈希命名，不会误命中） */
-      setPosterSource(id, { src, path: rel })
-      if (src !== row?.poster_src) {
-        log.info({ id, from: row?.poster_src || null, to: src, tried: tried.length }, 'img.src 换源成功')
-      }
-      return { buf, ext, rel, src, tried }
+      return await attempt(src, statics[0] === src ? timeoutMs : mirrorTimeoutMs)
     } catch (err) {
       markBroken(src)
       tried.push(`${src} (${String(err?.message || err).slice(0, 60)})`)
     }
   }
+
+  /* ② Bangumi 封面（前面全挂才用；这时它通常早就拿回来了，几乎不用等） */
+  const bgmSrc = await bgmPromise
+  if (bgmSrc && !isBroken(bgmSrc)) {
+    try {
+      return await attempt(bgmSrc, timeoutMs)
+    } catch (err) {
+      markBroken(bgmSrc)
+      tried.push(`${bgmSrc} (${String(err?.message || err).slice(0, 60)})`)
+    }
+  } else if (bgmSrc) {
+    tried.push(`${bgmSrc} (跳过:刚失败过)`)
+  }
+
   return null
 }
 
