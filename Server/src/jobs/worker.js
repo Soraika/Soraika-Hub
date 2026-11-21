@@ -107,6 +107,8 @@ let wake = null
  * 跑过一次就把 `lastDailyEnumAt` 推到当前时间，第二天到点才会再跑。
  */
 let lastDailyEnumAt = 0
+/** 每日枚举是否正在跑（silent 模式不占 map-scan 的 state.running，所以自己记一个） */
+let dailyEnumInFlight = false
 function maybeDailyEnumerate(log) {
   /* 空库时**不**每日枚举：那说明还没做过首次铺底（用户会自己去点「枚举全部季度」），
      启动就在后台打 12 页上游既让人意外，也让「验收脚本跑在一个干净库上」变成联网测试。 */
@@ -114,19 +116,28 @@ function maybeDailyEnumerate(log) {
   const boundary = lastDailyBoundary(new Date(), config.worker?.dailyAt || '04:00')
   if (lastDailyEnumAt >= boundary) return
   if (getMapScanState().running) return // 手动正在跑，不插队
+  if (dailyEnumInFlight) return // 自己上一次还没跑完
   lastDailyEnumAt = Date.now()
   const year = new Date().getFullYear()
-  const { started, state, done } = startSeasonEnum({
+  const { started, done } = startSeasonEnum({
     fromYear: year - 2,
     toYear: year + 1,
     trigger: 'daily',
+    silent: true,
     log,
   })
   if (!started) return
-  log.info({ fromYear: year - 2, toYear: year + 1, pages: state.total }, 'worker.enum daily start')
+  dailyEnumInFlight = true
+  log.info({ fromYear: year - 2, toYear: year + 1 }, 'worker.enum daily start')
   void done.then(
-    (res) => log.info({ enumerate: res?.enumerate }, 'worker.enum daily done'),
-    (err) => log.warn({ err: err?.message }, 'worker.enum daily fail'),
+    (res) => {
+      dailyEnumInFlight = false
+      log.info({ pages: res?.pages, newIds: res?.newIds, items: res?.items }, 'worker.enum daily done')
+    },
+    (err) => {
+      dailyEnumInFlight = false
+      log.warn({ err: err?.message }, 'worker.enum daily fail')
+    },
   )
 }
 

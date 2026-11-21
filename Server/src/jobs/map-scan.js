@@ -264,8 +264,22 @@ export const sweepWatermark = () => Math.max(getScanWatermark(), maxScannedMikan
  * 所以界面上把枚举放在前面。跑完枚举再跑「扫描并补齐」就是完整的「找齐 → 补全」。
  * @param {{ fromYear?: number, toYear?: number, trigger?: 'manual'|'daily', log?: object }} [options]
  */
-export function startSeasonEnum({ fromYear, toYear, trigger = 'manual', log = logger } = {}) {
+export function startSeasonEnum({ fromYear, toYear, trigger = 'manual', silent = false, log = logger } = {}) {
   if (state.running) return { started: false, state: getMapScanState(), done: null }
+
+  /* silent = 后台任务（每日那趟）：照常干活，但**不占用界面上的那份状态**。
+     否则用户手动枚举刚跑完，界面上的数字会被几分钟后的后台任务覆盖成
+     「16 页 / 新增 0」—— 看起来像手动那次白跑了。 */
+  if (silent) {
+    const done = runSeasonEnum({ fromYear, toYear, log })
+      .then((res) => (log.info?.({ ...res, silent: true }, 'enum.background done'), res))
+      .catch((err) => {
+        log.warn?.({ err: err?.message }, 'enum.background fail')
+        throw err
+      })
+    done.catch(() => {})
+    return { started: true, state: getMapScanState(), done, silent: true }
+  }
 
   state.running = true
   state.trigger = trigger
