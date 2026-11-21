@@ -445,7 +445,7 @@ try {
   const mapJob = mapStatus.body?.data?.job
   check(mapStatus.res.ok && mapJob && typeof mapJob.phase === 'string', 'GET /api/map/status → 200 且带 job 相位', mapJob?.phase)
   check(
-    ['idle', 'importing', 'scanning', 'done', 'failed'].includes(mapJob.phase),
+    ['idle', 'importing', 'scanning', 'enumerating', 'sweeping', 'done', 'failed'].includes(mapJob.phase),
     '相位是有限枚举（界面据此显示文案）',
     mapJob.phase,
   )
@@ -461,7 +461,35 @@ try {
     }
     return null
   })()
-  check(mapDone?.phase === 'done' || mapDone?.phase === 'idle', '扫完（或空库直接完成）会停在 done', mapDone?.phase)
+  check(
+    ['done', 'idle', 'enumerating', 'sweeping'].includes(mapDone?.phase),
+    '扫完会停在 done；被别的任务占着（枚举/扫描中）也说得过去',
+    mapDone?.phase,
+  )
+
+  /* ── 季度枚举（只验接口形状；不打真上游 —— 验收不该依赖网络）──────────── */
+  console.log('\n— 季度枚举')
+  const enumStatus = await call('GET', '/api/map/status')
+  check(typeof enumStatus.body?.data?.counts?.watermark === 'number', 'map/status 带「已扫到 #NNNN」水位', String(enumStatus.body?.data?.counts?.watermark))
+  /* 起一次极小范围（单年单季会有 4 页；这里只验「能起来 + 相位对」，随后立刻不等待） */
+  const enumStart = await call('POST', '/api/map/enumerate', { fromYear: 2014, toYear: 2014 })
+  check(enumStart.res.ok && typeof enumStart.body?.data?.started === 'boolean', 'POST /api/map/enumerate → 200 且回报是否起来')
+  if (enumStart.body?.data?.started) {
+    check(enumStart.body.data.job.phase === 'enumerating', '刚起来时相位是 enumerating', enumStart.body.data.job.phase)
+    /* 等它自己跑完（2014 年只有 4 页，通常 <10s）；超时不算失败，避免验收依赖上游速度 */
+    const enumDone = await (async () => {
+      for (let i = 0; i < 60; i++) {
+        const now = await call('GET', '/api/map/status')
+        if (!now.body?.data?.job?.running) return now.body.data.job
+        await new Promise((r) => setTimeout(r, 500))
+      }
+      return null
+    })()
+    check(enumDone === null || ['done', 'failed'].includes(enumDone.phase), '跑完会停在 done/failed（不会卡在 running）', enumDone?.phase ?? '（超时未完成，不算失败）')
+  }
+  /* 非法年份被夹住：不能把 1990 之类传下去 */
+  const enumClamp = await call('POST', '/api/map/enumerate', { fromYear: 1900, toYear: 1901 })
+  check(enumClamp.body?.data?.job?.enumerate?.pages === 0 || enumClamp.body?.data?.job?.enumerate?.fromYear >= 2014, 'fromYear 被夹到 2014 起（Mikan 更早没有数据）', String(enumClamp.body?.data?.job?.enumerate?.fromYear))
 
   console.log(failed ? `\n✗ 失败 ${failed} 项` : '\n✓ 全部通过')
   process.exitCode = failed ? 1 : 0

@@ -10,6 +10,7 @@
  * 以后要换数据源 / 加缓存 / 加轮询，只改这一个文件。
  */
 import { computed, ref } from 'vue'
+import { fillCards } from '@/api/anime'
 import { fetchHomeSchedule } from '@/api/home'
 import { SEASONS } from '@/utils/season'
 
@@ -100,6 +101,60 @@ export function useSchedule() {
     }
   }
 
+  /**
+   * 渐进填充：把「还没有评分」的卡片分批送去后端补一遍，补到就合并进当前数据
+   * ---------------------------------------------------------------------------
+   * 为什么需要：首页的评分来自 Bangumi，而评分的入口是「mikan_id → bgm_id → 条目」。
+   * 新番季刚扫进来时大量作品还没解析出 bgm_id，卡片就是「暂无评分 / 没评论数」——
+   * 以前只能等后台 worker 慢吞吞地过队列（几十条/分钟），用户看到的就是「一屏都没数据」。
+   *
+   * 这里做三件事：
+   *   ① 先把**所有**缺分的 id 收集起来（一屏 85 张就 85 个）
+   *   ② 每批 12 个顺序发（后端一次最多 24，内部 3 并发）
+   *   ③ 每批回来立刻合并进 `data.days`，页面无需重渲染整体，卡片自己就填上了
+   * 合并用 `id` 对齐、只覆盖「补到值」的字段：补不成的保持原样（继续显示「暂无评分」），
+   * 不会把已经有的标题/海报弄丢。
+   *
+   * 只在前端跑（不占后端 worker 队列）：用户看到的页面优先补齐 —— 这就是「优先在线」。
+   * @param {{ signal?: {cancelled:boolean} }} [options] 切季时用来中止后续批次
+   */
+  async function fillMissing({ signal } = {}) {
+    const days = data.value?.days
+    if (!Array.isArray(days)) return { filled: 0 }
+    const ids = []
+    for (const day of days) {
+      for (const item of day.items || []) {
+        if (item?.id && (item.score == null || !item.ratingText)) ids.push(item.id)
+      }
+    }
+    if (!ids.length) return { filled: 0 }
+
+    const BATCH = 12
+    let filled = 0
+    for (let i = 0; i < ids.length; i += BATCH) {
+      if (signal?.cancelled) break
+      try {
+        const res = await fillCards(ids.slice(i, i + BATCH))
+        for (const card of res?.items || []) {
+          const target = days.flatMap((d) => d.items || []).find((it) => it.id === card.id)
+          if (!target) continue
+          target.score = card.score ?? target.score
+          target.scoreText = card.scoreText || target.scoreText
+          target.ratingText = card.ratingText || target.ratingText
+          target.metaText = card.metaText || target.metaText
+          target.poster = card.poster || target.poster
+          target.bgmId = card.bgmId ?? target.bgmId
+          filled++
+        }
+      } catch {
+        /* 这一批失败（上游抖动）→ 跳过，下一批照常；用户看到的就是「这几张还没评分」 */
+      }
+      /* 批间稍等一下：别把上游打急（也顺带让「慢慢填上」的观感自然些） */
+      await new Promise((r) => setTimeout(r, 120))
+    }
+    return { filled }
+  }
+
   /** 重试/刷新：沿用当前季；force 让后端跳过它自己的缓存 */
   function reload({ force = true } = {}) {
     return load({
@@ -115,5 +170,5 @@ export function useSchedule() {
     return load({ year, season })
   }
 
-  return { data, loading, error, uiState, load, reload, selectSeason, storedSeason, pending }
+  return { data, loading, error, uiState, load, reload, selectSeason, storedSeason, pending, fillMissing }
 }

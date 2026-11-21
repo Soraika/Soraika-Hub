@@ -80,5 +80,19 @@ export const fetchMapStatus = () => apiGet('/api/map/status', { timeout: 10000 }
  */
 export const startMapScan = (options = {}) => apiPost('/api/map/scan', options, { timeout: 20000 })
 
+/**
+ * 向前扫描一段（水位推进）—— 「往后多少位是空就算没有更新了」
+ * 水位存在库里（`mikan_scan.watermark`），所以这个动作可以每天点一次，也可以交给每日任务。
+ * @param {number} [span] 本次扫多少个 id（默认 300，服务端夹在 20~3000）
+ */
+export const sweepMapIds = (span = 300) => apiPost('/api/map/sweep', { span }, { timeout: 30000 })
+
+/**
+ * 季度枚举 —— 用排期页一次性把 mikan_id 找齐（最快的一条路）
+ * 56 页 ≈ 1 分钟，拿到全站该有的 mikan_id，顺带把历史季度的排期写进库。
+ * @param {{ fromYear?: number, toYear?: number }} [range]
+ */
+export const enumerateSeasons = (range = {}) => apiPost('/api/map/enumerate', range, { timeout: 30000 })
+
 /** 叫停（正在处理的那一条会跑完） */
 export const stopMapScan = () => apiPost('/api/map/scan', { stop: true }, { timeout: 10000 })

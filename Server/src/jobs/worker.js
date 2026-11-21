@@ -33,6 +33,8 @@ import {
 import { logger } from './../lib/logger.js'
 import { enrichOne, lastDailyBoundary, refreshStaleOne } from './enrich.js'
 import { getDumpJobState, startDumpUpdate } from './dump-job.js'
+import { countAll } from './../db/anime.js'
+import { getMapScanState, startSeasonEnum, startSweep } from './map-scan.js'
 import { fillSeriesFor } from './series.js'
 import { renameAllDownloads } from './../api/pages/downloads.js'
 
@@ -93,6 +95,40 @@ let lastRenameAt = 0
 let loopDone = null
 /** 唤醒正在休眠的循环：停机时不用干等一个 idleMs */
 let wake = null
+
+/**
+ * 每日季度枚举 —— 到点把「近几年 + 明年」的季度页刷一遍（发射后不管）
+ * ---------------------------------------------------------------------------
+ * 为什么用枚举而不是逐 id 扫描：一页排期就是整季的番剧（实测 2018 夏 108 条），
+ * 12 页 ≈ 20 秒就能确认「最近的季度有没有新番入库」；而逐 id 扫 300 个要有几百次 404。
+ * 全站第一次铺底用设置页的「枚举全部季度」（56 页 ≈ 90 秒），之后每天只需这一小段。
+ *
+ * 判据与 dump 的每日检查同一套：`lastDailyBoundary()` 给出今晚这个点的边界，
+ * 跑过一次就把 `lastDailyEnumAt` 推到当前时间，第二天到点才会再跑。
+ */
+let lastDailyEnumAt = 0
+function maybeDailyEnumerate(log) {
+  /* 空库时**不**每日枚举：那说明还没做过首次铺底（用户会自己去点「枚举全部季度」），
+     启动就在后台打 12 页上游既让人意外，也让「验收脚本跑在一个干净库上」变成联网测试。 */
+  if (!countAll()) return
+  const boundary = lastDailyBoundary(new Date(), config.worker?.dailyAt || '04:00')
+  if (lastDailyEnumAt >= boundary) return
+  if (getMapScanState().running) return // 手动正在跑，不插队
+  lastDailyEnumAt = Date.now()
+  const year = new Date().getFullYear()
+  const { started, state, done } = startSeasonEnum({
+    fromYear: year - 2,
+    toYear: year + 1,
+    trigger: 'daily',
+    log,
+  })
+  if (!started) return
+  log.info({ fromYear: year - 2, toYear: year + 1, pages: state.total }, 'worker.enum daily start')
+  void done.then(
+    (res) => log.info({ enumerate: res?.enumerate }, 'worker.enum daily done'),
+    (err) => log.warn({ err: err?.message }, 'worker.enum daily fail'),
+  )
+}
 
 /** 可被 stopWorker 立刻打断的 sleep（等待时长最长的就是 idleMs，不打断会让停机卡 30 秒） */
 function pause(ms) {
@@ -319,6 +355,15 @@ async function loop(log) {
         worked = true
         await pause(config.worker.gapMs)
       }
+    }
+
+    // ── 每日前进扫描（mikan id 水位往后推进一段）──────────────────────────
+    // 为什么放在 worker 里：`mikan_bgm_map` 只能逐页攒，而新番的 id 一直在往后长。
+    // 每天推进 300 个 id（约 1~2 分钟，4 并发）几个月就盖住全站；比一次性扫几千个稳得多 ——
+    // 也不会因为某天上游抽风而把整条链拖死。
+    // 只在不忙（没有待补档案）时跑，别和新番补齐抢上游。
+    if (!workerState.series.pending || workerState.series.pending < 20) {
+      maybeDailyEnumerate(log)
     }
 
     // ── 触发④：自动重命名队列（每分钟一次，每次最多 10 条）────────────────

@@ -147,6 +147,29 @@ async function refreshQbReady() {
 
 onMounted(refreshQbReady)
 
+/**
+ * 首页渐进填充：排期数据一到就开始补评分/评论数（分批，慢慢填）
+ * ---------------------------------------------------------------------------
+ * 为什么放在容器里而不是 HomePage：填充会改 `schedule.data`，页面只读 props。
+ * 切季时用 `signal.cancelled` 中止上一轮的后续批次，免得旧季的响应糊到新季上。
+ */
+/** 每轮填充一个票号：票号变了说明已经切季，上一轮就地停手（不用 AbortController，够用） */
+let fillToken = 0
+watch(
+  () => schedule.data.value?.season?.label,
+  async (label) => {
+    if (!label) return
+    const token = ++fillToken
+    await schedule.fillMissing({
+      signal: {
+        get cancelled() {
+          return token !== fillToken
+        },
+      },
+    })
+  },
+)
+
 /** 打开面板 = 马上要用「下载」按钮，这时确认一次最有用 */
 function onOpenAnime(payload) {
   refreshQbReady()
@@ -287,6 +310,18 @@ onMounted(() => schedule.load())
   display: grid;
   place-items: center;
   height: 100%;
+}
+
+/* ── 移动端：主区让出底部 tab 栏 ──────────────────────────────────────── */
+@media (max-width: 820px) {
+  .app-layout {
+    flex-direction: column;
+  }
+  .main-content {
+    /* 底部条是 fixed 的，这里靠 padding 让出位置（不用减高度，滚动容器的 100vh 更稳） */
+    height: calc(100vh - var(--bottom-nav-h) - env(safe-area-inset-bottom, 0px));
+    padding-bottom: 0;
+  }
 }
 </style>
 

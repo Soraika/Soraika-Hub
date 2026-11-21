@@ -2,9 +2,12 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8">
-    <link rel="icon" href="/favicon.ico" sizes="any">
-    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <!-- 文件名带 -v2：favicon 被浏览器缓存得极狠（换图后旧图标能留好几天），
+         换文件名是唯一靠得住的破击方式；保留 /favicon.ico 给直接访问兜底。 -->
+    <link rel="icon" href="/favicon-v2.ico" sizes="any">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192-v2.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v2.png">
+    <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#ffffff">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Soraika's Hub —— 自托管番剧资源管理面板">

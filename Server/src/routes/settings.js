@@ -12,6 +12,8 @@
  *   POST   /api/series/rebuild        重算全部系列（清 `series_checked_at`，worker 立刻接手）
  *   GET    /api/map/status            映射扫描（补齐 mikan→bgm 身份）的实时状态
  *   POST   /api/map/scan              手动触发一次映射扫描（先导已生成的 jsonl，再逐条补）
+ *   POST   /api/map/sweep             向前扫描一段 mikan id（「往后多少位是空就算没有更新」）
+ *   POST   /api/map/enumerate         季度枚举：用排期页一次性把 mikan_id 找齐（最快的一条路）
  * 业务在 api/pages/settings.js，这里只做参数整形与信封。
  */
 import { Router } from 'express'
@@ -28,7 +30,7 @@ import { clearSeriesChecked } from './../db/anime.js'
 import { countMapAll } from './../db/map.js'
 import { countAnimeMissingBgm } from './../db/anime.js'
 import { getDumpState } from './../db/dump.js'
-import { getMapScanState, startMapScan, stopMapScan } from './../jobs/map-scan.js'
+import { getMapScanState, startMapScan, startSeasonEnum, startSweep, stopMapScan, sweepWatermark } from './../jobs/map-scan.js'
 import { getWorkerState } from './../jobs/worker.js'
 import { fail } from './../lib/errors.js'
 
@@ -198,7 +200,7 @@ settingsRouter.get('/map/status', (req, res, next) => {
       ok: true,
       data: {
         job: getMapScanState(),
-        counts: { map: countMapAll(), missingBgm: countAnimeMissingBgm() },
+        counts: { map: countMapAll(), missingBgm: countAnimeMissingBgm(), watermark: sweepWatermark() },
       },
     })
   } catch (err) {
@@ -219,6 +221,44 @@ settingsRouter.post('/map/scan', (req, res, next) => {
     if (stop) return res.json({ ok: true, data: { stopped: stopMapScan(), job: getMapScanState() } })
     const { started, state } = startMapScan({ limit, trigger: 'manual', log: req.log })
     req.log?.info?.({ started, limit }, 'mapscan.manual trigger')
+    res.json({ ok: true, data: { started, job: state } })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/map/sweep —— 向前扫描一段
+ * ---------------------------------------------------------------------------
+ * `span` 默认 300（约 1~2 分钟，4 并发）。水位存在 `mikan_scan.watermark`，
+ * 每次从「上次停下 + 1」继续 —— 所以这个按钮可以重复点，也可以交给每日任务自动推进。
+ */
+settingsRouter.post('/map/sweep', (req, res, next) => {
+  try {
+    const span = Math.max(20, Math.min(3000, Number(req.body?.span) || 300))
+    const { started, state } = startSweep({ span, trigger: 'manual', log: req.log })
+    req.log?.info?.({ started, span, from: state.sweep.from, to: state.sweep.to }, 'mapscan.sweep trigger')
+    res.json({ ok: true, data: { started, job: state } })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/map/enumerate —— 季度枚举（**推荐的「找齐」入口**）
+ * ---------------------------------------------------------------------------
+ * 一页 = 一整季的番剧条目（2018 夏实测 108 条），56 页 ≈ 1 分钟就把
+ * 「库里该有哪些 mikan_id」全拿到，比逐 id 试快一个数量级（后者绝大多数请求是 404 空跑）。
+ * body: `{ fromYear, toYear }`（默认 2014 → 明年；Mikan 只留到 2013 左右）。
+ * 跑完再点「扫描并补齐」就是完整的「找齐 → 补全」。
+ */
+settingsRouter.post('/map/enumerate', (req, res, next) => {
+  try {
+    const y = new Date().getFullYear()
+    const fromYear = Math.max(2014, Math.min(y + 1, Number(req.body?.fromYear) || 2014))
+    const toYear = Math.max(fromYear, Math.min(y + 1, Number(req.body?.toYear) || y + 1))
+    const { started, state } = startSeasonEnum({ fromYear, toYear, trigger: 'manual', log: req.log })
+    req.log?.info?.({ started, fromYear, toYear }, 'mapscan.enumerate trigger')
     res.json({ ok: true, data: { started, job: state } })
   } catch (err) {
     next(err)

@@ -1015,4 +1015,33 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     box-shadow: var(--shadow-lg);
   }
 }
+
+/* ── 移动端：面板改成全屏抽屉（从右滑入） ────────────────────────────────
+ * 桌面端是「把主区挤窄」，手机上主区本来就窄，挤一下两边都用不了 ——
+ * 所以直接铺满，并给顶部留出关闭按钮的位置（B 站点开视频进入全屏详情那种体感）。
+ */
+@media (max-width: 820px) {
+  .panel {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: 100vw !important;
+    min-width: 0 !important;
+    max-width: 100vw;
+    height: 100vh;
+    z-index: 90;
+    transform: translateX(100%);
+    transition: transform var(--dur) var(--ease-out);
+  }
+  .panel.open {
+    transform: translateX(0);
+    box-shadow: none;
+  }
+  /* 关闭按钮要够大、够好点 */
+  .panel :deep(.close-btn) {
+    width: 36px;
+    height: 36px;
+  }
+}
 </style>

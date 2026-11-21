@@ -221,6 +221,22 @@ html {
   align-items: start;
 }
 
+/* ── 移动端：固定两列海报墙（B 站 App 的观感） ──────────────────────────
+ * 为什么不用 auto-fill：手机上屏宽 360~430px，`minmax(170px, 1fr)` 在 360 上只能排
+ * 一列（两张卡就超了），在 430 上能排两列 —— 同一份代码两种观感，很别扭。
+ * 显式两列 + 缩小列间距，360 也能稳定两列。
+ */
+@media (max-width: 820px) {
+  .anime-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  /* 桌面端那些大留白在手机上要收一收，否则一屏只看得到两张卡 */
+  .page-title {
+    font-size: 1.05rem;
+  }
+}
+
 /* ── 三态占位（加载 / 失败 / 空） ────────────────────────────────────── */
 .state {
   display: flex;

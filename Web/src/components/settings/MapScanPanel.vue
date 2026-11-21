@@ -5,8 +5,11 @@
       <span class="pill" :class="pillClass">{{ pillText }}</span>
       <p class="map-hint">
         「哪部 Mikan 作品对应哪个 Bangumi 条目」是唯一不能重建的数据（只能逐页问上游攒）。
-        缺了它，作品就没有评分、没有系列、也没有归档目录。这里的扫描会拿 mikan_id 去
-        Mikan 详情页解析 bgm_id，顺便把评分档案补齐并写回映射表 —— 有离线数据时先用离线，缺了才联网。
+        缺了它，作品就没有评分、没有系列、也没有归档目录。<br />
+        <b>枚举全部季度</b>：一页排期就是整季的番剧（56 页约 1 分钟），把该有的 mikan_id 一次找齐，
+        顺带把历史季度的排期写进库 —— 这是最快的一条路。<br />
+        <b>扫描并补齐</b>：拿 mikan_id 去详情页解析 bgm_id 并补档案（只能逐条，慢但必须）。
+        有离线数据时先用离线，缺了才联网。
       </p>
     </header>
 
@@ -18,6 +21,10 @@
       <div>
         <dt>还缺 bgm</dt>
         <dd :class="{ bad: counts.missingBgm > 0 }">{{ counts.missingBgm }} 部</dd>
+      </div>
+      <div>
+        <dt>已扫到</dt>
+        <dd>#{{ counts.watermark || 0 }}</dd>
       </div>
     </div>
 
@@ -33,11 +40,20 @@
     <p v-else-if="lastSummary" class="map-note ok">{{ lastSummary }}</p>
 
     <div class="map-actions">
-      <button class="map-btn primary" type="button" :disabled="job.running" @click="scan(0)">
-        <IconRefresh :size="13" /> {{ job.running ? '扫描中…' : '扫描并补齐' }}
+      <button class="map-btn primary" type="button" :disabled="job.running" @click="enumerate">
+        <IconCalendarStats :size="13" /> {{ job.running ? '进行中…' : '枚举全部季度' }}
+      </button>
+      <button class="map-btn" type="button" :disabled="job.running" @click="scan(0)">
+        <IconRefresh :size="13" /> 扫描并补齐
       </button>
       <button class="map-btn" type="button" :disabled="job.running" @click="scan(20)">
         <IconTestPipe :size="13" /> 先试 20 条
+      </button>
+      <button class="map-btn" type="button" :disabled="job.running" @click="sweep(300)">
+        <IconArrowBarRight :size="13" /> 向前扫 300
+      </button>
+      <button class="map-btn" type="button" :disabled="job.running" @click="sweep(1000)">
+        <IconArrowRightBar :size="13" /> 向前扫 1000
       </button>
       <button v-if="job.running" class="map-btn" type="button" @click="stop">
         <IconPlayerStop :size="13" /> 停
@@ -60,8 +76,8 @@
  * 上游限流或者地址配错时，不会白等十分钟。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { IconLink, IconPlayerStop, IconRefresh, IconTestPipe } from '@tabler/icons-vue'
-import { fetchMapStatus, startMapScan, stopMapScan } from '@/api/settings'
+import { IconArrowBarRight, IconArrowRightBar, IconCalendarStats, IconLink, IconPlayerStop, IconRefresh, IconTestPipe } from '@tabler/icons-vue'
+import { enumerateSeasons, fetchMapStatus, startMapScan, stopMapScan, sweepMapIds } from '@/api/settings'
 
 const POLL_MS = 2000
 
@@ -73,7 +89,12 @@ const job = computed(() => status.value?.job || { phase: 'idle', running: false,
 const counts = computed(() => status.value?.counts || { map: 0, missingBgm: 0 })
 
 const pillText = computed(() => {
-  if (job.value.running) return job.value.phase === 'importing' ? '导入已有映射' : '扫描中'
+  if (job.value.running) {
+    if (job.value.phase === 'importing') return '导入已有映射'
+    if (job.value.phase === 'sweeping') return '向前扫描'
+    if (job.value.phase === 'enumerating') return '枚举季度'
+    return '扫描中'
+  }
   if (job.value.phase === 'failed') return '上次失败'
   if (job.value.phase === 'done') return '完成'
   return '未运行'
@@ -90,6 +111,14 @@ const percent = computed(() => {
 })
 const progressText = computed(() => {
   if (job.value.phase === 'importing') return '正在导入已生成的映射…'
+  if (job.value.phase === 'enumerating') {
+    const en = job.value.enumerate || {}
+    return `${en.pages || 0} 个季度已扫 · 见到 ${en.items || 0} 条 · 新增 ${en.newIds || 0} 个 id`
+  }
+  if (job.value.phase === 'sweeping') {
+    const sw = job.value.sweep || {}
+    return `#${sw.from || 0} → #${sw.to || 0}`
+  }
   const total = Number(job.value.total) || 0
   if (!total) return ''
   return `${job.value.done} / ${total}（${percent.value}%）`
@@ -98,11 +127,26 @@ const phaseNote = computed(() => {
   if (job.value.phase === 'importing') return '先把你之前生成的那份映射导进来，能少打几千次上游'
   if (job.value.phase === 'scanning')
     return `已补 ${job.value.resolved} 部 · 上游没有链接 ${job.value.noLink} 部 · 失败 ${job.value.failed} 部`
+  if (job.value.phase === 'enumerating') return `从 ${job.value.enumerate?.fromYear || 2014} 到 ${job.value.enumerate?.toYear || ''}，每季度一页排期`
+  if (job.value.phase === 'sweeping') {
+    const sw = job.value.sweep || {}
+    return `扫到 ${sw.ok || 0} 部带链接 · ${sw.noLink || 0} 部没链接 · ${sw.notFound || 0} 个空页${
+      sw.stoppedEarly ? ' · 连续空页太多，已提前收工' : ''
+    }`
+  }
   if (job.value.phase === 'failed') return job.value.lastError || '失败了，可以再点一次'
   return ''
 })
 const lastSummary = computed(() => {
   if (job.value.phase !== 'done') return ''
+  if (job.value.enumerate?.pages) {
+    const en = job.value.enumerate
+    return `枚举 ${en.fromYear}–${en.toYear}：${en.pages} 个季度 · 见到 ${en.items} 条 · 新增 ${en.newIds} 个 id · 空季度 ${en.emptyQuarters}（映射表现在 ${counts.value.map} 条）`
+  }
+  if (job.value.sweep?.from) {
+    const sw = job.value.sweep
+    return `向前扫完 #${sw.from} → #${sw.to}：${sw.ok} 部带链接 · ${sw.noLink} 部没链接 · ${sw.notFound} 个空页（已扫到 #${sw.watermark}）`
+  }
   const parts = [`补到 ${job.value.resolved} 部`]
   if (job.value.noLink) parts.push(`上游没挂 Bangumi 链接 ${job.value.noLink} 部（30 天后自动重试）`)
   if (job.value.failed) parts.push(`失败 ${job.value.failed} 部`)
@@ -136,6 +180,26 @@ function startPoll() {
 async function scan(limit) {
   try {
     const res = await startMapScan({ limit })
+    status.value = { job: res.job, counts: status.value?.counts || { map: 0, missingBgm: 0 } }
+    startPoll()
+  } catch (err) {
+    error.value = err?.message || '触发失败'
+  }
+}
+
+async function enumerate() {
+  try {
+    const res = await enumerateSeasons()
+    status.value = { job: res.job, counts: status.value?.counts || { map: 0, missingBgm: 0 } }
+    startPoll()
+  } catch (err) {
+    error.value = err?.message || '触发失败'
+  }
+}
+
+async function sweep(span) {
+  try {
+    const res = await sweepMapIds(span)
     status.value = { job: res.job, counts: status.value?.counts || { map: 0, missingBgm: 0 } }
     startPoll()
   } catch (err) {

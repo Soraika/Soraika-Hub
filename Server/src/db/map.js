@@ -61,9 +61,12 @@ export const getMapByBgm = (bgmId) => stmt.byBgm.get(val(bgmId)) ?? null
 
 /** 排期落库时登记身份（幂等；不改已解析出的 bgm_id） */
 export function rememberMikan(mikanId, title = null, bgmId = null) {
-  if (!mikanId) return
+  if (!mikanId) return 'skip'
+  const existed = Boolean(stmt.byMikan.get(val(mikanId)))
   const now = Date.now()
   stmt.upsert.run(val(mikanId), val(bgmId), val(title), now, now)
+  /* 返回值只为计数（季度枚举要报「新增了多少个 id」）；老调用方忽略它，行为不变 */
+  return existed ? 'existing' : 'new'
 }
 
 /** 记录一次映射尝试的结果（bgmId 为空 = 这次没拿到，等 30 天再试） */

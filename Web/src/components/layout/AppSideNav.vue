@@ -260,4 +260,77 @@ const { mode, isDark, setMode, toggleLightDark } = useTheme()
   border-color: var(--accent);
   color: var(--accent-strong);
 }
+
+/* ── 移动端：底部 tab 栏（B 站 App 那种布局）─────────────────────────────
+ * 断点 820：再窄下去桌面那个 200px 侧栏会吃掉 1/4 屏宽，卡片只剩一列。
+ * 三件事：
+ *   ① 侧栏变成固定底部条，横向均分（6 个 tab 一屏放得下）
+ *   ② 品牌区藏起来（手机上没有位置，图标本身已经是品牌）
+ *   ③ 主题开关也藏起来 —— 手机上交给系统的深色模式更自然；
+ *      想手动切可以拉宽到平板尺寸再用（不为了一个开关占掉一格 tab）
+ */
+@media (max-width: 820px) {
+  .side-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 80;
+    width: 100%;
+    height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0;
+    padding: 0 4px env(safe-area-inset-bottom, 0px);
+    border-right: none;
+    border-top: 1px solid var(--border);
+    background: var(--bg-sidebar);
+    /* 底部条要压在内容上，给个轻微上投影，滚动时才有层次 */
+    box-shadow: 0 -1px 12px rgba(0, 0, 0, 0.06);
+  }
+  .brand,
+  .side-bottom {
+    display: none;
+  }
+  .nav-list {
+    flex: 1;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0;
+  }
+  .nav-item {
+    flex: 1 1 0;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 3px;
+    /* 触控目标至少 44px 高：这里整格就是 58px，够 */
+    padding: 6px 2px;
+    border-radius: 0;
+    font-size: 0.66rem;
+    font-weight: 500;
+    text-align: center;
+  }
+  .nav-item:hover {
+    background: transparent;
+  }
+  /* 选中态从「整块填充」改成「只染图标与文字」—— 底部条整块填色会很吵 */
+  .nav-item.active {
+    background: transparent;
+    color: var(--accent);
+  }
+  .nav-item.active .nav-label {
+    font-weight: 700;
+  }
+  /* 桌面端那个左侧竖条在底部条里没有意义 */
+  .nav-item::before {
+    display: none;
+  }
+  .nav-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+}
 </style>

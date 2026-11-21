@@ -3,7 +3,7 @@
  * 与 home.js 同构：只做「校验 id + 调聚合层 + 返回信封」
  */
 import { Router } from 'express'
-import { aiSearchAnime, getAnimeDetail, getAnimeSeries, getAnimeSubgroups, getSubgroupReleases } from './../api/pages/anime.js'
+import { aiSearchAnime, fillAnimeCards, getAnimeDetail, getAnimeSeries, getAnimeSubgroups, getSubgroupReleases } from './../api/pages/anime.js'
 import { searchByKeyword } from './../db/anime.js'
 import { toCardItem } from './../api/mappers/home.js'
 import { fail } from './../lib/errors.js'
@@ -113,6 +113,25 @@ animeRouter.get('/anime/:id/releases', async (req, res, next) => {
     }
     const subgroupId = isId ? Number(raw) : raw
     res.json({ ok: true, data: await getSubgroupReleases(id, subgroupId, { log: req.log }) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * POST /api/anime/fill —— 批量补卡片（首页/发现页「慢慢填上」的后端）
+ * ---------------------------------------------------------------------------
+ * body: `{ ids: [1,2,3] }`，一次最多 24 个（多了前端自己分批）。
+ * 返回**补成功的那几张卡的 DTO**，前端按 id 合并进现有列表 —— 补不成的留在原样
+ * （显示「暂无评分」），不会因为一条上游失败而让整批消失。
+ */
+animeRouter.post('/anime/fill', async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : []
+    if (!ids.length) throw fail('BAD_REQUEST', 'ids 需要是非空数组')
+    if (ids.length > 60) throw fail('BAD_REQUEST', 'ids 一次最多 60 个')
+    const data = await fillAnimeCards(ids, { log: req.log })
+    res.json({ ok: true, data })
   } catch (err) {
     next(err)
   }

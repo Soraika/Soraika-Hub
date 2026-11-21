@@ -4,7 +4,7 @@
  * 侧边详情面板点开时调一次。后端是纯读库（不碰上游），所以超时给得比首页短。
  * 接口形状见 Server/src/api/pages/anime.js。
  */
-import { apiGet } from './http'
+import { apiGet, apiPost } from './http'
 
 /**
  * 按作品主键取详情
@@ -78,3 +78,12 @@ export function aiSearchAnime(q) {
   return apiGet('/api/anime/ai-search', { params: { q }, timeout: 20000 })
 }
 
+/**
+ * 批量补卡片（首页/发现页「慢慢填上」）
+ * ---------------------------------------------------------------------------
+ * 为什么分批：后端一次最多 24 个 id（内部 3 并发打上游）。前端按 12 个一批、
+ * 批与批之间**顺序**发，观感就是评分/评论数一块一块地出现 —— 而不是一屏同时变。
+ * @param {Array<number>} ids
+ * @returns {Promise<{ items: Array<object>, filled:number, skipped:number, failed:number }>}
+ */
+export const fillCards = (ids) => apiPost('/api/anime/fill', { ids }, { timeout: 40000 })

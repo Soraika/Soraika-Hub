@@ -201,6 +201,52 @@ export async function getAnimeSeries(id, { log = logger } = {}) {
 }
 
 /**
+ * 批量「补卡片」—— 首页/发现页那种一屏几十张卡片的场景
+ * ---------------------------------------------------------------------------
+ * 为什么不让前端逐张打 `/api/anime/:id`：85 张卡就是 85 个请求，每个都要走一遍
+ * 「查库 → 判断 → 上游」，浏览器并发窗口一堵，评论数/评分会以肉眼可见的乱序跳出来。
+ * 这里一次最多 24 个 id、后端内部按 3 并发跑，前端按批拿结果逐批合并 —— 观感才是
+ * 「慢慢填上」而不是「要么全空、要么全有」。
+ *
+ * 只补**真的缺**的：已经有评分/标签/简介的直接跳过（离线优先），一个上游都不打。
+ * 上游失败不影响其它条（enrichOne 自己吞异常返回 'failed'）。
+ *
+ * @param {Array<number|string>} ids 作品主键
+ * @param {{ log?: object, concurrency?: number, limit?: number }} [options]
+ * @returns {Promise<{ items: Array<object>, filled: number, skipped: number, failed: number }>}
+ */
+export async function fillAnimeCards(ids = [], { log = logger, concurrency = 3, limit = 24 } = {}) {
+  const unique = [...new Set((ids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, limit)
+  if (!unique.length) return { items: [], filled: 0, skipped: 0, failed: 0 }
+
+  const out = { items: [], filled: 0, skipped: 0, failed: 0 }
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < unique.length) {
+      const id = unique[cursor++]
+      const row = findById(id)
+      if (!row) continue
+      /* 已经齐了（有 bgm_id 且有评分/标签/简介）→ 直接跳过，不打上游 */
+      if (!needsEnrich(row)) {
+        out.skipped++
+        continue
+      }
+      const outcome = await enrichOne(row, log)
+      const fresh = findById(id)
+      if (outcome === 'enriched' && fresh) {
+        out.filled++
+        out.items.push(toCardItem(fresh))
+      } else {
+        out.failed++
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, unique.length) }, worker))
+  if (out.filled) log.info({ asked: unique.length, filled: out.filled, failed: out.failed }, 'anime.fill batch')
+  return out
+}
+
+/**
  * AI 搜索：自然语言 → 查询意图 → 确定性搜索
  * ---------------------------------------------------------------------------
  * 用户的两种真实场景：① 打错字/只记得大概（「上依娜」「那个喝酒的百合番」）；
